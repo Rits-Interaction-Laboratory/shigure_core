@@ -7,14 +7,17 @@ class DepthFrames:
     frames: np.ndarray
     sum_each_pixel: np.ndarray
     max_frame_size: int
+    min_frame_size: int
 
-    def __init__(self, max_frame_size: int = 200):
+    def __init__(self, max_frame_size: int = 200, min_frame_size: int = 5):
         """
         コンストラクタ.
 
         :param max_frame_size: 最大保存フレーム数
+        :param min_frame_size: 演算対象最小フレーム数
         """
         self.max_frame_size = max_frame_size
+        self.min_frame_size = min_frame_size
 
     def add_frame(self, frame: np.ndarray) -> None:
         """
@@ -54,9 +57,24 @@ class DepthFrames:
         """
         pixelごとの平均値を取得します.
 
+        有効フレーム数条件は考慮しません.
+
         :return: 各pixelの平均値
         """
-        return self.sum_each_pixel / self.max_frame_size
+        # 0除算はNaNとなるため0で返却
+        return np.nan_to_num(np.sum(self.frames, axis=0) / self.get_valid_frame_count())
+
+    def get_average_of_square(self):
+        """
+        pixelごとの2乗の平均値を取得します.
+
+        有効フレーム数条件は考慮しません.
+
+        :return: 各pixelの2乗の平均値
+        """
+        square = self.frames * self.frames
+        # 0除算はNaNとなるため0で返却
+        return np.nan_to_num(np.sum(square, axis=0) / self.get_valid_frame_count())
 
     def get_var(self) -> np.ndarray:
         """
@@ -64,4 +82,22 @@ class DepthFrames:
 
         :return: 各pixelの標準偏差
         """
-        return np.var(self.frames, axis=0)
+        avg = self.get_average()
+        return self.get_average_of_square() - (avg * avg)
+
+    def get_valid_pixel(self) -> np.ndarray:
+        """
+        有効なピクセルを取得します.
+
+        :return: 有効なpixelであれば True、そうでなければ False
+        """
+        # 0は値が取得できていないため、無効なデータとみなす
+        return self.get_valid_frame_count() >= self.min_frame_size
+
+    def get_valid_frame_count(self) -> np.ndarray:
+        """
+        有効なフレーム数をpixelごとに集計します.
+
+        :return: pixelごとの有効なフレーム数
+        """
+        return np.count_nonzero(self.frames > 0, axis=0)

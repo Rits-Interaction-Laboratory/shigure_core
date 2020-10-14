@@ -6,9 +6,9 @@ from shigure.nodes.bg_subtraction.logic import BgSubtractionLogic
 def test_execute():
     logic = BgSubtractionLogic()
 
-    frames = DepthFrames(3)
+    frames = DepthFrames(3, 3)
 
-    frames.add_frame(np.array([[1, 1, 1],
+    frames.add_frame(np.array([[0, 1, 1],
                                [1, 1, 1],
                                [1, 1, 1]]))
     frames.add_frame(np.array([[1, 1, 1],
@@ -18,8 +18,8 @@ def test_execute():
                                [1, 1, 1],
                                [1, 1, 1]]))
 
-    current_frame = np.array([[1, 1, 1],
-                              [1, 1000, 1],
+    current_frame = np.array([[200, 1, 1],
+                              [1, 200, 1],
                               [1, 1, 1]])
 
     expect_data = np.array([[0, 0, 0],

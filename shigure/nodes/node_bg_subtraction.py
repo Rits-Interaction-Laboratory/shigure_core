@@ -22,11 +22,16 @@ class BgSubtractionNode(Node):
         try:
             bridge = CvBridge()
             frame: np.ndarray = bridge.imgmsg_to_cv2(image_rect_raw)
+            frame = frame.astype(np.int32)
             result, data = self.bg_subtraction_logic.execute(self.depth_frames, frame)
             self.depth_frames.add_frame(frame)
             if result:
-                cv2.imshow('depth', frame)
-                cv2.waitKey(1)
+                # debug用
+                # cv2.imshow('depth', cv2.applyColorMap(np.uint8(frame / frame.max() * 256), cv2.COLORMAP_OCEAN))
+                # avg = self.depth_frames.get_average()
+                # cv2.imshow('avg', cv2.applyColorMap(np.uint8(avg / avg.max() * 256), cv2.COLORMAP_OCEAN))
+                # var = self.depth_frames.get_var()
+                # cv2.imshow('var', cv2.applyColorMap(np.uint8(var / var.max() * 256), cv2.COLORMAP_OCEAN))
                 cv2.imshow('bg_subtraction', np.uint8(data))
                 cv2.waitKey(1)
         except Exception as err:

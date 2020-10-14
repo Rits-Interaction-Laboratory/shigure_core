@@ -46,34 +46,109 @@ def test_is_full():
 
 
 def test_get_average():
-    frame1 = np.array([[2, 3],
-                       [3, 4]])
-    frame2 = np.array([[4, 3],
-                       [3, 2]])
+    frame0 = np.array([[100, 100],
+                       [100, 100]])
+    frame1 = np.array([[0, 0],
+                       [0, 50]])
+    frame2 = np.array([[0, 0],
+                       [3, 30]])
+    frame3 = np.array([[0, 3],
+                       [3, 10]])
 
-    depth_frames = DepthFrames(2)
+    depth_frames = DepthFrames(3, 2)
 
+    depth_frames.add_frame(frame0)
     depth_frames.add_frame(frame1)
     depth_frames.add_frame(frame2)
+    depth_frames.add_frame(frame3)
 
-    expect_frame = np.array([[3, 3],
-                             [3, 3]])
+    expect_frame = np.array([[0, 3],
+                             [3, 30]])
 
     assert np.all(depth_frames.get_average() == expect_frame)
 
 
-def test_get_var():
-    frame1 = np.array([[2, 3],
-                       [3, 4]])
-    frame2 = np.array([[4, 3],
+def test_get_average_of_square():
+    frame1 = np.array([[0, 0],
+                       [0, 2]])
+    frame2 = np.array([[0, 0],
+                       [3, 2]])
+    frame3 = np.array([[0, 3],
                        [3, 2]])
 
-    depth_frames = DepthFrames(2)
+    depth_frames = DepthFrames(3, 2)
 
     depth_frames.add_frame(frame1)
     depth_frames.add_frame(frame2)
+    depth_frames.add_frame(frame3)
 
-    expect_frame = np.array([[1, 0],
-                             [0, 1]])
+    expect_frame = np.array([[0, 9],
+                             [9, 4]])
+
+    assert np.all(depth_frames.get_average_of_square() == expect_frame)
+
+
+def test_get_var():
+    frame1 = np.array([[0, 0],
+                       [-2, 2]])
+    frame2 = np.array([[0, 2],
+                       [1, 2]])
+    frame3 = np.array([[4, 4],
+                       [1, 2]])
+
+    depth_frames = DepthFrames(3, 2)
+
+    depth_frames.add_frame(frame1)
+    depth_frames.add_frame(frame2)
+    depth_frames.add_frame(frame3)
+
+    expect_frame = np.array([[0, 1],
+                             [3, 0]])
 
     assert np.all(depth_frames.get_var() == expect_frame)
+
+
+def test_get_valid_pixel():
+    frame1 = np.array([[0, 0],
+                       [0, 0]])
+    frame2 = np.array([[0, 0],
+                       [0, 2]])
+    frame3 = np.array([[0, 0],
+                       [3, 4]])
+    frame4 = np.array([[0, 3],
+                       [3, 2]])
+
+    depth_frames = DepthFrames(4, 2)
+
+    depth_frames.add_frame(frame1)
+    depth_frames.add_frame(frame2)
+    depth_frames.add_frame(frame3)
+    depth_frames.add_frame(frame4)
+
+    expect = np.array([[False, False],
+                       [True, True]])
+
+    assert np.all(depth_frames.get_valid_pixel() == expect)
+
+
+def test_get_valid_frame_count():
+    frame1 = np.array([[0, 0],
+                       [0, 0]])
+    frame2 = np.array([[0, 0],
+                       [0, 2]])
+    frame3 = np.array([[0, 0],
+                       [3, 4]])
+    frame4 = np.array([[0, 3],
+                       [3, 2]])
+
+    depth_frames = DepthFrames(4, 2)
+
+    depth_frames.add_frame(frame1)
+    depth_frames.add_frame(frame2)
+    depth_frames.add_frame(frame3)
+    depth_frames.add_frame(frame4)
+
+    expect = np.array([[0, 1],
+                       [2, 3]])
+
+    assert np.all(depth_frames.get_valid_frame_count() == expect)
