@@ -22,6 +22,7 @@ setup(
     entry_points={
         'console_scripts': [
             'bg_subtraction = shigure.nodes.node_bg_subtraction:main',
+            'bg_subtraction_preview = shigure.nodes.node_bg_subtraction_preview:main',
         ],
     },
 )

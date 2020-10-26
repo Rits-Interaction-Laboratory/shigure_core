@@ -4,8 +4,13 @@ import numpy as np
 class DepthFrames:
     """背景差分を抽出するためのフレームを保存するクラス."""
 
+    # 測定有効範囲の深度しきい値
+    THRESHOLD: int = 5000
+
     frames: np.ndarray
     sum_each_pixel: np.ndarray
+    sum_each_pixel_square: np.ndarray
+    valid_frame_count: np.ndarray
     max_frame_size: int
     min_frame_size: int
 
@@ -28,15 +33,28 @@ class DepthFrames:
         :param frame: 保存するフレーム
         :return: None
         """
+        frame = frame.astype(np.float32)
+
         if self.is_full():
             delete_frame = self.frames[0]
             self.sum_each_pixel -= delete_frame
+            self.valid_frame_count -= delete_frame > 0
             self.frames = self.frames[1:]
 
         if hasattr(self, 'sum_each_pixel'):
             self.sum_each_pixel += frame
         else:
             self.sum_each_pixel = frame
+
+        if hasattr(self, 'sum_each_pixel_square'):
+            self.sum_each_pixel_square += frame * frame
+        else:
+            self.sum_each_pixel_square = frame * frame
+
+        if hasattr(self, 'valid_frame_count'):
+            self.valid_frame_count += (frame > 0) * 1
+        else:
+            self.valid_frame_count = (frame > 0) * 1
 
         if hasattr(self, 'frames'):
             self.frames = np.append(self.frames, [frame], axis=0)
@@ -61,8 +79,11 @@ class DepthFrames:
 
         :return: 各pixelの平均値
         """
+        sum_of_each_pixel = self.sum_each_pixel
+        valid_frame_count = self.valid_frame_count
         # 0除算はNaNとなるため0で返却
-        return np.nan_to_num(np.sum(self.frames, axis=0) / self.get_valid_frame_count())
+        return np.divide(sum_of_each_pixel, valid_frame_count,
+                         out=np.zeros_like(sum_of_each_pixel), where=valid_frame_count != 0)
 
     def get_average_of_square(self):
         """
@@ -72,18 +93,31 @@ class DepthFrames:
 
         :return: 各pixelの2乗の平均値
         """
-        square = self.frames * self.frames
         # 0除算はNaNとなるため0で返却
-        return np.nan_to_num(np.sum(square, axis=0) / self.get_valid_frame_count())
+        sum_of_each_pixel_square = self.sum_each_pixel_square
+        valid_frame_count = self.valid_frame_count
+        # 0除算はNaNとなるため0で返却
+        return np.divide(sum_of_each_pixel_square, valid_frame_count,
+                         out=np.zeros_like(sum_of_each_pixel_square), where=valid_frame_count != 0)
 
     def get_var(self) -> np.ndarray:
+        """
+        pixelごとの分散を取得します.
+
+        :return: 各pixelの分散
+        """
+        avg = self.get_average()
+        return self.get_average_of_square() - (avg * avg)
+
+    def get_standard_deviation(self):
         """
         pixelごとの標準偏差を取得します.
 
         :return: 各pixelの標準偏差
         """
-        avg = self.get_average()
-        return self.get_average_of_square() - (avg * avg)
+        var = self.get_var()
+        # 0除算はNaNとなるため0で返却
+        return np.sqrt(var, out=np.zeros_like(var), where=var != 0)
 
     def get_valid_pixel(self) -> np.ndarray:
         """
@@ -92,12 +126,5 @@ class DepthFrames:
         :return: 有効なpixelであれば True、そうでなければ False
         """
         # 0は値が取得できていないため、無効なデータとみなす
-        return self.get_valid_frame_count() >= self.min_frame_size
+        return self.valid_frame_count >= self.min_frame_size
 
-    def get_valid_frame_count(self) -> np.ndarray:
-        """
-        有効なフレーム数をpixelごとに集計します.
-
-        :return: pixelごとの有効なフレーム数
-        """
-        return np.count_nonzero(self.frames > 0, axis=0)

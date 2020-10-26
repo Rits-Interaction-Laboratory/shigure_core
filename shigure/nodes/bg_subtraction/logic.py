@@ -17,12 +17,13 @@ class BgSubtractionLogic:
         if not depth_frames.is_full():
             return False, np.zeros(shape=1)
 
+        # 各ピクセルが平均値からのL1誤差
         subtraction_pixel = np.abs(depth_frames.get_average() - current_frame)
         # 差分による対象pixelを取得(平均)
         valid_pixel_of_avg = subtraction_pixel > depth
         # 差分による対象pixelを取得(分散)
-        # valid_pixel_of_var = subtraction_pixel > 2 * np.sqrt(depth_frames.get_var())
+        valid_pixel_of_var = subtraction_pixel > 2 * depth_frames.get_var()
         # 有効フレーム数を超えているpixelのみを対象にする
-        valid_pixel = valid_pixel_of_avg * depth_frames.get_valid_pixel()
-        data = valid_pixel * 255
+        valid_pixel = np.array([valid_pixel_of_avg, depth_frames.get_valid_pixel()]).all(axis=0)
+        data: np.ndarray = valid_pixel * 255
         return True, data

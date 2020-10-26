@@ -63,7 +63,7 @@ def test_get_average():
     depth_frames.add_frame(frame3)
 
     expect_frame = np.array([[0, 3],
-                             [3, 30]])
+                             [3, 30]], np.float32)
 
     assert np.all(depth_frames.get_average() == expect_frame)
 
@@ -129,26 +129,3 @@ def test_get_valid_pixel():
                        [True, True]])
 
     assert np.all(depth_frames.get_valid_pixel() == expect)
-
-
-def test_get_valid_frame_count():
-    frame1 = np.array([[0, 0],
-                       [0, 0]])
-    frame2 = np.array([[0, 0],
-                       [0, 2]])
-    frame3 = np.array([[0, 0],
-                       [3, 4]])
-    frame4 = np.array([[0, 3],
-                       [3, 2]])
-
-    depth_frames = DepthFrames(4, 2)
-
-    depth_frames.add_frame(frame1)
-    depth_frames.add_frame(frame2)
-    depth_frames.add_frame(frame3)
-    depth_frames.add_frame(frame4)
-
-    expect = np.array([[0, 1],
-                       [2, 3]])
-
-    assert np.all(depth_frames.get_valid_frame_count() == expect)
