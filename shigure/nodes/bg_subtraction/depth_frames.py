@@ -7,14 +7,14 @@ class DepthFrames:
     # 測定有効範囲の深度しきい値
     THRESHOLD: int = 5000
 
-    frames: np.ndarray
+    frames: list
     sum_each_pixel: np.ndarray
     sum_each_pixel_square: np.ndarray
     valid_frame_count: np.ndarray
     max_frame_size: int
     min_frame_size: int
 
-    def __init__(self, max_frame_size: int = 200, min_frame_size: int = 5):
+    def __init__(self, max_frame_size: int = 30, min_frame_size: int = 5):
         """
         コンストラクタ.
 
@@ -23,6 +23,7 @@ class DepthFrames:
         """
         self.max_frame_size = max_frame_size
         self.min_frame_size = min_frame_size
+        self.frames = []
 
     def add_frame(self, frame: np.ndarray) -> None:
         """
@@ -56,10 +57,7 @@ class DepthFrames:
         else:
             self.valid_frame_count = (frame > 0) * 1
 
-        if hasattr(self, 'frames'):
-            self.frames = np.append(self.frames, [frame], axis=0)
-        else:
-            self.frames = np.array([frame])
+        self.frames.append(frame.copy())
 
     def is_full(self) -> bool:
         """
@@ -67,8 +65,6 @@ class DepthFrames:
 
         :return: 保存フレーム数が最大フレーム数であれば true
         """
-        if not hasattr(self, 'frames'):
-            return False
         return len(self.frames) == self.max_frame_size
 
     def get_average(self) -> np.ndarray:
@@ -117,7 +113,7 @@ class DepthFrames:
         """
         var = self.get_var()
         # 0除算はNaNとなるため0で返却
-        return np.sqrt(var, out=np.zeros_like(var), where=var != 0)
+        return np.sqrt(var, out=np.zeros_like(var), where=var > 0)
 
     def get_valid_pixel(self) -> np.ndarray:
         """

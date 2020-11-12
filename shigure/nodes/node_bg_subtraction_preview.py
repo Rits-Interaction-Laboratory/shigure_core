@@ -1,6 +1,7 @@
 import rclpy
 import cv2
 import numpy as np
+import matplotlib.pyplot as plt
 from rclpy.node import Node
 from sensor_msgs.msg import Image
 from cv_bridge import CvBridge
@@ -14,6 +15,10 @@ class BgSubtractionNode(Node):
         super().__init__('bg_subtraction_node')
         self.depth_frames = DepthFrames()
         self.bg_subtraction_logic = BgSubtractionLogic()
+        self.depth_publisher = self.create_publisher(Image, '/shigure/preview/bg_subtraction/depth', 10)
+        self.avg_publisher = self.create_publisher(Image, '/shigure/preview/bg_subtraction/avg', 10)
+        self.sd_publisher = self.create_publisher(Image, '/shigure/preview/bg_subtraction/sd', 10)
+        self.result_publisher = self.create_publisher(Image, '/shigure/preview/bg_subtraction/result', 10)
         self.subscription = self.create_subscription(Image, '/camera/depth/image_rect_raw',
                                                      self.get_depth_callback, 10)
         self.frame_count = 0
@@ -24,6 +29,9 @@ class BgSubtractionNode(Node):
         self.fps = 0
         self.tm = cv2.TickMeter()
         self.tm.start()
+
+        x = np.random.normal(50, 10, 1000)
+        plt.hist(x)
 
     def get_depth_callback(self, image_rect_raw: Image):
         try:
@@ -37,12 +45,15 @@ class BgSubtractionNode(Node):
                 # 平均/分散の算出(有効フレーム考慮)
                 valid_pixel = self.depth_frames.get_valid_pixel()
                 avg = self.depth_frames.get_average() * valid_pixel
-                var = self.depth_frames.get_var() * valid_pixel
+                sd = self.depth_frames.get_standard_deviation() * valid_pixel
+
+                abs_divide_sd = np.divide(np.abs(avg - frame), sd,
+                                          out=np.zeros_like(avg), where=sd != 0)
 
                 # cv2描画用にuint8に丸め込む
                 rounded_frame = convert_frame_to_uint8(self.depth_frames.frames[-1], 1500)
                 rounded_avg = convert_frame_to_uint8(avg, 1500)
-                rounded_var = convert_frame_to_uint8(var, 1500 * 1500)
+                rounded_sd = convert_frame_to_uint8(sd, 5000)
 
                 # fps計算
                 if self.frame_count % self.measurement_count == 0:
@@ -52,16 +63,18 @@ class BgSubtractionNode(Node):
                     self.tm.reset()
                     self.tm.start()
 
-                cv2.imshow('depth', cv2.applyColorMap(rounded_frame, cv2.COLORMAP_OCEAN))
-                cv2.imshow('avg', cv2.applyColorMap(rounded_avg, cv2.COLORMAP_OCEAN))
-                cv2.imshow('var', cv2.applyColorMap(rounded_var, cv2.COLORMAP_OCEAN))
-                img = np.zeros(np.append(data.shape, 3), np.uint8)
+                self.depth_publisher.publish(bridge.cv2_to_imgmsg(cv2.applyColorMap(rounded_frame, cv2.COLORMAP_OCEAN), "bgr8"))
+                self.avg_publisher.publish(bridge.cv2_to_imgmsg(cv2.applyColorMap(rounded_avg, cv2.COLORMAP_OCEAN), "bgr8"))
+                self.sd_publisher.publish(bridge.cv2_to_imgmsg(cv2.applyColorMap(rounded_sd, cv2.COLORMAP_OCEAN), "bgr8"))
+                img: np.ndarray = np.zeros(np.append(data.shape, 3), np.uint8)
                 img[:, :, 0], img[:, :, 1], img[:, :, 2] = data, data, data
                 cv2.putText(img, "frame = " + str(self.frame_count), (0, 50), cv2.FONT_HERSHEY_PLAIN, 3, (0, 255, 0))
                 cv2.putText(img, 'FPS: {:.2f}'.format(self.fps),
                             (0, 100), cv2.FONT_HERSHEY_PLAIN, 3, (0, 255, 0))
-                cv2.imshow('bg_subtraction', img)
-                cv2.waitKey(1)
+                self.result_publisher.publish(bridge.cv2_to_imgmsg(img, "bgr8"))
+                plt.cla()
+                plt.hist(np.ravel(abs_divide_sd), range=(0, 1))
+                plt.pause(1/60)
         except Exception as err:
             self.get_logger().error(err)
 
@@ -87,11 +100,16 @@ def main(args=None):
 
     bg_subtraction_node = BgSubtractionNode()
 
-    rclpy.spin(bg_subtraction_node)
+    try:
+        rclpy.spin(bg_subtraction_node)
 
-    # 終了処理
-    bg_subtraction_node.destroy_node()
-    rclpy.shutdown()
+    except KeyboardInterrupt:
+        pass
+
+    finally:
+        # 終了処理
+        bg_subtraction_node.destroy_node()
+        rclpy.shutdown()
 
 
 if __name__ == '__main__':
