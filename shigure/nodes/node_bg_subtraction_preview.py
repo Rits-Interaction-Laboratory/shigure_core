@@ -12,7 +12,7 @@ from shigure.nodes.bg_subtraction.logic import BgSubtractionLogic
 class BgSubtractionNode(Node):
 
     def __init__(self):
-        super().__init__('bg_subtraction_node')
+        super().__init__('bg_subtraction_preview_node')
         self.depth_frames = DepthFrames()
         self.bg_subtraction_logic = BgSubtractionLogic()
         self.depth_publisher = self.create_publisher(Image, '/shigure/preview/bg_subtraction/depth', 10)
