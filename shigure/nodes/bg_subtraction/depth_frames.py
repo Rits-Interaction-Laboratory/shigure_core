@@ -39,6 +39,7 @@ class DepthFrames:
         if self.is_full():
             delete_frame = self.frames[0]
             self.sum_each_pixel -= delete_frame
+            self.sum_each_pixel_square -= delete_frame * delete_frame
             self.valid_frame_count -= delete_frame > 0
             self.frames = self.frames[1:]
 

@@ -30,9 +30,6 @@ class BgSubtractionNode(Node):
         self.tm = cv2.TickMeter()
         self.tm.start()
 
-        x = np.random.normal(50, 10, 1000)
-        plt.hist(x)
-
     def get_depth_callback(self, image_rect_raw: Image):
         try:
             self.frame_count += 1
@@ -47,13 +44,10 @@ class BgSubtractionNode(Node):
                 avg = self.depth_frames.get_average() * valid_pixel
                 sd = self.depth_frames.get_standard_deviation() * valid_pixel
 
-                abs_divide_sd = np.divide(np.abs(avg - frame), sd,
-                                          out=np.zeros_like(avg), where=sd != 0)
-
                 # cv2描画用にuint8に丸め込む
                 rounded_frame = convert_frame_to_uint8(self.depth_frames.frames[-1], 1500)
                 rounded_avg = convert_frame_to_uint8(avg, 1500)
-                rounded_sd = convert_frame_to_uint8(sd, 5000)
+                rounded_sd = convert_frame_to_uint8(sd, 1500)
 
                 # fps計算
                 if self.frame_count % self.measurement_count == 0:
@@ -72,9 +66,6 @@ class BgSubtractionNode(Node):
                 cv2.putText(img, 'FPS: {:.2f}'.format(self.fps),
                             (0, 100), cv2.FONT_HERSHEY_PLAIN, 3, (0, 255, 0))
                 self.result_publisher.publish(bridge.cv2_to_imgmsg(img, "bgr8"))
-                plt.cla()
-                plt.hist(np.ravel(abs_divide_sd), range=(0, 1))
-                plt.pause(1/60)
         except Exception as err:
             self.get_logger().error(err)
 
