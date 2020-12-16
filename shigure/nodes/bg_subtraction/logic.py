@@ -25,8 +25,8 @@ class BgSubtractionLogic:
         # 標準偏差による対象pixelを取得(分散)
         standard_deviation = depth_frames.get_standard_deviation()
         valid_pixel_of_sd = np.divide(subtraction_pixel, standard_deviation,
-                                      out=np.zeros_like(subtraction_pixel), where=standard_deviation != 0) > 10
+                                      out=np.zeros_like(subtraction_pixel), where=standard_deviation != 0) > 3
         # 有効フレーム数を超えているpixelのみを対象にする
         valid_pixel = np.array([valid_pixel_of_avg, valid_pixel_of_sd, depth_frames.get_valid_pixel()]).all(axis=0)
         data: np.ndarray = valid_pixel * 255
-        return True, data
+        return True, data.astype(np.uint8)
