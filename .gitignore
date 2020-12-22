@@ -293,3 +293,7 @@ qtcreator-*
 CATKIN_IGNORE
 
 # End of https://www.toptal.com/developers/gitignore/api/pycharm,python,ros
+
+# param files
+*_params.yml
+!*.params.yml.sample

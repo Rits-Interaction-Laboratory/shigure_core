@@ -7,10 +7,10 @@ from sensor_msgs.msg import CompressedImage
 from openpose_ros2_msgs.msg import PoseKeyPointsList
 from shigure.util import compressed_depth_util, frame_util
 
-from shigure.nodes.node_image_preview import NodeImagePreview
+from shigure.nodes.node_image_preview import ImagePreviewNode
 
 
-class CombineTestNode(NodeImagePreview):
+class CombineTestNode(ImagePreviewNode):
     depth_img_head: (int, int, np.ndarray)
     pose_key_points_head: (int, int, PoseKeyPointsList)
 

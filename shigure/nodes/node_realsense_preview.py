@@ -3,11 +3,11 @@ import rclpy
 import numpy as np
 from sensor_msgs.msg import Image, CompressedImage
 
-from shigure.nodes.node_image_preview import NodeImagePreview
+from shigure.nodes.node_image_preview import ImagePreviewNode
 from shigure.util import frame_util, compressed_depth_util
 
 
-class RealsensePreviewNode(NodeImagePreview):
+class RealsensePreviewNode(ImagePreviewNode):
     """Realsenseのプレビューノード"""
 
     depth_frame: np.ndarray

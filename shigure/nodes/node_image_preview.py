@@ -1,14 +1,21 @@
 import cv2
 import numpy as np
+from rcl_interfaces.msg import ParameterDescriptor, ParameterType
 from rclpy.node import Node
 from cv_bridge import CvBridge
 
 
-class NodeImagePreview(Node):
+class ImagePreviewNode(Node):
     """ImagePreviewするためのベースNode."""
 
     def __init__(self, node_name: str):
         super().__init__(node_name)
+
+        # ros params
+        is_debug_mode_descriptor = ParameterDescriptor(type=ParameterType.PARAMETER_BOOL,
+                                                       description='If true, run debug mode.')
+        self.declare_parameter('is_debug_mode', False, is_debug_mode_descriptor)
+        self.is_debug_mode: bool = self.get_parameter("is_debug_mode").get_parameter_value().bool_value
 
         self.bridge = CvBridge()
 
@@ -20,6 +27,9 @@ class NodeImagePreview(Node):
         self.fps = 0
         self.tm = cv2.TickMeter()
         self.tm.start()
+
+        # show info
+        self.get_logger().info('IsDebugMode : ' + str(self.is_debug_mode))
 
     def frame_count_up(self):
         """
