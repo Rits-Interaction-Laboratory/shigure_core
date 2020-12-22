@@ -28,7 +28,8 @@ class BgSubtractionNode(Node):
             self.depth_frames.add_frame(frame)
 
             if result:
-                msg = self.bridge.cv2_to_imgmsg(data.astype(np.uint8))
+                msg: Image = self.bridge.cv2_to_imgmsg(data.astype(np.uint8))
+                msg.header.stamp = image_rect_raw.header.stamp
                 self.publisher_.publish(msg)
 
         except Exception as err:

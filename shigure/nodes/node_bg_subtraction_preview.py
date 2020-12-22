@@ -4,11 +4,11 @@ import numpy as np
 from sensor_msgs.msg import CompressedImage
 from shigure.nodes.bg_subtraction.depth_frames import DepthFrames
 from shigure.nodes.bg_subtraction.logic import BgSubtractionLogic
-from shigure.nodes.node_image_preview import NodeImagePreview
+from shigure.nodes.node_image_preview import ImagePreviewNode
 from shigure.util import frame_util, compressed_depth_util
 
 
-class BgSubtractionNode(NodeImagePreview):
+class BgSubtractionNode(ImagePreviewNode):
 
     def __init__(self):
         super().__init__('bg_subtraction_preview_node')
