@@ -1,7 +1,7 @@
 import rclpy
 import cv2
 import numpy as np
-from sensor_msgs.msg import Image, CompressedImage
+from sensor_msgs.msg import CompressedImage
 from shigure.nodes.bg_subtraction.depth_frames import DepthFrames
 from shigure.nodes.bg_subtraction.logic import BgSubtractionLogic
 from shigure.nodes.node_image_preview import NodeImagePreview

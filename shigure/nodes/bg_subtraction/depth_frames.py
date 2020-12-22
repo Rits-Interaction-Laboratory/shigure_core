@@ -8,22 +8,27 @@ class DepthFrames:
     THRESHOLD: int = 5000
 
     frames: list
+    buffer_frames: list
     sum_each_pixel: np.ndarray
     sum_each_pixel_square: np.ndarray
     valid_frame_count: np.ndarray
     max_frame_size: int
     min_frame_size: int
+    buffer_frame_size: int
 
-    def __init__(self, max_frame_size: int = 30, min_frame_size: int = 5):
+    def __init__(self, max_frame_size: int = 30, min_frame_size: int = 25, buffer_frame_size: int = 20):
         """
         コンストラクタ.
 
         :param max_frame_size: 最大保存フレーム数
         :param min_frame_size: 演算対象最小フレーム数
+        :param buffer_frame_size: 演算するまでの保持フレーム数
         """
         self.max_frame_size = max_frame_size
         self.min_frame_size = min_frame_size
+        self.buffer_frame_size = buffer_frame_size
         self.frames = []
+        self.buffer_frames = []
 
     def add_frame(self, frame: np.ndarray) -> None:
         """
@@ -35,6 +40,17 @@ class DepthFrames:
         :return: None
         """
         frame = frame.astype(np.float32)
+
+        if self.is_buffer_full():
+            # 最新のフレームはbufferの最後へ
+            self.buffer_frames.append(frame.copy())
+            # bufferの先頭をframeとする
+            frame = self.buffer_frames[0]
+            self.buffer_frames = self.buffer_frames[1:]
+        else:
+            # bufferにためてreturn
+            self.buffer_frames.append(frame.copy())
+            return
 
         if self.is_full():
             delete_frame = self.frames[0]
@@ -67,6 +83,14 @@ class DepthFrames:
         :return: 保存フレーム数が最大フレーム数であれば true
         """
         return len(self.frames) == self.max_frame_size
+
+    def is_buffer_full(self) -> bool:
+        """
+        バッファフレーム数が最大フレーム数かどうか判定します.
+
+        :return: 保存フレーム数が最大フレーム数であれば true
+        """
+        return len(self.buffer_frames) == self.buffer_frame_size
 
     def get_average(self) -> np.ndarray:
         """
