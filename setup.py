@@ -9,7 +9,7 @@ setup(
     version='0.0.1',
     packages=[package_name, node_package_name, node_package_name + '.bg_subtraction',
               node_package_name + '.subtraction_analysis', node_package_name + '.frame_combiner',
-              node_package_name + '.object_detection', util_package_name],
+              node_package_name + '.object_detection', node_package_name + '.object_extraction', util_package_name],
     data_files=[
         ('share/ament_index/resource_index/packages',
          ['resource/' + package_name]),
@@ -27,6 +27,7 @@ setup(
             'bg_subtraction = shigure.nodes.node_bg_subtraction:main',
             'subtraction_analysis = shigure.nodes.node_subtraction_analysis:main',
             'object_detection = shigure.nodes.node_object_detection:main',
+            'object_extraction = shigure.nodes.node_object_extraction:main',
         ],
     },
 )

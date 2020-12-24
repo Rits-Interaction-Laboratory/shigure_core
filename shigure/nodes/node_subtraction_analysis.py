@@ -44,22 +44,7 @@ class SubtractionAnalysisNode(ImagePreviewNode):
                     cv2.imshow("Result", cv2.hconcat([cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR), img]))
                     cv2.waitKey(1)
 
-                # ラベリング処理(移行予定)
-                # ret, labels, stats, centroids = cv2.connectedComponentsWithStats(data.astype(np.uint8), connectivity=8)
-                #
-                # color_img = cv2.cvtColor(np.zeros_like(data).astype(np.uint8), cv2.COLOR_GRAY2BGR)
-                #
-                # for i, row in enumerate(stats):
-                #     area = row[cv2.CC_STAT_AREA]
-                #     x = row[cv2.CC_STAT_LEFT]
-                #     y = row[cv2.CC_STAT_TOP]
-                #     height = row[cv2.CC_STAT_HEIGHT]
-                #     width = row[cv2.CC_STAT_WIDTH]
-                #
-                #     if i != 0 and area > 200:
-                #         color_img += cv2.cvtColor(np.where(labels == i, 255, 0).astype(np.uint8),
-                #                                   cv2.COLOR_GRAY2BGR) * np.array([100, 255, 255]).astype(np.uint8)
-                #         cv2.rectangle(color_img, (x, y), (x + width, y + height), (255, 255, 100))
+
                 #
                 # # 結果の表示
                 # cv2.imshow("color_src", color_img)
