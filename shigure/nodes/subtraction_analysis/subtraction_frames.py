@@ -14,7 +14,7 @@ class SubtractionFrames:
     valid_frame_count: np.ndarray
     frame_size: int
 
-    def __init__(self, frame_size: int = 15):
+    def __init__(self, frame_size: int = 90):
         """
         コンストラクタ.
 
@@ -67,8 +67,16 @@ class SubtractionFrames:
 
     def get_timestamp(self) -> (int, int):
         """
-        解析しているタイムスタンプを取得します.
+        解析している画像のタイムスタンプを取得します.
 
         :return:
         """
         return self.timestamps[0].get_timestamp()
+
+    def get_top_frame(self) -> np.ndarray:
+        """
+        解析している画像を取得します.
+
+        :return:
+        """
+        return self.frames[0]

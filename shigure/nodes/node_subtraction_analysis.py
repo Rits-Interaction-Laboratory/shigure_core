@@ -41,7 +41,7 @@ class SubtractionAnalysisNode(ImagePreviewNode):
 
                 if self.is_debug_mode:
                     img = self.print_fps(data)
-                    cv2.imshow("Result", img)
+                    cv2.imshow("Result", cv2.hconcat([cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR), img]))
                     cv2.waitKey(1)
 
                 # ラベリング処理(移行予定)
