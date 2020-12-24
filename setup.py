@@ -8,10 +8,11 @@ setup(
     name=package_name,
     version='0.0.1',
     packages=[package_name, node_package_name, node_package_name + '.bg_subtraction',
-              node_package_name + '.subtraction_analysis', util_package_name],
+              node_package_name + '.subtraction_analysis', node_package_name + '.frame_combiner',
+              node_package_name + '.people_detection', util_package_name],
     data_files=[
         ('share/ament_index/resource_index/packages',
-            ['resource/' + package_name]),
+         ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
     ],
     install_requires=['setuptools'],
@@ -23,11 +24,8 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'realsense_preview = shigure.nodes.node_realsense_preview:main',
             'bg_subtraction = shigure.nodes.node_bg_subtraction:main',
-            'bg_subtraction_preview = shigure.nodes.node_bg_subtraction_preview:main',
             'subtraction_analysis = shigure.nodes.node_subtraction_analysis:main',
-            'combine_test = shigure.nodes.node_combine_test:main',
         ],
     },
 )
