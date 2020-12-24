@@ -16,7 +16,7 @@ class DepthFrames:
     min_frame_size: int
     buffer_frame_size: int
 
-    def __init__(self, max_frame_size: int = 30, min_frame_size: int = 25, buffer_frame_size: int = 20):
+    def __init__(self, max_frame_size: int = 30, min_frame_size: int = 25, buffer_frame_size: int = 100):
         """
         コンストラクタ.
 

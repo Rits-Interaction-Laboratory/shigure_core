@@ -19,5 +19,5 @@ class SubtractionAnalysisLogic:
 
         # すべてのフレームで差分が取得されたpixelのみを対象にする
         valid_pixel = subtraction_frames.get_valid_pixel()
-        data: np.ndarray = valid_pixel * 255
+        data: np.ndarray = valid_pixel * subtraction_frames.get_top_frame()
         return True, data.astype(np.uint8)
