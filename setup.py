@@ -24,11 +24,8 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'realsense_preview = shigure.nodes.node_realsense_preview:main',
             'bg_subtraction = shigure.nodes.node_bg_subtraction:main',
-            'bg_subtraction_preview = shigure.nodes.node_bg_subtraction_preview:main',
             'subtraction_analysis = shigure.nodes.node_subtraction_analysis:main',
-            'people_detection = shigure.nodes.node_people_detection:main',
         ],
     },
 )

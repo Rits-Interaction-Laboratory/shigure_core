@@ -30,7 +30,7 @@ class FrameCombiner(Generic[T, U]):
         """
         self._left_queue.put((sec, nano_sec, obj))
 
-        if not hasattr(self, 'left_head'):
+        if not hasattr(self, '_left_head'):
             self._left_head = self._left_queue.get()
 
     def enqueue_to_right_queue(self, sec: int, nano_sec: int, obj: U) -> None:
@@ -44,7 +44,7 @@ class FrameCombiner(Generic[T, U]):
         """
         self._right_queue.put((sec, nano_sec, obj))
 
-        if not hasattr(self, 'right_head'):
+        if not hasattr(self, '_right_head'):
             self._right_head = self._right_queue.get()
 
     def dequeue(self) -> Tuple[bool, int, int, T, U]:
@@ -53,9 +53,9 @@ class FrameCombiner(Generic[T, U]):
 
         :return: (result, sec, nano_sec, obj1, obj2) のタプル
         """
-        if not hasattr(self, 'left_head'):
+        if not hasattr(self, '_left_head'):
             return False, -1, -1, None, None
-        if not hasattr(self, 'right_head'):
+        if not hasattr(self, '_right_head'):
             return False, -1, -1, None, None
 
         left_sec, left_nano_sec, left_obj = self._left_head
