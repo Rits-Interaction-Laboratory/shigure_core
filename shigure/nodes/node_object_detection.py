@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 import rclpy
-from sensor_msgs.msg import Image
+from sensor_msgs.msg import Image, CompressedImage
 
 from shigure.nodes.frame_combiner.frame_combiner import FrameCombiner
 from shigure.nodes.node_image_preview import ImagePreviewNode
@@ -15,11 +15,11 @@ class ObjectDetectionNode(ImagePreviewNode):
     def __init__(self):
         super().__init__("object_detection_node")
 
-        self.detection_publisher = self.create_publisher(Image, '/shigure/object_detection', 10)
-        self.people_mask_subscription = self.create_subscription(Image, '/people_detection',
-                                                                 self.get_people_mask_callback, 10)
-        self.subtraction_analysis_subscription = self.create_subscription(Image, '/shigure/subtraction_analysis',
-                                                                          self.get_subtraction_analysis_callback, 10)
+        self.detection_publisher = self.create_publisher(CompressedImage, '/shigure/object_detection', 10)
+        # self.people_mask_subscription = self.create_subscription(Image, '/people_detection',
+        #                                                          self.get_people_mask_callback, 10)
+        # self.subtraction_analysis_subscription = self.create_subscription(Image, '/shigure/subtraction_analysis',
+        #                                                                   self.get_subtraction_analysis_callback, 10)
 
         self.frame_combiner = FrameCombiner[np.ndarray, np.ndarray](round_nano_sec=500 * 1000000)
         self.object_detection_logic = ObjectDetectionLogic()

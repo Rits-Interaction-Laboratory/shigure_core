@@ -14,8 +14,8 @@ class ObjectExtractionNode(ImagePreviewNode):
     def __init__(self):
         super().__init__("object_extraction_node")
 
-        self.detection_publisher = self.create_publisher(Image, '/shigure/object_extraction', 10)
-        self.object_detection_subscription = self.create_subscription(Image, '/shigure/object_detection',
+        self.detection_publisher = self.create_publisher(CompressedImage, '/shigure/object_extraction', 10)
+        self.object_detection_subscription = self.create_subscription(CompressedImage, '/shigure/object_detection',
                                                                       self.get_object_detection_callback, 10)
         self.color_subscription = self.create_subscription(CompressedImage, '/rs/color/compressed',
                                                            self.get_color_callback, 10)
@@ -29,8 +29,8 @@ class ObjectExtractionNode(ImagePreviewNode):
 
         self.combine()
 
-    def get_object_detection_callback(self, src: Image):
-        img = self.bridge.imgmsg_to_cv2(src)
+    def get_object_detection_callback(self, src: CompressedImage):
+        img = self.bridge.compressed_imgmsg_to_cv2(src)
         self.frame_combiner.enqueue_to_right_queue(src.header.stamp.sec, src.header.stamp.nanosec, img.copy())
 
         self.combine()

@@ -31,7 +31,7 @@ class BgSubtractionNode(ImagePreviewNode):
 
         self.depth_frames = DepthFrames()
         self.bg_subtraction_logic = BgSubtractionLogic()
-        self.publisher_ = self.create_publisher(Image, '/shigure/bg_subtraction', 10)
+        self.publisher_ = self.create_publisher(CompressedImage, '/shigure/bg_subtraction', 10)
         self.subscription = self.create_subscription(CompressedImage, '/rs/aligned_depth_to_color/compressedDepth',
                                                      self.get_depth_callback, 10)
 
@@ -50,7 +50,7 @@ class BgSubtractionNode(ImagePreviewNode):
             self.depth_frames.add_frame(frame)
 
             if result:
-                msg: Image = self.bridge.cv2_to_imgmsg(data)
+                msg: Image = self.bridge.cv2_to_compressed_imgmsg(data)
                 msg.header.stamp = image_rect_raw.header.stamp
                 self.publisher_.publish(msg)
 
