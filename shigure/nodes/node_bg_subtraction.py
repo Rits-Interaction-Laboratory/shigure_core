@@ -1,6 +1,7 @@
 import cv2
 import numpy as np
 import rclpy
+from rcl_interfaces.msg import ParameterDescriptor, ParameterType
 from sensor_msgs.msg import Image, CompressedImage
 
 from shigure.nodes.bg_subtraction.depth_frames import DepthFrames
@@ -13,11 +14,31 @@ class BgSubtractionNode(ImagePreviewNode):
 
     def __init__(self):
         super().__init__('bg_subtraction_node')
+
+        # ros params
+        input_round_descriptor = ParameterDescriptor(type=ParameterType.PARAMETER_INTEGER,
+                                                     description='Max of input depth on debug img.')
+        self.declare_parameter('input_round', 1500, input_round_descriptor)
+        self.input_round: int = self.get_parameter("input_round").get_parameter_value().integer_value
+        avg_round_descriptor = ParameterDescriptor(type=ParameterType.PARAMETER_INTEGER,
+                                                   description='Max of avg depth on debug img.')
+        self.declare_parameter('avg_round', 1500, avg_round_descriptor)
+        self.avg_round: int = self.get_parameter("avg_round").get_parameter_value().integer_value
+        sd_round_descriptor = ParameterDescriptor(type=ParameterType.PARAMETER_INTEGER,
+                                                  description='Max of sd depth on debug img.')
+        self.declare_parameter('sd_round', 500, sd_round_descriptor)
+        self.sd_round: int = self.get_parameter("sd_round").get_parameter_value().integer_value
+
         self.depth_frames = DepthFrames()
         self.bg_subtraction_logic = BgSubtractionLogic()
         self.publisher_ = self.create_publisher(Image, '/shigure/bg_subtraction', 10)
         self.subscription = self.create_subscription(CompressedImage, '/rs/aligned_depth_to_color/compressedDepth',
                                                      self.get_depth_callback, 10)
+
+        if self.is_debug_mode:
+            self.get_logger().info(f'InputRound : {self.input_round}')
+            self.get_logger().info(f'AvgRound : {self.avg_round}')
+            self.get_logger().info(f'SdRound : {self.sd_round}')
 
     def get_depth_callback(self, image_rect_raw: CompressedImage):
         try:
@@ -40,9 +61,9 @@ class BgSubtractionNode(ImagePreviewNode):
                     sd = self.depth_frames.get_standard_deviation() * valid_pixel
 
                     # cv2描画用にuint8に丸め込む
-                    rounded_frame = frame_util.convert_frame_to_uint8(self.depth_frames.frames[-1], 1500)
-                    rounded_avg = frame_util.convert_frame_to_uint8(avg, 1500)
-                    rounded_sd = frame_util.convert_frame_to_uint8(sd, 1500)
+                    rounded_frame = frame_util.convert_frame_to_uint8(self.depth_frames.frames[-1], self.input_round)
+                    rounded_avg = frame_util.convert_frame_to_uint8(avg, self.avg_round)
+                    rounded_sd = frame_util.convert_frame_to_uint8(sd, self.sd_round)
 
                     # 色つけ
                     color_depth = cv2.applyColorMap(rounded_frame, cv2.COLORMAP_OCEAN)
