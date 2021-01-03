@@ -1,3 +1,5 @@
+import datetime
+
 import cv2
 import numpy as np
 import rclpy
@@ -42,6 +44,7 @@ class BgSubtractionNode(ImagePreviewNode):
 
     def get_depth_callback(self, image_rect_raw: CompressedImage):
         try:
+            self.get_logger().info(f'Buffering start', once=True)
             # FPS計測
             self.frame_count_up()
 
@@ -50,6 +53,8 @@ class BgSubtractionNode(ImagePreviewNode):
             self.depth_frames.add_frame(frame)
 
             if result:
+                self.get_logger().info(f'Buffering end', once=True)
+
                 msg: Image = self.bridge.cv2_to_compressed_imgmsg(data)
                 msg.header.stamp = image_rect_raw.header.stamp
                 self.publisher_.publish(msg)
@@ -74,6 +79,8 @@ class BgSubtractionNode(ImagePreviewNode):
                     tile_img = cv2.vconcat([cv2.hconcat([color_depth, color_avg]), cv2.hconcat([color_sd, img])])
                     cv2.imshow("Result", tile_img)
                     cv2.waitKey(1)
+                else:
+                    print(f'[{datetime.datetime.now()}] fps : {self.fps}', end='\r')
 
         except Exception as err:
             self.get_logger().error(err)

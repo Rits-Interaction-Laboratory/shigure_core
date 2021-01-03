@@ -1,64 +1,55 @@
+import datetime
+
 import cv2
+import message_filters
 import numpy as np
 import rclpy
-from sensor_msgs.msg import Image, CompressedImage
+from sensor_msgs.msg import CompressedImage
 
-from shigure.nodes.frame_combiner.frame_combiner import FrameCombiner
 from shigure.nodes.node_image_preview import ImagePreviewNode
 from shigure.nodes.object_detection.logic import ObjectDetectionLogic
 
 
 class ObjectDetectionNode(ImagePreviewNode):
-    frame_combiner: FrameCombiner[np.ndarray, np.ndarray]
     _known_mask: np.ndarray
 
     def __init__(self):
         super().__init__("object_detection_node")
 
         self.detection_publisher = self.create_publisher(CompressedImage, '/shigure/object_detection', 10)
-        # self.people_mask_subscription = self.create_subscription(Image, '/people_detection',
-        #                                                          self.get_people_mask_callback, 10)
-        # self.subtraction_analysis_subscription = self.create_subscription(Image, '/shigure/subtraction_analysis',
-        #                                                                   self.get_subtraction_analysis_callback, 10)
 
-        self.frame_combiner = FrameCombiner[np.ndarray, np.ndarray](round_nano_sec=500 * 1000000)
+        people_mask_subscriber = message_filters.Subscriber(self, CompressedImage, '/people_detection')
+        subtraction_analysis_subscriber = message_filters.Subscriber(self, CompressedImage,
+                                                                     '/shigure/subtraction_analysis')
+        self.time_synchronizer = message_filters.TimeSynchronizer(
+            [people_mask_subscriber, subtraction_analysis_subscriber], 10000)
+        self.time_synchronizer.registerCallback(self.callback)
+
         self.object_detection_logic = ObjectDetectionLogic()
 
-    def get_subtraction_analysis_callback(self, src: Image):
-        img = self.bridge.imgmsg_to_cv2(src)
-        self.frame_combiner.enqueue_to_left_queue(src.header.stamp.sec, src.header.stamp.nanosec, img.copy())
+    def callback(self, people_mask_src: CompressedImage, subtraction_analysis_src: CompressedImage):
+        self.frame_count_up()
 
-        self.combine()
-
-    def get_people_mask_callback(self, src: Image):
-        img = self.bridge.imgmsg_to_cv2(src)
-        self.frame_combiner.enqueue_to_right_queue(src.header.stamp.sec, src.header.stamp.nanosec, img.copy())
-
-        self.combine()
-
-    def combine(self):
-        result, sec, nano_sec, subtraction_analysis_img, people_mask = self.frame_combiner.dequeue_with_left()
-
-        if not result:
-            return
+        people_mask_img = self.bridge.compressed_imgmsg_to_cv2(people_mask_src)
+        subtraction_analysis_img = self.bridge.compressed_imgmsg_to_cv2(subtraction_analysis_src)
 
         if not hasattr(self, '_known_mask'):
             self._known_mask = np.ones(subtraction_analysis_img.shape[:2], np.uint8)
 
-        if people_mask is None:
-            people_mask = np.zeros(subtraction_analysis_img.shape[:2], np.uint8)
-
-        result_img, self._known_mask = self.object_detection_logic.execute(subtraction_analysis_img, people_mask,
+        result_img, self._known_mask = self.object_detection_logic.execute(subtraction_analysis_img, people_mask_img,
                                                                            self._known_mask)
 
-        msg: Image = self.bridge.cv2_to_imgmsg(result_img)
-        msg.header.stamp.sec = sec
-        msg.header.stamp.nanosec = nano_sec
+        msg: CompressedImage = self.bridge.cv2_to_compressed_imgmsg(result_img)
+        msg.header.stamp = people_mask_src.header.stamp
         self.detection_publisher.publish(msg)
 
         if self.is_debug_mode:
-            cv2.imshow("Result", cv2.hconcat([subtraction_analysis_img, people_mask, result_img]))
+            img = self.print_fps(result_img)
+            cv2.imshow("Result", cv2.hconcat([cv2.cvtColor(subtraction_analysis_img, cv2.COLOR_GRAY2BGR),
+                                              cv2.cvtColor(people_mask_img, cv2.COLOR_GRAY2BGR), img]))
             cv2.waitKey(1)
+        else:
+            print(f'[{datetime.datetime.now()}] fps : {self.fps}', end='\r')
 
 
 def main(args=None):
