@@ -1,57 +1,54 @@
+import datetime
+
 import cv2
+import message_filters
 import numpy as np
 import rclpy
-from sensor_msgs.msg import Image, CompressedImage
+from sensor_msgs.msg import CompressedImage
 
-from shigure.nodes.frame_combiner.frame_combiner import FrameCombiner
 from shigure.nodes.node_image_preview import ImagePreviewNode
 from shigure.nodes.object_extraction.logic import ObjectExtractionLogic
 
 
 class ObjectExtractionNode(ImagePreviewNode):
-    frame_combiner: FrameCombiner[np.ndarray, np.ndarray]
+    _result_buffer_img: np.ndarray
 
     def __init__(self):
         super().__init__("object_extraction_node")
 
         self.detection_publisher = self.create_publisher(CompressedImage, '/shigure/object_extraction', 10)
-        self.object_detection_subscription = self.create_subscription(CompressedImage, '/shigure/object_detection',
-                                                                      self.get_object_detection_callback, 10)
-        self.color_subscription = self.create_subscription(CompressedImage, '/rs/color/compressed',
-                                                           self.get_color_callback, 10)
 
-        self.frame_combiner = FrameCombiner[np.ndarray, np.ndarray]()
+        object_detection_subscriber = message_filters.Subscriber(self, CompressedImage, '/shigure/object_detection')
+        color_subscriber = message_filters.Subscriber(self, CompressedImage, '/rs/color/compressed')
+        self.time_synchronizer = message_filters.TimeSynchronizer(
+            [object_detection_subscriber, color_subscriber], 10000)
+        self.time_synchronizer.registerCallback(self.callback)
+
         self.object_extraction_logic = ObjectExtractionLogic()
 
-    def get_color_callback(self, src: CompressedImage):
-        img = self.bridge.compressed_imgmsg_to_cv2(src)
-        self.frame_combiner.enqueue_to_left_queue(src.header.stamp.sec, src.header.stamp.nanosec, img.copy())
+    def callback(self, object_detection_src: CompressedImage, color_src: CompressedImage):
+        self.frame_count_up()
 
-        self.combine()
+        object_detection_img: np.ndarray = self.bridge.compressed_imgmsg_to_cv2(object_detection_src)
+        color_img: np.ndarray = self.bridge.compressed_imgmsg_to_cv2(color_src)
 
-    def get_object_detection_callback(self, src: CompressedImage):
-        img = self.bridge.compressed_imgmsg_to_cv2(src)
-        self.frame_combiner.enqueue_to_right_queue(src.header.stamp.sec, src.header.stamp.nanosec, img.copy())
+        if not hasattr(self, '_result_buffer_img'):
+            self._result_buffer_img = np.zeros(color_img.shape[:2])
 
-        self.combine()
+        result_img, self._result_buffer_img = self.object_extraction_logic.execute(color_img, object_detection_img,
+                                                                                   self._result_buffer_img, 200)
 
-    def combine(self):
-        result, sec, nano_sec, color_img, object_detection_img = self.frame_combiner.dequeue()
-
-        if not result:
-            return
-
-        result_img = self.object_extraction_logic.execute(color_img, object_detection_img, 200)
-
-        msg: Image = self.bridge.cv2_to_imgmsg(result_img)
-        msg.header.stamp.sec = sec
-        msg.header.stamp.nanosec = nano_sec
+        msg: CompressedImage = self.bridge.cv2_to_compressed_imgmsg(result_img)
+        msg.header.stamp = color_src.header.stamp
         self.detection_publisher.publish(msg)
 
         if self.is_debug_mode:
+            img = self.print_fps(result_img)
             cv2.imshow("Result",
-                       cv2.hconcat([color_img, cv2.cvtColor(object_detection_img, cv2.COLOR_GRAY2BGR), result_img]))
+                       cv2.hconcat([color_img, cv2.cvtColor(object_detection_img, cv2.COLOR_GRAY2BGR), img]))
             cv2.waitKey(1)
+        else:
+            print(f'[{datetime.datetime.now()}] fps : {self.fps}', end='\r')
 
 
 def main(args=None):

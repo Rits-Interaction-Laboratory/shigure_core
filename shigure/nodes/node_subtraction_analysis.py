@@ -1,3 +1,5 @@
+import datetime
+
 import rclpy
 import cv2
 import numpy as np
@@ -24,6 +26,8 @@ class SubtractionAnalysisNode(ImagePreviewNode):
 
     def get_subtraction_callback(self, image_rect_raw: CompressedImage):
         try:
+            self.get_logger().info('Buffering start', once=True)
+
             # FPS計算
             self.frame_count_up()
 
@@ -33,6 +37,8 @@ class SubtractionAnalysisNode(ImagePreviewNode):
                                                                image_rect_raw.header.stamp.nanosec))
 
             if result:
+                self.get_logger().info('Buffering end', once=True)
+
                 msg: Image = self.bridge.cv2_to_compressed_imgmsg(data)
                 sec, nano_sec = self.subtraction_frames.get_timestamp()
                 msg.header.stamp.sec = sec
@@ -43,6 +49,9 @@ class SubtractionAnalysisNode(ImagePreviewNode):
                     img = self.print_fps(data)
                     cv2.imshow("Result", cv2.hconcat([cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR), img]))
                     cv2.waitKey(1)
+                else:
+                    print(f'[{datetime.datetime.now()}] fps : {self.fps}', end='\r')
+
         except Exception as err:
             self.get_logger().error(err)
 
