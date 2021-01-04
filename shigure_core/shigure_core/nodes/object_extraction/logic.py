@@ -15,6 +15,7 @@ class ObjectExtractionLogic:
         :param color_img:
         :param object_detection_mask:
         :param min_size:
+        :param result_buffer:
         :return:
         """
 

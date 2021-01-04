@@ -1,7 +1,7 @@
 import numpy as np
 from openpose_ros2_msgs.msg import PoseKeyPointsList, PoseKeyPoints, PoseKeyPoint
 
-from shigure.nodes.people_tracking.tracking_info import TrackingInfo
+from shigure_core.nodes.people_tracking.tracking_info import TrackingInfo
 
 _NECK_INDEX = 1
 

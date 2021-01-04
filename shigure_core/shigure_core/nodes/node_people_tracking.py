@@ -6,10 +6,10 @@ from openpose_ros2_msgs.msg import PoseKeyPointsList
 from rcl_interfaces.msg import ParameterDescriptor, ParameterType
 from sensor_msgs.msg import CompressedImage
 
-from shigure.nodes.node_image_preview import ImagePreviewNode
-from shigure.nodes.people_tracking.logic import PeopleTrackingLogic
-from shigure.nodes.people_tracking.tracking_info import TrackingInfo
-from shigure.util import compressed_depth_util
+from shigure_core.nodes.node_image_preview import ImagePreviewNode
+from shigure_core.nodes.people_tracking.logic import PeopleTrackingLogic
+from shigure_core.nodes.people_tracking.tracking_info import TrackingInfo
+from shigure_core.util import compressed_depth_util
 
 
 class PeopleTrackingNode(ImagePreviewNode):

@@ -1,5 +1,5 @@
 import numpy as np
-from shigure.nodes.subtraction_analysis.subtraction_frames import SubtractionFrames
+from shigure_core.nodes.subtraction_analysis.subtraction_frames import SubtractionFrames
 
 
 class SubtractionAnalysisLogic:

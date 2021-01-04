@@ -6,8 +6,8 @@ import numpy as np
 import rclpy
 from sensor_msgs.msg import CompressedImage
 
-from shigure.nodes.node_image_preview import ImagePreviewNode
-from shigure.nodes.object_detection.logic import ObjectDetectionLogic
+from shigure_core.nodes.node_image_preview import ImagePreviewNode
+from shigure_core.nodes.object_detection.logic import ObjectDetectionLogic
 
 
 class ObjectDetectionNode(ImagePreviewNode):
