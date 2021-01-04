@@ -1,5 +1,5 @@
 import numpy as np
-from shigure.nodes.bg_subtraction.depth_frames import DepthFrames
+from shigure_core.nodes.bg_subtraction.depth_frames import DepthFrames
 
 
 class BgSubtractionLogic:
