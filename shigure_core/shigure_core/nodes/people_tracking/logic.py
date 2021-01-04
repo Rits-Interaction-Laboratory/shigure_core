@@ -28,8 +28,8 @@ class PeopleTrackingLogic:
             y = int(neck_point.y) if neck_point.y < height else height - 1
 
             # 透視逆変換して保存
-            current_people_list.append((neck_point.x / focal_length,
-                                        neck_point.y / focal_length, depth_img[y, x]))
+            current_people_list.append((neck_point.x / focal_length, neck_point.y / focal_length,
+                                        depth_img[y, x], key_points))
 
         return PeopleTrackingLogic.tracking(current_people_list, tracking_info, threshold_distance)
 
@@ -44,10 +44,10 @@ class PeopleTrackingLogic:
             return tracking_info
 
         for people_id, previous_people in previous_people_dict.items():
-            previous_x, previous_y, previous_z = previous_people
+            previous_x, previous_y, previous_z, _ = previous_people
             min_diff = 0
             for current_people in current_people_list:
-                current_x, current_y, current_z = current_people
+                current_x, current_y, current_z, key_point = current_people
 
                 diff_x = abs(previous_x - current_x)
                 diff_y = abs(previous_y - current_y)
@@ -57,7 +57,7 @@ class PeopleTrackingLogic:
                         diff_y < threshold_distance and
                         diff_z < threshold_distance):
                     if people_id not in current_people_dict.keys() or min_diff > diff_x + diff_y + diff_z:
-                        current_people_dict[people_id] = (current_x, current_y, current_z)
+                        current_people_dict[people_id] = (current_x, current_y, current_z, key_point)
                         min_diff = diff_x + diff_y + diff_z
                         current_people_list.remove(current_people)
 
