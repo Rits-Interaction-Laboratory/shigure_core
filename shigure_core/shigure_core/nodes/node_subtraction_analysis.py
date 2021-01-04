@@ -39,7 +39,7 @@ class SubtractionAnalysisNode(ImagePreviewNode):
             if result:
                 self.get_logger().info('Buffering end', once=True)
 
-                msg: Image = self.bridge.cv2_to_compressed_imgmsg(data)
+                msg: Image = self.bridge.cv2_to_compressed_imgmsg(data, 'png')
                 sec, nano_sec = self.subtraction_frames.get_timestamp()
                 msg.header.stamp.sec = sec
                 msg.header.stamp.nanosec = nano_sec
