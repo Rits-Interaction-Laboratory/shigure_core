@@ -6,10 +6,10 @@ import numpy as np
 from sensor_msgs.msg import Image, CompressedImage
 from cv_bridge import CvBridge
 
-from shigure.nodes.node_image_preview import ImagePreviewNode
-from shigure.nodes.subtraction_analysis.subtraction_frames import SubtractionFrames
-from shigure.nodes.subtraction_analysis.logic import SubtractionAnalysisLogic
-from shigure.nodes.subtraction_analysis.timestamp import Timestamp
+from shigure_core.nodes.node_image_preview import ImagePreviewNode
+from shigure_core.nodes.subtraction_analysis.subtraction_frames import SubtractionFrames
+from shigure_core.nodes.subtraction_analysis.logic import SubtractionAnalysisLogic
+from shigure_core.nodes.subtraction_analysis.timestamp import Timestamp
 
 
 class SubtractionAnalysisNode(ImagePreviewNode):

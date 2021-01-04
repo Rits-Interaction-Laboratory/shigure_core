@@ -6,8 +6,8 @@ import numpy as np
 import rclpy
 from sensor_msgs.msg import CompressedImage
 
-from shigure.nodes.node_image_preview import ImagePreviewNode
-from shigure.nodes.object_extraction.logic import ObjectExtractionLogic
+from shigure_core.nodes.node_image_preview import ImagePreviewNode
+from shigure_core.nodes.object_extraction.logic import ObjectExtractionLogic
 
 
 class ObjectExtractionNode(ImagePreviewNode):

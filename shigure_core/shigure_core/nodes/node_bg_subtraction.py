@@ -6,10 +6,10 @@ import rclpy
 from rcl_interfaces.msg import ParameterDescriptor, ParameterType
 from sensor_msgs.msg import Image, CompressedImage
 
-from shigure.nodes.bg_subtraction.depth_frames import DepthFrames
-from shigure.nodes.bg_subtraction.logic import BgSubtractionLogic
-from shigure.nodes.node_image_preview import ImagePreviewNode
-from shigure.util import compressed_depth_util, frame_util
+from shigure_core.nodes.bg_subtraction.depth_frames import DepthFrames
+from shigure_core.nodes.bg_subtraction.logic import BgSubtractionLogic
+from shigure_core.nodes.node_image_preview import ImagePreviewNode
+from shigure_core.util import compressed_depth_util, frame_util
 
 
 class BgSubtractionNode(ImagePreviewNode):
