@@ -3,8 +3,7 @@ import message_filters
 import numpy as np
 import rclpy
 from openpose_ros2_msgs.msg import PoseKeyPointsList as OpenPosePoseKeyPointsList
-from rcl_interfaces.msg import ParameterDescriptor, ParameterType
-from sensor_msgs.msg import CompressedImage
+from sensor_msgs.msg import CompressedImage, CameraInfo
 from shigure_core_msgs.msg import PoseKeyPointsList as ShigurePoseKeyPointsList, PoseKeyPoints
 
 from shigure_core.nodes.node_image_preview import ImagePreviewNode
@@ -18,39 +17,42 @@ class PeopleTrackingNode(ImagePreviewNode):
     def __init__(self):
         super().__init__('people_tracking_node')
 
-        # ROS params
-        focal_length_descriptor = ParameterDescriptor(type=ParameterType.PARAMETER_DOUBLE,
-                                                      description='Focal length [mm] of depth camera.')
-        self.declare_parameter('focal_length', 1.0, focal_length_descriptor)
-        self.focal_length: float = self.get_parameter("focal_length").get_parameter_value().double_value
+        self._publisher = self.create_publisher(ShigurePoseKeyPointsList, '/shigure/people_detection', 10)
 
         self._publisher = self.create_publisher(ShigurePoseKeyPointsList, '/shigure/people_detection', 10)
 
         depth_subscriber = message_filters.Subscriber(self, CompressedImage,
                                                       '/rs/aligned_depth_to_color/compressedDepth')
+        depth_camera_info_subscriber = message_filters.Subscriber(self, CameraInfo,
+                                                                  '/rs/aligned_depth_to_color/cameraInfo')
         key_points_subscriber = message_filters.Subscriber(self, OpenPosePoseKeyPointsList, '/openpose/pose_key_points')
 
         if not self.is_debug_mode:
             self.time_synchronizer = message_filters.TimeSynchronizer(
-                [depth_subscriber, key_points_subscriber], 10000)
+                [depth_subscriber, key_points_subscriber, depth_camera_info_subscriber], 30000)
             self.time_synchronizer.registerCallback(self.callback)
         else:
             color_subscriber = message_filters.Subscriber(self, CompressedImage, '/rs/color/compressed')
             self.time_synchronizer = message_filters.TimeSynchronizer(
-                [depth_subscriber, key_points_subscriber, color_subscriber], 10000)
+                [depth_subscriber, key_points_subscriber, depth_camera_info_subscriber, color_subscriber], 400000)
             self.time_synchronizer.registerCallback(self.callback_debug)
 
         self.tracking_info = TrackingInfo()
         self.people_tracking_logic = PeopleTrackingLogic()
 
-    def callback(self, depth_src: CompressedImage, key_points_list: OpenPosePoseKeyPointsList):
+    def callback(self, depth_src: CompressedImage, key_points_list: OpenPosePoseKeyPointsList, camera_info: CameraInfo):
         self.frame_count_up()
 
         depth_img = compressed_depth_util.convert_compressed_depth_img_to_cv2(depth_src)
         depth_img = depth_img.astype(np.float32)
 
-        self.tracking_info = self.people_tracking_logic.execute(depth_img, key_points_list, self.tracking_info,
-                                                                self.focal_length)
+        # 焦点距離取得
+        #     [fx  0 cx]
+        # K = [ 0 fy cy]
+        #     [ 0  0  1]
+        k = camera_info.k.reshape((3, 3))
+
+        self.tracking_info = self.people_tracking_logic.execute(depth_img, key_points_list, self.tracking_info, k)
 
         # publish
         publish_msg = ShigurePoseKeyPointsList()
@@ -65,18 +67,20 @@ class PeopleTrackingNode(ImagePreviewNode):
         return publish_msg
 
     def callback_debug(self, depth_src: CompressedImage, key_points_list: OpenPosePoseKeyPointsList,
-                       color_src: CompressedImage):
-        published_msg: ShigurePoseKeyPointsList = self.callback(depth_src, key_points_list)
+                       camera_info: CameraInfo, color_src: CompressedImage):
+        published_msg: ShigurePoseKeyPointsList = self.callback(depth_src, key_points_list, camera_info)
         color_img: np.ndarray = self.bridge.compressed_imgmsg_to_cv2(color_src)
         height, width = color_img.shape[:2]
 
         pose_key_points: PoseKeyPoints
         for pose_key_points in published_msg.pose_key_points_list:
             people_id = pose_key_points.people_id
-            people_x, people_y, _, _ = self.tracking_info.get_people_dict()[people_id]
+            _, _, _, current_pose_key_points = self.tracking_info.get_people_dict()[people_id]
 
-            x = int(people_x * self.focal_length) if people_x * self.focal_length < width else width - 1
-            y = int(people_y * self.focal_length) if people_y * self.focal_length < height else height - 1
+            neck_point = current_pose_key_points.pose_key_points[1]
+
+            x = int(neck_point.x) if neck_point.x < width else width - 1
+            y = int(neck_point.y) if neck_point.y < height else height - 1
 
             cv2.circle(color_img, (x, y), 5, (0, 0, 255), thickness=-1)
             bounding_box = pose_key_points.bounding_box
