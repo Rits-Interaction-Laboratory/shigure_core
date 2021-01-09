@@ -1,4 +1,5 @@
-# Shigure
+# Shigure Core
+![Shigure Core](https://img.shields.io/badge/shigure-core-red)
 室内監視システム ROS2版
 
 ## Requires
