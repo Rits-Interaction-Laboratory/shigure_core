@@ -1,0 +1,6 @@
+bg_subtraction_node:
+  ros__parameters:
+    is_debug_mode: false
+    input_round: 1500
+    avg_round: 1500
+    sd_round: 500
