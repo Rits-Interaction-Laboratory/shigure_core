@@ -19,6 +19,8 @@ class PeopleTrackingNode(ImagePreviewNode):
 
         self._publisher = self.create_publisher(ShigurePoseKeyPointsList, '/shigure/people_detection', 10)
 
+        self._publisher = self.create_publisher(ShigurePoseKeyPointsList, '/shigure/people_detection', 10)
+
         depth_subscriber = message_filters.Subscriber(self, CompressedImage,
                                                       '/rs/aligned_depth_to_color/compressedDepth')
         depth_camera_info_subscriber = message_filters.Subscriber(self, CameraInfo,
