@@ -28,7 +28,8 @@ find_package(sensor_msgs REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/BoundingBox.msg"
-  "msg/PoseKeyPoint.msg"
+  "msg/Point.msg"
+  "msg/PointData.msg"
   "msg/PoseKeyPoints.msg"
   "msg/PoseKeyPointsList.msg"
   "msg/DetectedObject.msg"
