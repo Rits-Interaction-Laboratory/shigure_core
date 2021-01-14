@@ -55,7 +55,7 @@ class BgSubtractionNode(ImagePreviewNode):
             if result:
                 self.get_logger().info(f'Buffering end', once=True)
 
-                msg: Image = self.bridge.cv2_to_compressed_imgmsg(data)
+                msg: Image = self.bridge.cv2_to_compressed_imgmsg(data, 'png')
                 msg.header.stamp = image_rect_raw.header.stamp
                 self.publisher_.publish(msg)
 
