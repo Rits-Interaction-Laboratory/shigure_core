@@ -3,7 +3,7 @@ from typing import List
 
 import numpy as np
 
-from shigure_core.nodes.subtraction_analysis.timestamp import Timestamp
+from shigure_core.nodes.common_model.timestamp import Timestamp
 
 
 class SubtractionFrames:
@@ -71,7 +71,7 @@ class SubtractionFrames:
 
         :return:
         """
-        return self.timestamps[0].get_timestamp()
+        return self.timestamps[0].timestamp
 
     def get_top_frame(self) -> np.ndarray:
         """
