@@ -9,7 +9,7 @@ setup(
     name=package_name,
     version='0.0.1',
     packages=[package_name, node_package_name, node_package_name + '.common_model',
-              node_package_name + '.bg_subtraction',
+              node_package_name + '.bg_subtraction', node_package_name + '.people_mask_buffer',
               node_package_name + '.subtraction_analysis', node_package_name + '.people_tracking',
               node_package_name + '.object_detection', node_package_name + '.contact_detection',
               util_package_name, enum_package_name],
@@ -28,6 +28,7 @@ setup(
     entry_points={
         'console_scripts': [
             'bg_subtraction = shigure_core.nodes.node_bg_subtraction:main',
+            'people_mask_buffer = shigure_core.nodes.node_people_mask_buffer:main',
             'subtraction_analysis = shigure_core.nodes.node_subtraction_analysis:main',
             'object_detection = shigure_core.nodes.node_object_detection:main',
             'contact_detection = shigure_core.nodes.node_contact_detection:main',

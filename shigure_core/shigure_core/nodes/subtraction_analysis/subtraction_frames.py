@@ -1,20 +1,18 @@
-import copy
 from typing import List
 
 import numpy as np
 
-from shigure_core.nodes.common_model.timestamp import Timestamp
+from shigure_core.nodes.subtraction_analysis.subtraction_frame import SubtractionFrame
 
 
 class SubtractionFrames:
     """複数枚の背景差分を解析するクラス."""
 
-    frames: list
-    timestamps: List[Timestamp]
+    frames: List[SubtractionFrame]
     valid_frame_count: np.ndarray
     frame_size: int
 
-    def __init__(self, frame_size: int = 90):
+    def __init__(self, frame_size: int = 60):
         """
         コンストラクタ.
 
@@ -23,31 +21,29 @@ class SubtractionFrames:
         self.frame_size = frame_size
 
         self.frames = []
-        self.timestamps = []
 
-    def add_frame(self, frame: np.ndarray, timestamp: Timestamp) -> None:
+    def add_frame(self, frame: SubtractionFrame) -> None:
         """
         フレームを保存します.
 
         フレームが最大フレーム数に達している場合は、最古のフレームが削除されます.
 
         :param frame: 保存するフレーム
-        :param timestamp: フレームのタイムスタンプ
         :return: None
         """
         if self.is_full():
             delete_frame = self.frames[0]
-            self.valid_frame_count -= delete_frame > 0
+            delete_frame_img = delete_frame.synthesized_img
+            self.valid_frame_count -= (delete_frame_img > 0) * 1
             self.frames = self.frames[1:]
-            self.timestamps = self.timestamps[1:]
 
+        synthesized_img = frame.synthesized_img
         if hasattr(self, 'valid_frame_count'):
-            self.valid_frame_count += (frame > 0) * 1
+            self.valid_frame_count += (synthesized_img > 0) * 1
         else:
-            self.valid_frame_count = (frame > 0) * 1
+            self.valid_frame_count = (synthesized_img > 0) * 1
 
-        self.frames.append(frame.copy())
-        self.timestamps.append(copy.copy(timestamp))
+        self.frames.append(frame)
 
     def is_full(self) -> bool:
         """
@@ -71,12 +67,20 @@ class SubtractionFrames:
 
         :return:
         """
-        return self.timestamps[0].timestamp
+        return self.frames[0].timestamp.timestamp
 
-    def get_top_frame(self) -> np.ndarray:
+    def get_top_frame(self) -> SubtractionFrame:
         """
         解析している画像を取得します.
 
         :return:
         """
         return self.frames[0]
+
+    def get_top_frame_img(self) -> np.ndarray:
+        """
+        解析している画像を取得します.
+
+        :return:
+        """
+        return self.frames[0].subtraction_img
