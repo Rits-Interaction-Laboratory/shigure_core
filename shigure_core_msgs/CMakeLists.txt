@@ -34,6 +34,9 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/PoseKeyPointsList.msg"
   "msg/DetectedObject.msg"
   "msg/DetectedObjectList.msg"
+  "msg/Cube.msg"
+  "msg/TrackedObject.msg"
+  "msg/TrackedObjectList.msg"
   DEPENDENCIES builtin_interfaces std_msgs sensor_msgs
 )
 
