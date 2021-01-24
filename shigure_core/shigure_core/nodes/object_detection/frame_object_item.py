@@ -5,18 +5,16 @@ import numpy as np
 from shigure_core.enum.detected_object_action_enum import DetectedObjectActionEnum
 from shigure_core.nodes.common_model.timestamp import Timestamp
 from shigure_core.nodes.object_detection.bounding_box import BoundingBox
-from shigure_core.nodes.object_detection.top_color_image import TopColorImage
 
 
 class FrameObjectItem:
 
     def __init__(self, action: DetectedObjectActionEnum, bounding_box: BoundingBox, size: int,
-                 mask: np.ndarray, color_img: np.ndarray, detected_at: Timestamp):
+                 mask: np.ndarray, detected_at: Timestamp):
         self._action = action
         self._bounding_box = bounding_box
         self._size = size
         self._mask = mask
-        self._color_img = color_img
         self._detected_at = detected_at
 
     def is_match(self, other) -> Tuple[bool, int]:
@@ -36,8 +34,8 @@ class FrameObjectItem:
         return result, size
 
     @property
-    def items(self) -> Tuple[DetectedObjectActionEnum, BoundingBox, int, np.ndarray, np.ndarray, Timestamp]:
-        return self._action, self._bounding_box, self._size, self._mask, self._color_img, self._detected_at
+    def items(self) -> Tuple[DetectedObjectActionEnum, BoundingBox, int, np.ndarray, Timestamp]:
+        return self._action, self._bounding_box, self._size, self._mask, self._detected_at
 
     @property
     def action(self) -> DetectedObjectActionEnum:
@@ -54,10 +52,6 @@ class FrameObjectItem:
     @property
     def mask(self) -> np.ndarray:
         return self._mask
-
-    @property
-    def color_img(self) -> np.ndarray:
-        return self._color_img
 
     @property
     def detected_at(self) -> Timestamp:
