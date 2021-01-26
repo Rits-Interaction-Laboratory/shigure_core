@@ -1,0 +1,5 @@
+string people_id
+string object_id
+string action
+BoundingBox people_bounding_box
+BoundingBox object_bounding_box
