@@ -26,7 +26,7 @@ class SubtractionAnalysisNode(ImagePreviewNode):
         subtraction_subscriber = message_filters.Subscriber(self, CompressedImage,
                                                             '/shigure/bg_subtraction')
         self.time_synchronizer = message_filters.TimeSynchronizer(
-            [people_subscriber, subtraction_subscriber], 20000)
+            [people_subscriber, subtraction_subscriber], 1000)
         self.time_synchronizer.registerCallback(self.callback)
 
     def callback(self, people: People, subtraction_src: CompressedImage):

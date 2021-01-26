@@ -31,7 +31,7 @@ class ObjectDetectionNode(ImagePreviewNode):
         color_subscriber = message_filters.Subscriber(self, CompressedImage, '/rs/color/compressed')
 
         self.time_synchronizer = message_filters.TimeSynchronizer(
-            [subtraction_analysis_subscriber, color_subscriber], 30000)
+            [subtraction_analysis_subscriber, color_subscriber], 1000)
         self.time_synchronizer.registerCallback(self.callback)
 
         self.object_detection_logic = ObjectDetectionLogic()

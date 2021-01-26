@@ -46,7 +46,7 @@ class ContactDetectionNode(ImagePreviewNode):
         self._color_img_buffer: List[np.ndarray] = []
         self._buffer_size = 90
 
-        self.hand_collider_distance = 5000  # 手の当たり判定の距離
+        self.hand_collider_distance = 50  # 手の当たり判定の距離
 
     def callback(self, object_list: DetectedObjectList, people: PoseKeyPointsList, depth_img_src: CompressedImage,
                  camera_info: CameraInfo, color_img_src: CompressedImage):
