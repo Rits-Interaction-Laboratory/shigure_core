@@ -43,7 +43,7 @@ class ObjectTrackingNode(ImagePreviewNode):
         self.frame_count_up()
 
         depth_img = compressed_depth_util.convert_compressed_depth_img_to_cv2(depth_src)
-        depth_img = depth_img.astype(np.float32)
+        depth_img: np.ndarray = depth_img.astype(np.float32)
 
         # 焦点距離取得
         #     [fx  0 cx]
@@ -73,8 +73,8 @@ class ObjectTrackingNode(ImagePreviewNode):
             right = min(int(bounding_box.x + bounding_box.width), width - 1)
             bottom = min(int(bounding_box.y + bounding_box.height), height - 1)
 
-            depth_min = np.amin(depth_img[top:bottom, left:right])
-            depth_max = np.amax(depth_img[top:bottom, left:right])
+            depth_min = depth_img[top:bottom, left:right].min()
+            depth_max = depth_img[top:bottom, left:right].max()
 
             s1 = np.asarray([[bounding_box.x, bounding_box.y, 1]]).T
             s2 = np.asarray([[bounding_box.x + bounding_box.width,

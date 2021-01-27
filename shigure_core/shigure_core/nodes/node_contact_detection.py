@@ -1,23 +1,18 @@
 import datetime
-from operator import itemgetter
-from typing import List
+from typing import List, Tuple
 
 import cv2
 import message_filters
 import numpy as np
 import rclpy
-from sensor_msgs.msg import CompressedImage, CameraInfo
-from shigure_core.enum.detected_object_action_enum import DetectedObjectActionEnum
+from sensor_msgs.msg import CompressedImage
+from shigure_core_msgs.msg import PoseKeyPointsList, TrackedObjectList, ContactedList, Contacted
 
-from shigure_core.util import compressed_depth_util
-from shigure_core_msgs.msg import DetectedObjectList, DetectedObject, BoundingBox, PoseKeyPointsList, PoseKeyPoints, \
-    Point, PointData
-
-from shigure_core.nodes.common_model.projection_matrix import ProjectionMatrix
-from shigure_core.nodes.contact_detection.cube import Cube
+from shigure_core.enum.contact_action_enum import ContactActionEnum
+from shigure_core.enum.tracked_object_action_enum import TrackedObjectActionEnum
+from shigure_core.nodes.contact_detection.logic import ContactDetectionLogic
 from shigure_core.nodes.node_image_preview import ImagePreviewNode
 from shigure_core.nodes.object_detection.frame_object import FrameObject
-from shigure_core.nodes.object_detection.logic import ObjectDetectionLogic
 
 
 class ContactDetectionNode(ImagePreviewNode):
@@ -27,141 +22,128 @@ class ContactDetectionNode(ImagePreviewNode):
         self.LEFT_HAND_INDEX = 4
         self.RIGHT_HAND_INDEX = 7
 
-        object_subscriber = message_filters.Subscriber(self, DetectedObjectList, '/shigure/object_detection')
+        self._publisher = self.create_publisher(ContactedList, '/shigure/contacted', 10)
+        object_subscriber = message_filters.Subscriber(self, TrackedObjectList, '/shigure/object_tracking')
         people_subscriber = message_filters.Subscriber(self, PoseKeyPointsList, '/shigure/people_detection')
-        depth_subscriber = message_filters.Subscriber(self, CompressedImage,
-                                                      '/rs/aligned_depth_to_color/compressedDepth')
-        depth_camera_info_subscriber = message_filters.Subscriber(self, CameraInfo,
-                                                                  '/rs/aligned_depth_to_color/cameraInfo')
         color_subscriber = message_filters.Subscriber(self, CompressedImage, '/rs/color/compressed')
 
         self.time_synchronizer = message_filters.TimeSynchronizer(
-            [object_subscriber, people_subscriber, depth_subscriber, depth_camera_info_subscriber, color_subscriber],
-            50000)
+            [object_subscriber, people_subscriber, color_subscriber], 1500)
         self.time_synchronizer.registerCallback(self.callback)
 
-        self.object_detection_logic = ObjectDetectionLogic()
+        self.contact_detection_logic = ContactDetectionLogic()
 
         self.frame_object_list: List[FrameObject] = []
         self._color_img_buffer: List[np.ndarray] = []
         self._buffer_size = 90
 
-        self.hand_collider_distance = 50  # 手の当たり判定の距離
+        self.hand_collider_distance = 300  # 手の当たり判定の距離
 
-    def callback(self, object_list: DetectedObjectList, people: PoseKeyPointsList, depth_img_src: CompressedImage,
-                 camera_info: CameraInfo, color_img_src: CompressedImage):
-        print('データを取得')
-        depth_img: np.ndarray = compressed_depth_util.convert_compressed_depth_img_to_cv2(depth_img_src)
+    def callback(self, object_list: TrackedObjectList, people: PoseKeyPointsList, color_img_src: CompressedImage):
+        self.frame_count_up()
+
         color_img: np.ndarray = self.bridge.compressed_imgmsg_to_cv2(color_img_src)
 
-        # 焦点距離取得
-        #     [fx  0 cx]
-        # K = [ 0 fy cy]
-        #     [ 0  0  1]
-        k = camera_info.k.reshape((3, 3))
+        result_list, is_not_touch = self.contact_detection_logic.execute(object_list, people)
 
-        # 透視変換のためのオブジェクトを作成
-        projection_matrix = ProjectionMatrix(k)
+        publish_msg = ContactedList()
+        publish_msg.header.stamp = people.header.stamp
+        for hand, object_item in result_list:
+            person, _, _ = hand
+            tracked_object, _ = object_item
 
-        hand_cube_list = []
-        person: PoseKeyPoints
-        for person in people.pose_key_points_list:
-            people_id = person.people_id
-            left_hand: PointData = person.point_data[self.LEFT_HAND_INDEX]
-            if int(left_hand.pixel_point.x) != 0 and int(left_hand.pixel_point.y) != 0:
-                hand_cube_list.append((people_id, self.convert_point_to_cube(left_hand.projection_point),
-                                       person.bounding_box, left_hand.pixel_point))
-            right_hand: PointData = person.point_data[self.RIGHT_HAND_INDEX]
-            if int(right_hand.pixel_point.x) != 0 and int(right_hand.pixel_point.y) != 0:
-                hand_cube_list.append((people_id, self.convert_point_to_cube(right_hand.projection_point),
-                                       person.bounding_box, right_hand.pixel_point))
+            action = ContactActionEnum.from_tracked_object_action_enum(
+                TrackedObjectActionEnum.value_of(tracked_object.action)
+            )
 
-        object_cube_list = []
-        detected_object: DetectedObject
-        img_height, img_width = color_img.shape[:2]
-        for detected_object in object_list.object_list:
-            bounding_box: BoundingBox = detected_object.bounding_box
-            x, y = int(bounding_box.x), int(bounding_box.y)
-            width, height = int(bounding_box.width), int(bounding_box.height)
+            if action != ContactActionEnum.TOUCH:
+                contacted = Contacted()
+                contacted.people_id = person.people_id
+                contacted.object_id = tracked_object.object_id
+                contacted.action = action.value
+                contacted.people_bounding_box = person.bounding_box
+                contacted.object_bounding_box = tracked_object.bounding_box
+                publish_msg.contacted_list.append(contacted)
 
-            left_top_x, left_top_y, _ = projection_matrix.projection_to_view(x, y, depth_img[y, x])
-            right_bottom_x_pixel, right_bottom_y_pixel = min(x + width, img_width - 1), min(y + height, img_height - 1)
-            right_bottom_x, right_bottom_y, _ = projection_matrix \
-                .projection_to_view(right_bottom_x_pixel,
-                                    right_bottom_y_pixel,
-                                    depth_img[right_bottom_y_pixel, right_bottom_x_pixel])
+            print(f'PeopleId: {person.people_id}, ObjectId: {tracked_object.object_id}, Action: {action.value}')
 
-            z_min = depth_img[y:right_bottom_y_pixel, x:right_bottom_x_pixel].min()
-            z_max = depth_img[y:right_bottom_y_pixel, x:right_bottom_x_pixel].max()
-
-            object_cube_list.append((Cube(left_top_x, left_top_y, z_min,
-                                          right_bottom_x - left_top_x,
-                                          right_bottom_y - left_top_y,
-                                          z_max - z_min), detected_object))
-
-        linked_list = []
-        object_cube: Cube
-        hand_cube: Cube
-        for object_item in object_cube_list:
-            object_cube, _ = object_item
-            for hand in hand_cube_list:
-                _, hand_cube, _, _ = hand
-                result, volume = object_cube.is_collided(hand_cube)
-                if result:
-                    linked_list.append((hand, object_item, volume))
-
-        linked_list = sorted(linked_list, key=itemgetter(2), reverse=True)
-        for hand, object_item, _ in linked_list:
-            object_cube, detected_object = object_item
-            people_id, hand_cube, people_bounding_box, pixel_point = hand
-            if hand in hand_cube_list and object_item in object_cube_list:
-                hand_cube_list.remove(hand)
-                object_cube_list.remove(object_item)
-
-                print(f'{people_id}が接触しました')
-
-                if self.is_debug_mode:
-                    action: DetectedObjectActionEnum = DetectedObjectActionEnum.value_of(detected_object.action)
-                    color = (0, 255, 0) if action == DetectedObjectActionEnum.BRING_IN else (0, 0, 255)
-
-                    # Objectのバウンディングボックス
-                    x, y = int(detected_object.bounding_box.x), int(detected_object.bounding_box.y)
-                    width, height = int(detected_object.bounding_box.width), int(detected_object.bounding_box.height)
-                    cv2.rectangle(color_img, (x, y), (x + width, y + height), color, thickness=1)
-                    cv2.putText(color_img, f'Action : {action.value}', (x, y), cv2.FONT_HERSHEY_PLAIN, 1,
-                                color)
-
-                    # Peopleのバウンディングボックス
-                    width, height = color_img.shape[:2]
-                    left = min(int(people_bounding_box.x), width - 1)
-                    top = min(int(people_bounding_box.y), height - 1)
-                    right = min(int(people_bounding_box.x + people_bounding_box.width), width - 1)
-                    bottom = min(int(people_bounding_box.y + people_bounding_box.height), height - 1)
-                    cv2.rectangle(color_img, (left, top), (right, bottom), (255, 0, 0), thickness=1)
-                    cv2.putText(color_img, f'ID : {people_id}', (left, top), cv2.FONT_HERSHEY_PLAIN, 1,
-                                (255, 0, 0))
-
-                    # 対象の手首の位置
-                    x = min(int(pixel_point.x), width - 1)
-                    y = min(int(pixel_point.y), height - 1)
-                    cv2.circle(color_img, (x, y), 5, (255, 0, 0), thickness=-1)
-
-                    cv2.imshow(f'Result{x}{y}{width}{height}', color_img)
+        self._publisher.publish(publish_msg)
 
         if self.is_debug_mode:
+            width, height = color_img.shape[:2]
+
+            # すべての人物領域を書く
+            for person in people.pose_key_points_list:
+                bounding_box = person.bounding_box
+                left = np.clip(int(bounding_box.x), 0, width - 1)
+                top = np.clip(int(bounding_box.y), 0, height - 1)
+                right = np.clip(int(bounding_box.x + bounding_box.width), 0, width - 1)
+                bottom = np.clip(int(bounding_box.y + bounding_box.height), 0, height - 1)
+
+                # 対象の手首の位置
+                pixel_point = person.point_data[self.LEFT_HAND_INDEX].pixel_point
+                x = np.clip(int(pixel_point.x), 0, width - 1)
+                y = np.clip(int(pixel_point.y), 0, height - 1)
+                cv2.circle(color_img, (x, y), 5, (255, 0, 0), thickness=-1)
+                pixel_point = person.point_data[self.RIGHT_HAND_INDEX].pixel_point
+                x = np.clip(int(pixel_point.x), 0, width - 1)
+                y = np.clip(int(pixel_point.y), 0, height - 1)
+                cv2.circle(color_img, (x, y), 5, (255, 0, 0), thickness=-1)
+
+                cv2.rectangle(color_img, (left, top), (right, bottom), (255, 0, 0), thickness=1)
+                cv2.putText(color_img, f'ID : {person.people_id}', (left, top), cv2.FONT_HERSHEY_PLAIN, 1,
+                            (255, 0, 0))
+
+            # すべての物体領域を書く
+            for tracked_object in object_list.tracked_object_list:
+                bounding_box = tracked_object.bounding_box
+                left = np.clip(int(bounding_box.x), 0, width - 1)
+                top = np.clip(int(bounding_box.y), 0, height - 1)
+                right = np.clip(int(bounding_box.x + bounding_box.width), 0, width - 1)
+                bottom = np.clip(int(bounding_box.y + bounding_box.height), 0, height - 1)
+
+                cv2.rectangle(color_img, (left, top), (right, bottom), (0, 128, 255), thickness=1)
+                cv2.putText(color_img, f'ID : {tracked_object.object_id}', (left, top), cv2.FONT_HERSHEY_PLAIN, 1,
+                            (0, 128, 255))
+
+            for hand, object_item in result_list:
+                person, _, index = hand
+                tracked_object, _ = object_item
+
+                action = ContactActionEnum.from_tracked_object_action_enum(
+                    TrackedObjectActionEnum.value_of(tracked_object.action)
+                )
+
+                is_not_touch = action != ContactActionEnum.TOUCH
+
+                color = self.get_color_from_action(action)
+
+                # 対象の手首の位置
+                pixel_point = person.point_data[index].pixel_point
+                x = np.clip(int(pixel_point.x), 0, width - 1)
+                y = np.clip(int(pixel_point.y), 0, height - 1)
+                cv2.putText(color_img, f'Action : {action.value}', (x, y), cv2.FONT_HERSHEY_PLAIN, 1, color)
+
+            if len(result_list) > 0:
+                cv2.putText(color_img, 'Detected', (0, 0), cv2.FONT_HERSHEY_PLAIN, 1, (0, 0, 255))
+
+            color_img = self.print_fps(color_img)
             cv2.imshow('color', color_img)
+
+            if is_not_touch:
+                cv2.imshow(f'{people.header.stamp.sec}.{people.header.stamp.nanosec}', color_img)
+
             cv2.waitKey(1)
         else:
             print(f'[{datetime.datetime.now()}] fps : {self.fps}', end='\r')
 
-    def convert_point_to_cube(self, point: Point) -> Cube:
-        x = point.x - self.hand_collider_distance
-        y = point.y - self.hand_collider_distance
-        z = point.z - self.hand_collider_distance
-        return Cube(x, y, z,
-                    x + self.hand_collider_distance * 2,
-                    y + self.hand_collider_distance * 2,
-                    z + self.hand_collider_distance * 2)
+    @staticmethod
+    def get_color_from_action(action: ContactActionEnum) -> Tuple[int, int, int]:
+        if action == ContactActionEnum.BRING_IN:
+            return 128, 255, 255
+        if action == ContactActionEnum.TOUCH:
+            return 255, 128, 128
+        return 255, 128, 255
 
 
 def main(args=None):

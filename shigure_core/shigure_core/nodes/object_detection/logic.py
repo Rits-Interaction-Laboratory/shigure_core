@@ -121,10 +121,7 @@ class ObjectDetectionLogic:
         left_is_before = left.detected_at.is_before(right.detected_at)
 
         # 持ち込み時は新しい方を選択
-        if action == DetectedObjectActionEnum.BRING_IN:
-            new_detected_at = left.detected_at if not left_is_before else right.detected_at
-        else:
-            new_detected_at = left.detected_at if left_is_before else right.detected_at
+        new_detected_at = left.detected_at if left_is_before else right.detected_at
 
         return FrameObjectItem(action, new_bounding_box, size, mask_img[y:y + height, x:x + width],
                                new_detected_at), mask_img
