@@ -70,7 +70,7 @@ class ContactDetectionNode(ImagePreviewNode):
         self._publisher.publish(publish_msg)
 
         if self.is_debug_mode:
-            width, height = color_img.shape[:2]
+            height, width = color_img.shape[:2]
 
             # すべての人物領域を書く
             for person in people.pose_key_points_list:
@@ -125,7 +125,7 @@ class ContactDetectionNode(ImagePreviewNode):
                 cv2.putText(color_img, f'Action : {action.value}', (x, y), cv2.FONT_HERSHEY_PLAIN, 1, color)
 
             if len(result_list) > 0:
-                cv2.putText(color_img, 'Detected', (0, 0), cv2.FONT_HERSHEY_PLAIN, 1, (0, 0, 255))
+                cv2.putText(color_img, 'Detected', (0, 10), cv2.FONT_HERSHEY_PLAIN, 1, (0, 0, 255))
 
             color_img = self.print_fps(color_img)
             cv2.imshow('color', color_img)

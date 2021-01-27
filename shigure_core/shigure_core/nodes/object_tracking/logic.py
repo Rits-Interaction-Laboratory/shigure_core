@@ -58,10 +58,11 @@ class ObjectTrackingLogic:
                 _, prev_bounding_box = prev_item
                 _, take_out_bounding_box = take_out_item
 
-                prev_bb_size = prev_bounding_box.width * prev_bounding_box.height
-                take_out_bb_size = take_out_bounding_box.width * take_out_bounding_box.height
-                take_out_item[0].bounding_box = take_out_item[0].bounding_box if take_out_bb_size > prev_bb_size \
-                    else prev_item[0].bounding_box
+                new_bounding_box = ObjectTrackingLogic.marge_bounding_box(prev_bounding_box, take_out_bounding_box)
+                take_out_item[0].bounding_box.x = float(new_bounding_box.x)
+                take_out_item[0].bounding_box.y = float(new_bounding_box.y)
+                take_out_item[0].bounding_box.width = float(new_bounding_box.width)
+                take_out_item[0].bounding_box.height = float(new_bounding_box.height)
 
                 current_object_dict[object_id] = take_out_item
                 del previous_object_dict[object_id]
@@ -86,5 +87,16 @@ class ObjectTrackingLogic:
         y = min(int(detected_object.bounding_box.y), max_height - 1)
         width = int(detected_object.bounding_box.width)
         height = int(detected_object.bounding_box.height)
+
+        return BoundingBox(x, y, width, height)
+
+    @staticmethod
+    def marge_bounding_box(left: BoundingBox, right: BoundingBox) -> BoundingBox:
+        x = min(left.x, right.x)
+        y = min(left.y, right.y)
+        width = max(left.x + left.width,
+                    right.x + right.width) - x
+        height = max(left.y + left.height,
+                     right.y + right.height) - y
 
         return BoundingBox(x, y, width, height)

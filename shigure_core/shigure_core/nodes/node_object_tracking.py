@@ -104,6 +104,7 @@ class ObjectTrackingNode(ImagePreviewNode):
         for object_id, item in self._tracking_info.object_dict.items():
             stay_object, bounding_box = item
 
+            bounding_box = stay_object.bounding_box
             left = min(int(bounding_box.x), width - 1)
             top = min(int(bounding_box.y), height - 1)
             right = min(int(bounding_box.x + bounding_box.width), width - 1)

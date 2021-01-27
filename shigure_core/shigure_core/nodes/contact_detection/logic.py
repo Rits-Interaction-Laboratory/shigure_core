@@ -16,7 +16,7 @@ class ContactDetectionLogic:
 
     @classmethod
     def execute(cls, object_list: TrackedObjectList, people: PoseKeyPointsList,
-                hand_collider_distance: int = 150) -> Tuple[
+                hand_collider_distance: int = 300) -> Tuple[
             List[Tuple[Tuple[PoseKeyPoints, Cube, int], Tuple[TrackedObject, Cube]]], bool]:
 
         is_not_touch = False
