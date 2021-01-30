@@ -27,6 +27,9 @@ class ColorImageFrames:
             self._buffer: List[ColorImageFrame] = self._buffer[1:]
         self._buffer.append(frame)
 
+    def get(self, index: int) -> ColorImageFrame:
+        return self._buffer[index]
+
     @property
     def top_frame(self) -> ColorImageFrame:
         return self._buffer[0]

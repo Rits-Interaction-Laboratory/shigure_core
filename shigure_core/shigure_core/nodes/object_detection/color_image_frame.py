@@ -22,3 +22,7 @@ class ColorImageFrame:
     @property
     def new_image(self) -> np.ndarray:
         return self._new_image
+
+    @new_image.setter
+    def new_image(self, new_image: np.ndarray):
+        self._new_image = new_image
