@@ -1,6 +1,7 @@
 from typing import List
 
 import numpy as np
+from shigure_core.enum.contact_action_enum import ContactActionEnum
 
 from shigure_core.nodes.record_event.event import Event
 
@@ -38,3 +39,10 @@ class Scene:
     @property
     def depth_img_list(self) -> List[np.ndarray]:
         return self._depth_imd_list
+
+    @property
+    def color_img_for_icon(self) -> np.ndarray:
+        if ContactActionEnum.value_of(self.event.action) == ContactActionEnum.BRING_IN:
+            return self._color_img_list[self._frame_num // 2 + 30]
+        else:
+            return self._color_img_list[self._frame_num // 2 - 30]

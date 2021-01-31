@@ -132,9 +132,18 @@ class SubtractionAnalysisNode(ImagePreviewNode):
 
             file_path = save_root_path + '/points/' + str(i + 1)
             np.save(file_path, np.asarray(points))
+
+            color_img_for_icon = scene.color_img_for_icon
+            file_path = save_root_path + '/people_icon.png'
+            bb = scene.event.people_bounding_box
+            cv2.imwrite(file_path, color_img_for_icon[bb.y:bb.y + bb.height, bb.x:bb.x + bb.width])
+            file_path = save_root_path + '/object_icon.png'
+            bb = scene.event.object_bounding_box
+            cv2.imwrite(file_path, color_img_for_icon[bb.y:bb.y + bb.height, bb.x:bb.x + bb.width])
+
         print('保存終了')
 
-        
+
 def main(args=None):
     rclpy.init(args=args)
 
