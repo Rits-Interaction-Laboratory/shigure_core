@@ -114,7 +114,7 @@ class ObjectTrackingNode(ImagePreviewNode):
                         (0, 255, 0))
 
         self.print_fps(color_img)
-        cv2.imshow('Result', color_img)
+        cv2.imshow('object_tracking', color_img)
         cv2.waitKey(1)
 
 
