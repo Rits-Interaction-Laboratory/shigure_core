@@ -49,7 +49,7 @@ class PeopleMaskBufferNode(ImagePreviewNode):
 
                 if self.is_debug_mode:
                     img = self.print_fps(data)
-                    cv2.imshow("Result", cv2.hconcat([cv2.cvtColor(people_mask, cv2.COLOR_GRAY2BGR),
+                    cv2.imshow("people_mask_buffer", cv2.hconcat([cv2.cvtColor(people_mask, cv2.COLOR_GRAY2BGR),
                                                       img]))
                     cv2.waitKey(1)
                 else:

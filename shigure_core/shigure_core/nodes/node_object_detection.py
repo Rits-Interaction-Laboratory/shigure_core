@@ -89,7 +89,7 @@ class ObjectDetectionNode(ImagePreviewNode):
             if self.is_debug_mode:
                 img = self.print_fps(result_img)
                 tile_img = cv2.hconcat([cv2.cvtColor(subtraction_analysis_img, cv2.COLOR_GRAY2BGR), img])
-                cv2.imshow("Result", tile_img)
+                cv2.imshow("object_detection", tile_img)
                 cv2.waitKey(1)
             else:
                 print(f'[{datetime.datetime.now()}] fps : {self.fps}', end='\r')
