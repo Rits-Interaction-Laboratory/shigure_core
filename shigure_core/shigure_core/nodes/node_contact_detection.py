@@ -11,6 +11,7 @@ from shigure_core_msgs.msg import PoseKeyPointsList, TrackedObjectList, Contacte
 
 from shigure_core.enum.contact_action_enum import ContactActionEnum
 from shigure_core.enum.tracked_object_action_enum import TrackedObjectActionEnum
+from shigure_core.nodes.contact_detection.id_manager import IdManager
 from shigure_core.nodes.contact_detection.logic import ContactDetectionLogic
 from shigure_core.nodes.node_image_preview import ImagePreviewNode
 from shigure_core.nodes.object_detection.frame_object import FrameObject
@@ -43,6 +44,7 @@ class ContactDetectionNode(ImagePreviewNode):
         self.hand_collider_distance = 300  # 手の当たり判定の距離
 
         self.action_index = 0
+        self._id_manager = IdManager()
 
     def callback(self, object_list: TrackedObjectList, people: PoseKeyPointsList, color_img_src: CompressedImage):
         self.frame_count_up()
@@ -63,6 +65,7 @@ class ContactDetectionNode(ImagePreviewNode):
 
             if action != ContactActionEnum.TOUCH:
                 contacted = Contacted()
+                contacted.event_id = self._id_manager.new_event_id()
                 contacted.people_id = person.people_id
                 contacted.object_id = tracked_object.object_id
                 contacted.action = action.value
@@ -152,7 +155,7 @@ class ContactDetectionNode(ImagePreviewNode):
             tile_img = cv2.hconcat([color_img,
                                     cv2.vconcat([cv2.hconcat([self.action_list[0], self.action_list[1]]),
                                                  cv2.hconcat([self.action_list[2], self.action_list[3]])])])
-            cv2.imshow('result', tile_img)
+            cv2.imshow('contact_detection', tile_img)
 
             cv2.waitKey(1)
         else:

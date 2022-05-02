@@ -5,13 +5,18 @@ from shigure_core.nodes.common_model.bounding_box import BoundingBox
 class Event:
     """イベントを表すクラス"""
 
-    def __init__(self, people_id: str, object_id: str, action: str, people_bounding_box: BoundingBox,
+    def __init__(self, event_id: str, people_id: str, object_id: str, action: str, people_bounding_box: BoundingBox,
                  object_bounding_box: BoundingBox):
+        self._event_id = event_id
         self._people_id = people_id
         self._object_id = object_id
         self._action = action
         self._people_bounding_box = people_bounding_box
         self._object_bounding_box = object_bounding_box
+
+    @property
+    def event_id(self) -> str:
+        return self._event_id
 
     @property
     def people_id(self) -> str:

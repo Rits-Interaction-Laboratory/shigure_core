@@ -1,3 +1,4 @@
+string event_id
 string people_id
 string object_id
 string action

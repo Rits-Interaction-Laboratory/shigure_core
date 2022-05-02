@@ -103,7 +103,7 @@ class ObjectDetectionNode(ImagePreviewNode):
                                         cv2.vconcat([cv2.hconcat([self.object_list[0], self.object_list[1]]),
                                                      cv2.hconcat([self.object_list[2], self.object_list[3]])])])
 
-                cv2.imshow("Result", tile_img)
+                cv2.imshow("object_detection", tile_img)
                 cv2.waitKey(1)
             else:
                 print(f'[{datetime.datetime.now()}] fps : {self.fps}', end='\r')

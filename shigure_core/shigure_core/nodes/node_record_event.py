@@ -1,6 +1,7 @@
 import datetime
 import os
 import threading
+from multiprocessing import Process
 from typing import List
 
 import cv2
@@ -79,7 +80,7 @@ class SubtractionAnalysisNode(ImagePreviewNode):
 
                 people_bounding_box = self.convert_bounding_box(contacted.people_bounding_box)
                 object_bounding_box = self.convert_bounding_box(contacted.object_bounding_box)
-                event = Event(contacted.people_id, contacted.object_id, contacted.action, people_bounding_box,
+                event = Event(contacted.event_id, contacted.people_id, contacted.object_id, contacted.action, people_bounding_box,
                               object_bounding_box)
                 scene = Scene(self.frame_num, camera_info.k.reshape((3, 3)), event,
                               self._color_img_buffer[-self.frame_num:], self._depth_img_buffer[-self.frame_num:])
@@ -89,8 +90,8 @@ class SubtractionAnalysisNode(ImagePreviewNode):
             new_scene_list: List[Scene] = []
             for scene in self._scene_list:
                 if scene.is_full():
-                    thread = threading.Thread(target=self.save_scene, args=(scene, self.save_root_path))
-                    thread.start()
+                    process = Process(target=self.save_scene, args=(scene, self.save_root_path))
+                    process.start()
                 else:
                     scene.add_frame(color_img, depth_img)
                     new_scene_list.append(scene)
@@ -113,12 +114,22 @@ class SubtractionAnalysisNode(ImagePreviewNode):
     @staticmethod
     def save_scene(scene: Scene, save_root_path: str):
         print('保存を開始')
+
+        color_save_path = os.path.join(save_root_path, scene.event.event_id, 'color')
+        depth_save_path = os.path.join(save_root_path, scene.event.event_id, 'depth')
+        points_save_path = os.path.join(save_root_path, scene.event.event_id, 'points')
+        icon_save_path = os.path.join(save_root_path, scene.event.event_id)
+
+        os.makedirs(color_save_path, exist_ok=True)
+        os.makedirs(depth_save_path, exist_ok=True)
+        os.makedirs(points_save_path, exist_ok=True)
+
         for i, color_img in enumerate(scene.color_img_list):
-            file_path = save_root_path + '/color/' + str(i + 1) + '.png'
+            file_path = os.path.join(color_save_path, str(i + 1) + '.png')
             cv2.imwrite(file_path, color_img)
 
         for i, depth_img in enumerate(scene.depth_img_list):
-            file_path = save_root_path + '/depth/' + str(i + 1) + '.png'
+            file_path = os.path.join(depth_save_path, str(i + 1) + '.png')
             cv2.imwrite(file_path, depth_img)
 
             height, width = depth_img.shape[:2]
@@ -130,16 +141,16 @@ class SubtractionAnalysisNode(ImagePreviewNode):
                     m = (depth * np.matmul(scene.k_inv, s)).T
                     points.append([m[0, 0], m[0, 1], depth])
 
-            file_path = save_root_path + '/points/' + str(i + 1)
+            file_path = os.path.join(points_save_path, str(i + 1) + '.png')
             np.save(file_path, np.asarray(points))
 
-            color_img_for_icon = scene.color_img_for_icon
-            file_path = save_root_path + '/people_icon.png'
-            bb = scene.event.people_bounding_box
-            cv2.imwrite(file_path, color_img_for_icon[bb.y:bb.y + bb.height, bb.x:bb.x + bb.width])
-            file_path = save_root_path + '/object_icon.png'
-            bb = scene.event.object_bounding_box
-            cv2.imwrite(file_path, color_img_for_icon[bb.y:bb.y + bb.height, bb.x:bb.x + bb.width])
+        color_img_for_icon = scene.color_img_for_icon
+        file_path = os.path.join(icon_save_path, 'people_icon.png')
+        bb = scene.event.people_bounding_box
+        cv2.imwrite(file_path, color_img_for_icon[bb.y:bb.y + bb.height, bb.x:bb.x + bb.width])
+        file_path = os.path.join(icon_save_path, 'object_icon.png')
+        bb = scene.event.object_bounding_box
+        cv2.imwrite(file_path, color_img_for_icon[bb.y:bb.y + bb.height, bb.x:bb.x + bb.width])
 
         print('保存終了')
 

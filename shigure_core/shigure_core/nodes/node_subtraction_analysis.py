@@ -67,7 +67,7 @@ class SubtractionAnalysisNode(ImagePreviewNode):
                         people_mask_result[:, :, 1] += (result_frame.people_mask == i + 1) * np.uint8(self._colors[i][1])
                         people_mask_result[:, :, 2] += (result_frame.people_mask == i + 1) * np.uint8(self._colors[i][2])
 
-                    cv2.imshow("Result", cv2.hconcat([cv2.cvtColor(result_frame.subtraction_img, cv2.COLOR_GRAY2BGR),
+                    cv2.imshow("subtraction_analysis", cv2.hconcat([cv2.cvtColor(result_frame.subtraction_img, cv2.COLOR_GRAY2BGR),
                                                       people_mask_result,
                                                       img]))
                     cv2.waitKey(1)
