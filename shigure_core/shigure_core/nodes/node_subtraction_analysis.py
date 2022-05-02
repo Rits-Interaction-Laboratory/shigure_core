@@ -60,15 +60,8 @@ class SubtractionAnalysisNode(ImagePreviewNode):
 
                 if self.is_debug_mode:
                     img = self.print_fps(data)
-
-                    people_mask_result = np.zeros_like(img, dtype=np.uint8)
-                    for i in range(result_frame.people_mask.max()):
-                        people_mask_result[:, :, 0] += (result_frame.people_mask == i + 1) * np.uint8(self._colors[i][0])
-                        people_mask_result[:, :, 1] += (result_frame.people_mask == i + 1) * np.uint8(self._colors[i][1])
-                        people_mask_result[:, :, 2] += (result_frame.people_mask == i + 1) * np.uint8(self._colors[i][2])
-
                     cv2.imshow("subtraction_analysis", cv2.hconcat([cv2.cvtColor(result_frame.subtraction_img, cv2.COLOR_GRAY2BGR),
-                                                      people_mask_result,
+                                                      cv2.cvtColor(result_frame.people_mask, cv2.COLOR_GRAY2BGR),
                                                       img]))
                     cv2.waitKey(1)
                 else:

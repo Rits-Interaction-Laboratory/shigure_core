@@ -99,10 +99,7 @@ class ObjectDetectionNode(ImagePreviewNode):
 
             if self.is_debug_mode:
                 img = self.print_fps(result_img)
-                tile_img = cv2.hconcat([color_img, img,
-                                        cv2.vconcat([cv2.hconcat([self.object_list[0], self.object_list[1]]),
-                                                     cv2.hconcat([self.object_list[2], self.object_list[3]])])])
-
+                tile_img = cv2.hconcat([cv2.cvtColor(subtraction_analysis_img, cv2.COLOR_GRAY2BGR), img])
                 cv2.imshow("object_detection", tile_img)
                 cv2.waitKey(1)
             else:
