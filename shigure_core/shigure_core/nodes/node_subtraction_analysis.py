@@ -1,4 +1,5 @@
 import datetime
+import random
 
 import cv2
 import message_filters
@@ -28,6 +29,10 @@ class SubtractionAnalysisNode(ImagePreviewNode):
         self.time_synchronizer = message_filters.TimeSynchronizer(
             [people_subscriber, subtraction_subscriber], 1000)
         self.time_synchronizer.registerCallback(self.callback)
+
+        self._colors = []
+        for i in range(255):
+            self._colors.append(tuple([random.randint(128, 255) for _ in range(3)]))
 
     def callback(self, people: People, subtraction_src: CompressedImage):
         try:

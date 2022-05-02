@@ -60,8 +60,8 @@ class ImagePreviewNode(Node):
             # 2次元 -> モノクロ画像
             img = cv2.cvtColor(src, cv2.COLOR_GRAY2BGR)
 
-        cv2.putText(img, "frame = " + str(self.frame_count), (0, 50), cv2.FONT_HERSHEY_PLAIN, 3, (0, 255, 0))
+        cv2.putText(img, "frame = " + str(self.frame_count), (0, 20), cv2.FONT_HERSHEY_PLAIN, 1.5, (0, 255, 0))
         cv2.putText(img, 'FPS: {:.2f}'.format(self.fps),
-                    (0, 100), cv2.FONT_HERSHEY_PLAIN, 3, (0, 255, 0))
+                    (0, 40), cv2.FONT_HERSHEY_PLAIN, 1.5, (0, 255, 0))
 
         return img

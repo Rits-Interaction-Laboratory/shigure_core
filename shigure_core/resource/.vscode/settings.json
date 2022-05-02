@@ -1,0 +1,14 @@
+{
+    "python.autoComplete.extraPaths": [
+        "/home/yoshida/yolact",
+        "/home/yoshida/Mask-RCNN-TF2",
+        "/usr/local/python/openpose",
+        "/home/yoshida/ros2/install/shigure_core/lib/python3.6/site-packages",
+        "/home/yoshida/ros2/install/shigure_core_msgs/lib/python3.6/site-packages",
+        "/home/yoshida/ros2/install/people_detection_ros2_msg/lib/python3.6/site-packages",
+        "/home/yoshida/ros2/install/people_detection_ros2/lib/python3.6/site-packages",
+        "/home/yoshida/ros2/install/openpose_ros2/lib/python3.6/site-packages",
+        "/home/yoshida/ros2/install/openpose_ros2_msgs/lib/python3.6/site-packages",
+        "/opt/ros/dashing/lib/python3.6/site-packages"
+    ]
+}

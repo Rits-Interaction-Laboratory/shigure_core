@@ -1,3 +1,6 @@
+import random
+import re
+
 import cv2
 import message_filters
 import numpy as np
@@ -37,6 +40,10 @@ class ObjectTrackingNode(ImagePreviewNode):
         self.people_tracking_logic = ObjectTrackingLogic()
 
         self._tracking_info = TrackingInfo()
+
+        self._colors = []
+        for i in range(255):
+            self._colors.append(tuple([random.randint(128, 192) for _ in range(3)]))
 
     def callback(self, depth_src: CompressedImage, detected_object_list: DetectedObjectList,
                  camera_info: CameraInfo):
@@ -104,14 +111,20 @@ class ObjectTrackingNode(ImagePreviewNode):
         for object_id, item in self._tracking_info.object_dict.items():
             stay_object, bounding_box = item
 
+            bounding_box = stay_object.bounding_box
             left = min(int(bounding_box.x), width - 1)
             top = min(int(bounding_box.y), height - 1)
             right = min(int(bounding_box.x + bounding_box.width), width - 1)
             bottom = min(int(bounding_box.y + bounding_box.height), height - 1)
 
-            cv2.rectangle(color_img, (left, top), (right, bottom), (0, 0, 255), thickness=1)
-            cv2.putText(color_img, f'ID : {object_id} ({stay_object.action})', (left, top), cv2.FONT_HERSHEY_PLAIN, 1,
-                        (0, 255, 0))
+            object_id_num = int(re.sub(".*_", "", object_id))
+            color = self._colors[object_id_num % 255]
+            cv2.rectangle(color_img, (left, top), (right, bottom), color, thickness=3)
+            text_w, text_h = cv2.getTextSize(f'ID : {object_id_num}',
+                                             cv2.FONT_HERSHEY_PLAIN, 1.5, 2)[0]
+            cv2.rectangle(color_img, (left, top), (left + text_w, top - text_h), color, -1)
+            cv2.putText(color_img, f'ID : {object_id_num}({stay_object.action})', (left, top),
+                        cv2.FONT_HERSHEY_PLAIN, 1.5, (255, 255, 255), thickness=2)
 
         self.print_fps(color_img)
         cv2.imshow('object_tracking', color_img)

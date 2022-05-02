@@ -1,3 +1,6 @@
+import random
+import re
+
 import cv2
 import message_filters
 import numpy as np
@@ -37,6 +40,10 @@ class PeopleTrackingNode(ImagePreviewNode):
 
         self.tracking_info = TrackingInfo()
         self.people_tracking_logic = PeopleTrackingLogic()
+
+        self._colors = []
+        for i in range(255):
+            self._colors.append(tuple([random.randint(128, 192) for _ in range(3)]))
 
     def callback(self, depth_src: CompressedImage, key_points_list: OpenPosePoseKeyPointsList, camera_info: CameraInfo):
         self.frame_count_up()
@@ -80,7 +87,6 @@ class PeopleTrackingNode(ImagePreviewNode):
             x = int(neck_point.x) if neck_point.x < width else width - 1
             y = int(neck_point.y) if neck_point.y < height else height - 1
 
-            cv2.circle(color_img, (x, y), 5, (0, 0, 255), thickness=-1)
             bounding_box = pose_key_points.bounding_box
             left = int(bounding_box.x) if bounding_box.x < width else width - 1
             top = int(bounding_box.y) if bounding_box.y < height else height - 1
@@ -88,9 +94,16 @@ class PeopleTrackingNode(ImagePreviewNode):
                 bounding_box.x + bounding_box.width) if bounding_box.x + bounding_box.width < width else width - 1
             bottom = int(
                 bounding_box.y + bounding_box.height) if bounding_box.y + bounding_box.height < height else height - 1
-            cv2.rectangle(color_img, (left, top), (right, bottom), (0, 0, 255), thickness=1)
-            cv2.putText(color_img, f'ID : {people_id}', (left, top), cv2.FONT_HERSHEY_PLAIN, 1,
-                        (0, 255, 0))
+
+            people_id_num = int(re.sub(".*_", "", people_id))
+            color = self._colors[people_id_num % 255]
+            cv2.circle(color_img, (x, y), 5, color, thickness=-1)
+            cv2.rectangle(color_img, (left, top), (right, bottom), color, thickness=3)
+            text_w, text_h = cv2.getTextSize(f'ID : {people_id_num}',
+                                             cv2.FONT_HERSHEY_PLAIN, 1.5, 2)[0]
+            cv2.rectangle(color_img, (left, top), (left + text_w, top - text_h), color, -1)
+            cv2.putText(color_img, f'ID : {people_id_num}', (left, top),
+                        cv2.FONT_HERSHEY_PLAIN, 1.5, (255, 255, 255), thickness=2)
 
         self.print_fps(color_img)
         cv2.imshow('people_tracking', color_img)
