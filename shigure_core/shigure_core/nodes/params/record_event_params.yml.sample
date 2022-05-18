@@ -1,5 +1,5 @@
 record_event_node:
   ros__parameters:
-    save_root_path: '/opt/ros2/shigure_core/events'
+    save_root_path: '~/ros2_ws/src/shigure_core/events'
     frame_num: 120
     camera_id: 1
