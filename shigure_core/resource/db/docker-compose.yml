@@ -4,10 +4,29 @@ services:
     image: mysql:8
     ports:
       - 3306:3306
-    environment: 
+    environment:
       MYSQL_ROOT_PASSWORD: shigure
       MYSQL_DATABASE: shigure
       MYSQL_USER: shigure
       MYSQL_PASSWORD: shigure
     volumes:
       - ./mysql_data:/var/lib/mysql
+  migrate:
+    build: .
+    depends_on:
+      - db
+    command: ["up"]
+    environment:
+      WAIT_HOSTS: db:3306
+      MIGRATIONS_DIR: /migration
+      MYSQL_HOST: db
+      MYSQL_PORT: 3306
+      MYSQL_ROOT_PASSWORD: shigure
+      MYSQL_DATABASE: shigure
+      MYSQL_USER: shigure
+      MYSQL_PASSWORD: shigure
+    volumes:
+      - ./migration:/migration
+volumes:
+  db_volume:
+    driver: local
