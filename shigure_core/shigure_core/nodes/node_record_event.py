@@ -19,6 +19,7 @@ from shigure_core.nodes.node_image_preview import ImagePreviewNode
 from shigure_core.nodes.record_event.event import Event
 from shigure_core.nodes.record_event.scene import Scene
 from shigure_core.util import compressed_depth_util
+from shigure_core.db.event_repository import EventRepository
 
 
 class SubtractionAnalysisNode(ImagePreviewNode):
@@ -74,6 +75,10 @@ class SubtractionAnalysisNode(ImagePreviewNode):
 
             contacted: Contacted
             for contacted in contacted_list.contacted_list:
+                print("------------")
+                print(type(camera_info.header.frame_id))
+                print(camera_info.header.frame_id)
+                print("------------")
                 # 接触は弾く
                 if ContactActionEnum.value_of(contacted.action) == ContactActionEnum.TOUCH:
                     continue
@@ -86,6 +91,14 @@ class SubtractionAnalysisNode(ImagePreviewNode):
                               self._color_img_buffer[-self.frame_num:], self._depth_img_buffer[-self.frame_num:])
                 self._scene_list.append(scene)
 
+                # db書き込み
+                # todo : people/object_pathとpeople/object_sizeの書き換え (testと0になっている部分)
+                EventRepository.insert_people(contacted.people_id, "test_people", "0")
+                EventRepository.insert_object(contacted.object_id, "test_obj", "0")
+                EventRepository.insert_camera(camera_info.header.frame_id)
+                EventRepository.insert_event(contacted.event_id, contacted.people_id, contacted.object_id, "1",
+                                             contacted.action)
+
             # 保存できる状態のシーンを取得
             new_scene_list: List[Scene] = []
             for scene in self._scene_list:
@@ -95,6 +108,8 @@ class SubtractionAnalysisNode(ImagePreviewNode):
                 else:
                     scene.add_frame(color_img, depth_img)
                     new_scene_list.append(scene)
+
+
 
             self._scene_list = new_scene_list
 
