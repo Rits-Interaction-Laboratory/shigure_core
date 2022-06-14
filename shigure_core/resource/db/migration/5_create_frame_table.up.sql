@@ -1,5 +1,5 @@
 CREATE TABLE IF NOT EXISTS `frame` (
-  `event_id` INT NOT NULL,
+  `event_id` VARCHAR(100) NOT NULL,
   `frame_count` INT NOT NULL,
   `color_path` VARCHAR(1024) NOT NULL,
   `depth_path` VARCHAR(1024) NOT NULL,

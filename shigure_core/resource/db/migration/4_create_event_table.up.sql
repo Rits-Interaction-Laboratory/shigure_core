@@ -1,5 +1,5 @@
 CREATE TABLE IF NOT EXISTS `event` (
-  `id` INT NOT NULL AUTO_INCREMENT,
+  `id` VARCHAR(100) NOT NULL,
   `people_id` VARCHAR(100) NOT NULL,
   `object_id` VARCHAR(100) NOT NULL,
   `camera_id` INT NOT NULL,

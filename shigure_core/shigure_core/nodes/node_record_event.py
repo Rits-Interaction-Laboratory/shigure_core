@@ -20,7 +20,7 @@ from shigure_core.nodes.record_event.event import Event
 from shigure_core.nodes.record_event.scene import Scene
 from shigure_core.util import compressed_depth_util
 from shigure_core.db.event_repository import EventRepository
-
+from shigure_core.db.convert_format import ConvertJson
 
 class SubtractionAnalysisNode(ImagePreviewNode):
 
@@ -75,10 +75,6 @@ class SubtractionAnalysisNode(ImagePreviewNode):
 
             contacted: Contacted
             for contacted in contacted_list.contacted_list:
-                print("------------")
-                print(type(camera_info.header.frame_id))
-                print(camera_info.header.frame_id)
-                print("------------")
                 # 接触は弾く
                 if ContactActionEnum.value_of(contacted.action) == ContactActionEnum.TOUCH:
                     continue
@@ -92,12 +88,38 @@ class SubtractionAnalysisNode(ImagePreviewNode):
                 self._scene_list.append(scene)
 
                 # db書き込み
+                print("------------")
+                print(type(camera_info.header.frame_id))
+                print(camera_info.header.frame_id)
+                print("------------")
+                print(type(camera_info))
+                camera_info_shaping = str(camera_info).replace('=', ':')
+                camera_info_shaping = camera_info_shaping.replace('sensor_msgs.msg.CameraInfo(', 'CameraInfo:[')
+                camera_info_shaping = camera_info_shaping.rstrip()
+                camera_info_shaping = camera_info_shaping.replace('std_msgs.msg.Header', '')
+                camera_info_shaping = camera_info_shaping.replace('sensor_msgs.msg.RegionOfInterest', '')
+                camera_info_shaping = camera_info_shaping.replace('builtin_interfaces.msg.Time', '')
+                camera_info_shaping = camera_info_shaping.replace('array', '')
+                camera_info_shaping = camera_info_shaping.replace('([', '[{')
+                camera_info_shaping = camera_info_shaping.replace('])', '}]')
+                camera_info_shaping = camera_info_shaping.replace('(', '{')
+                camera_info_shaping = camera_info_shaping.replace(')', '}')
+                camera_info_shaping = camera_info_shaping.replace('}}', '}]')
+                camera_info_shaping = '{' + camera_info_shaping + '}'
+                f = open('myfile.txt', 'w')
+                f.write(str(camera_info_shaping))
+                f.close()
+                print(camera_info_shaping)
+                print("------------")
                 # todo : people/object_pathとpeople/object_sizeの書き換え (testと0になっている部分)
+                # todo : people_idが重複した場合, primary key制約で弾かれるため修正
                 EventRepository.insert_people(contacted.people_id, "test_people", "0")
                 EventRepository.insert_object(contacted.object_id, "test_obj", "0")
-                EventRepository.insert_camera(camera_info.header.frame_id)
-                EventRepository.insert_event(contacted.event_id, contacted.people_id, contacted.object_id, "1",
-                                             contacted.action)
+                frame_id = str(camera_info.header.frame_id)
+                EventRepository.insert_camera(frame_id)
+                EventRepository.insert_event(contacted.event_id, contacted.people_id, contacted.object_id, "1", contacted.action)
+                EventRepository.insert_frame(contacted.event_id, "0", "test", "test", "test")
+                EventRepository.insert_event_meta(contacted.event_id, camera_info_shaping)
 
             # 保存できる状態のシーンを取得
             new_scene_list: List[Scene] = []
