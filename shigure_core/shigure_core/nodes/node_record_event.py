@@ -20,7 +20,8 @@ from shigure_core.nodes.record_event.event import Event
 from shigure_core.nodes.record_event.scene import Scene
 from shigure_core.util import compressed_depth_util
 from shigure_core.db.event_repository import EventRepository
-from shigure_core.db.convert_format import ConvertJson
+from shigure_core.db.convert_format import ConvertMsg
+
 
 class SubtractionAnalysisNode(ImagePreviewNode):
 
@@ -87,39 +88,30 @@ class SubtractionAnalysisNode(ImagePreviewNode):
                               self._color_img_buffer[-self.frame_num:], self._depth_img_buffer[-self.frame_num:])
                 self._scene_list.append(scene)
 
+                # json形式でcamera_infoを出力
+                event_save_path = os.path.join(self.save_root_path, scene.event.event_id)
+                os.makedirs(event_save_path, exist_ok=True)
+                ConvertMsg.write_msg_as_json(event_save_path, "camera_info", camera_info)
+
                 # db書き込み
-                print("------------")
-                print(type(camera_info.header.frame_id))
-                print(camera_info.header.frame_id)
-                print("------------")
-                print(type(camera_info))
-                camera_info_shaping = str(camera_info).replace('=', ':')
-                camera_info_shaping = camera_info_shaping.replace('sensor_msgs.msg.CameraInfo(', 'CameraInfo:[')
-                camera_info_shaping = camera_info_shaping.rstrip()
-                camera_info_shaping = camera_info_shaping.replace('std_msgs.msg.Header', '')
-                camera_info_shaping = camera_info_shaping.replace('sensor_msgs.msg.RegionOfInterest', '')
-                camera_info_shaping = camera_info_shaping.replace('builtin_interfaces.msg.Time', '')
-                camera_info_shaping = camera_info_shaping.replace('array', '')
-                camera_info_shaping = camera_info_shaping.replace('([', '[{')
-                camera_info_shaping = camera_info_shaping.replace('])', '}]')
-                camera_info_shaping = camera_info_shaping.replace('(', '{')
-                camera_info_shaping = camera_info_shaping.replace(')', '}')
-                camera_info_shaping = camera_info_shaping.replace('}}', '}]')
-                camera_info_shaping = '{' + camera_info_shaping + '}'
-                f = open('myfile.txt', 'w')
-                f.write(str(camera_info_shaping))
-                f.close()
-                print(camera_info_shaping)
-                print("------------")
-                # todo : people/object_pathとpeople/object_sizeの書き換え (testと0になっている部分)
-                # todo : people_idが重複した場合, primary key制約で弾かれるため修正
-                EventRepository.insert_people(contacted.people_id, "test_people", "0")
-                EventRepository.insert_object(contacted.object_id, "test_obj", "0")
+                # ------
+                EventRepository.insert_people(contacted.people_id, event_save_path, scene.event.people_bounding_box.width, scene.event.people_bounding_box.height)
+                EventRepository.insert_object(contacted.object_id, event_save_path, scene.event.object_bounding_box.width, scene.event.object_bounding_box.height)
+
                 frame_id = str(camera_info.header.frame_id)
                 EventRepository.insert_camera(frame_id)
-                EventRepository.insert_event(contacted.event_id, contacted.people_id, contacted.object_id, "1", contacted.action)
-                EventRepository.insert_frame(contacted.event_id, "0", "test", "test", "test")
-                EventRepository.insert_event_meta(contacted.event_id, camera_info_shaping)
+
+                person_id = EventRepository.select_autoincrement_person_id(contacted.people_id)
+                object_id = EventRepository.select_autoincrement_object_id(contacted.object_id)
+                camera_id = EventRepository.select_autoincrement_camera_id(frame_id)
+                EventRepository.insert_event(contacted.event_id, person_id, object_id, camera_id, contacted.action)
+
+                color_save_path = os.path.join(event_save_path, 'color')
+                depth_save_path = os.path.join(event_save_path, 'depth')
+                points_save_path = os.path.join(event_save_path, 'points')
+                EventRepository.insert_frame(contacted.event_id, self.frame_num, color_save_path, depth_save_path, points_save_path)
+                EventRepository.insert_event_meta(contacted.event_id, camera_info)
+                # ------
 
             # 保存できる状態のシーンを取得
             new_scene_list: List[Scene] = []
