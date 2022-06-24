@@ -1,0 +1,9 @@
+CREATE TABLE IF NOT EXISTS `object` (
+  `id` INT NOT NULL AUTO_INCREMENT,
+  `object_id` VARCHAR(100) NOT NULL,
+  `icon_path` VARCHAR(1024) NOT NULL,
+  `icon_width` INT NOT NULL,
+  `icon_height` INT NOT NULL,
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`));
+  
