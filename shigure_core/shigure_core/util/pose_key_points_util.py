@@ -3,6 +3,7 @@ import numpy as np
 from openpose_ros2_msgs.msg import PoseKeyPoints as OpenPosePoseKeyPoints, PoseKeyPoint as OpenPosePoseKeyPoint
 from shigure_core_msgs.msg import PoseKeyPoints as ShigurePoseKeyPoints, Point, BoundingBox, PointData
 
+from shigure_core.enum.people_body_part_enum import PeopleBodyPartEnum
 
 def convert_openpose_to_shigure(openpose_key_points_list: OpenPosePoseKeyPoints,
                                 depth_img: np.ndarray, people_id: str, k: np.ndarray) -> ShigurePoseKeyPoints:
@@ -20,7 +21,7 @@ def convert_openpose_to_shigure(openpose_key_points_list: OpenPosePoseKeyPoints,
     a_inv = np.linalg.inv(k)
 
     pose_key_point: OpenPosePoseKeyPoint
-    for pose_key_point in openpose_key_points_list.pose_key_points:
+    for (pose_key_point, body_part) in zip(openpose_key_points_list.pose_key_points, PeopleBodyPartEnum):
         x = int(pose_key_point.x) if pose_key_point.x < width else width - 1
         y = int(pose_key_point.y) if pose_key_point.y < height else height - 1
         depth = float(depth_img[y, x])
@@ -50,6 +51,7 @@ def convert_openpose_to_shigure(openpose_key_points_list: OpenPosePoseKeyPoints,
             projection_point.z = 0.
 
         point_data = PointData()
+        point_data.body_part_name = body_part.value
         point_data.pixel_point = pixel_point
         point_data.projection_point = projection_point
         point_data.score = pose_key_point.score
