@@ -52,6 +52,7 @@ def convert_openpose_to_shigure(openpose_key_points_list: OpenPosePoseKeyPoints,
         point_data = PointData()
         point_data.pixel_point = pixel_point
         point_data.projection_point = projection_point
+        point_data.score = pose_key_point.score
         shigure_pose_key_points.point_data.append(point_data)
 
     bounding_box = BoundingBox()
