@@ -13,6 +13,8 @@ class PeopleBodyPartEnum(Enum):
     LEFT_ELBOW = "left_elbow"
     LEFT_WRIST = "left_wrist"
 
+    MID_HIP = "mid_hip"
+
     RIGHT_HIP = "right_hip"
     RIGHT_KNEE = "right_knee"
     RIGHT_ANKLE = "right_ankle"
@@ -33,8 +35,6 @@ class PeopleBodyPartEnum(Enum):
     RIGHT_BIG_TOE = "right_big_toe"
     RIGHT_SMALL_TOE = "right_small_toe"
     RIGHT_HEEL = "right_heel"
-
-    BACKGROUND = "background"
 
     @staticmethod
     def value_of():
