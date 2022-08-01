@@ -62,6 +62,7 @@ class PeopleTrackingNode(ImagePreviewNode):
         # publish
         publish_msg = ShigurePoseKeyPointsList()
         publish_msg.header = key_points_list.header
+        publish_msg.header.frame_id = "room_camera1"
         for people_id, people in self.tracking_info.get_people_dict().items():
             _, _, _, openpose_pose_key_points = people
             shigure_pose_key_points = pose_key_points_util.convert_openpose_to_shigure(openpose_pose_key_points,
