@@ -84,6 +84,7 @@ class ObjectDetectionNode(ImagePreviewNode):
             detected_object_list = DetectedObjectList()
             detected_object_list.header.stamp.sec = sec
             detected_object_list.header.stamp.nanosec = nano_sec
+            detected_object_list.header.frame_id = "room_camera1"
 
             timestamp_str = str(frame.timestamp)
             if timestamp_str in frame_object_dict.keys():
