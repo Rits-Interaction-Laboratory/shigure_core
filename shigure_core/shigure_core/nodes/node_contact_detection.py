@@ -55,6 +55,7 @@ class ContactDetectionNode(ImagePreviewNode):
 
         publish_msg = ContactedList()
         publish_msg.header.stamp = people.header.stamp
+        publish_msg.header.frame_id = "room_camera1"
         for hand, object_item in result_list:
             person, _, _ = hand
             tracked_object, _ = object_item
