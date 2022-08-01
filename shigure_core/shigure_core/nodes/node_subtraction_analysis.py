@@ -56,6 +56,7 @@ class SubtractionAnalysisNode(ImagePreviewNode):
                 sec, nano_sec = self.subtraction_frames.get_timestamp()
                 msg.header.stamp.sec = sec
                 msg.header.stamp.nanosec = nano_sec
+                msg.header.frame_id = "room_camera1"
                 self._publisher.publish(msg)
 
                 if self.is_debug_mode:
