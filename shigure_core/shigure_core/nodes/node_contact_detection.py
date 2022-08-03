@@ -30,9 +30,10 @@ class ContactDetectionNode(ImagePreviewNode):
         object_subscriber = message_filters.Subscriber(self, TrackedObjectList, '/shigure/object_tracking')
         people_subscriber = message_filters.Subscriber(self, PoseKeyPointsList, '/shigure/people_detection')
         color_subscriber = message_filters.Subscriber(self, CompressedImage, '/rs/color/compressed')
+        depth_camera_info_subscriber = message_filters.Subscriber(self, CameraInfo, '/rs/aligned_depth_to_color/cameraInfo')
 
         self.time_synchronizer = message_filters.TimeSynchronizer(
-            [object_subscriber, people_subscriber, color_subscriber], 1500)
+            [object_subscriber, people_subscriber, color_subscriber, depth_camera_info_subscriber], 1500)
         self.time_synchronizer.registerCallback(self.callback)
 
         self.contact_detection_logic = ContactDetectionLogic()
@@ -46,7 +47,7 @@ class ContactDetectionNode(ImagePreviewNode):
         self.action_index = 0
         self._id_manager = IdManager()
 
-    def callback(self, object_list: TrackedObjectList, people: PoseKeyPointsList, color_img_src: CompressedImage):
+    def callback(self, object_list: TrackedObjectList, people: PoseKeyPointsList, color_img_src: CompressedImage, camera_info: CameraInfo):
         self.frame_count_up()
 
         color_img: np.ndarray = self.bridge.compressed_imgmsg_to_cv2(color_img_src)
@@ -55,7 +56,7 @@ class ContactDetectionNode(ImagePreviewNode):
 
         publish_msg = ContactedList()
         publish_msg.header.stamp = people.header.stamp
-        publish_msg.header.frame_id = "room_camera1"
+        publish_msg.header.frame_id = camera_info.header.frame_id
         for hand, object_item in result_list:
             person, _, _ = hand
             tracked_object, _ = object_item
