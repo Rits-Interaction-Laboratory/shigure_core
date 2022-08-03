@@ -57,7 +57,6 @@ class BgSubtractionNode(ImagePreviewNode):
 
                 msg: Image = self.bridge.cv2_to_compressed_imgmsg(data, 'png')
                 msg.header.stamp = image_rect_raw.header.stamp
-                msg.header.frame_id = "room_camera1"
                 self.publisher_.publish(msg)
 
                 if self.is_debug_mode:
