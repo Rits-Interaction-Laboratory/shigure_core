@@ -71,6 +71,7 @@ class ContactDetectionNode(ImagePreviewNode):
                 contacted.action = action.value
                 contacted.people_bounding_box = person.bounding_box
                 contacted.object_bounding_box = tracked_object.bounding_box
+                contacted.object_cube = tracked_object.collider
                 publish_msg.contacted_list.append(contacted)
 
             print(f'PeopleId: {person.people_id}, ObjectId: {tracked_object.object_id}, Action: {action.value}')
