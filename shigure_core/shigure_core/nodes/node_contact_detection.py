@@ -6,7 +6,7 @@ import cv2
 import message_filters
 import numpy as np
 import rclpy
-from sensor_msgs.msg import CompressedImage
+from sensor_msgs.msg import CompressedImage, CameraInfo
 from shigure_core_msgs.msg import PoseKeyPointsList, TrackedObjectList, ContactedList, Contacted
 
 from shigure_core.enum.contact_action_enum import ContactActionEnum
