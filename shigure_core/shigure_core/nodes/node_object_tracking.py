@@ -63,7 +63,7 @@ class ObjectTrackingNode(ImagePreviewNode):
         # publish
         publish_msg = TrackedObjectList()
         publish_msg.header = detected_object_list.header
-        publish_msg.header.frame_id = "room_camera1"
+        publish_msg.header.frame_id = camera_info.header.frame_id
 
         k_inv = np.linalg.inv(k)
         height, width = depth_img.shape[:2]
