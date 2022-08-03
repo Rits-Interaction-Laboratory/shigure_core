@@ -6,7 +6,7 @@ import message_filters
 import numpy as np
 import rclpy
 from people_detection_ros2_msg.msg import People
-from sensor_msgs.msg import Image, CompressedImage
+from sensor_msgs.msg import Image, CompressedImage, CameraInfo
 
 from shigure_core.nodes.common_model.timestamp import Timestamp
 from shigure_core.nodes.node_image_preview import ImagePreviewNode
@@ -26,15 +26,16 @@ class SubtractionAnalysisNode(ImagePreviewNode):
         people_subscriber = message_filters.Subscriber(self, People, '/people_detection')
         subtraction_subscriber = message_filters.Subscriber(self, CompressedImage,
                                                             '/shigure/bg_subtraction')
+        depth_camera_info_subscriber = message_filters.Subscriber(self, CameraInfo, '/rs/aligned_depth_to_color/cameraInfo')
         self.time_synchronizer = message_filters.TimeSynchronizer(
-            [people_subscriber, subtraction_subscriber], 1000)
+            [people_subscriber, subtraction_subscriber, depth_camera_info_subscriber], 1000)
         self.time_synchronizer.registerCallback(self.callback)
 
         self._colors = []
         for i in range(255):
             self._colors.append(tuple([random.randint(128, 255) for _ in range(3)]))
 
-    def callback(self, people: People, subtraction_src: CompressedImage):
+    def callback(self, people: People, subtraction_src: CompressedImage, camera_info: CameraInfo):
         try:
             self.get_logger().info('Buffering start', once=True)
 
@@ -56,7 +57,7 @@ class SubtractionAnalysisNode(ImagePreviewNode):
                 sec, nano_sec = self.subtraction_frames.get_timestamp()
                 msg.header.stamp.sec = sec
                 msg.header.stamp.nanosec = nano_sec
-                msg.header.frame_id = "room_camera1"
+                msg.header.frame_id = camera_info.header.frame_id
                 self._publisher.publish(msg)
 
                 if self.is_debug_mode:
