@@ -6,7 +6,7 @@ import cv2
 import message_filters
 import numpy as np
 import rclpy
-from sensor_msgs.msg import CompressedImage
+from sensor_msgs.msg import CompressedImage, CameraInfo
 from shigure_core_msgs.msg import DetectedObjectList, DetectedObject, BoundingBox
 
 from shigure_core.enum.detected_object_action_enum import DetectedObjectActionEnum
@@ -30,9 +30,10 @@ class ObjectDetectionNode(ImagePreviewNode):
         subtraction_analysis_subscriber = message_filters.Subscriber(self, CompressedImage,
                                                                      '/shigure/subtraction_analysis')
         color_subscriber = message_filters.Subscriber(self, CompressedImage, '/rs/color/compressed')
+        depth_camera_info_subscriber = message_filters.Subscriber(self, CameraInfo, '/rs/aligned_depth_to_color/cameraInfo')
 
         self.time_synchronizer = message_filters.TimeSynchronizer(
-            [subtraction_analysis_subscriber, color_subscriber], 1000)
+            [subtraction_analysis_subscriber, color_subscriber, depth_camera_info_subscriber], 1000)
         self.time_synchronizer.registerCallback(self.callback)
 
         self.object_detection_logic = ObjectDetectionLogic()
@@ -46,7 +47,7 @@ class ObjectDetectionNode(ImagePreviewNode):
 
         self.object_index = 0
 
-    def callback(self, subtraction_analysis_src: CompressedImage, color_img_src: CompressedImage):
+    def callback(self, subtraction_analysis_src: CompressedImage, color_img_src: CompressedImage, camera_info: CameraInfo):
         self.get_logger().info('Buffering start', once=True)
         self.frame_count_up()
 
@@ -84,6 +85,7 @@ class ObjectDetectionNode(ImagePreviewNode):
             detected_object_list = DetectedObjectList()
             detected_object_list.header.stamp.sec = sec
             detected_object_list.header.stamp.nanosec = nano_sec
+            detected_object_list.header.frame_id = camera_info.header.frame_id
 
             timestamp_str = str(frame.timestamp)
             if timestamp_str in frame_object_dict.keys():
