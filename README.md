@@ -27,7 +27,7 @@ Wiki : https://github.com/Rits-Interaction-Laboratory/shigure_core/wiki
 Rits-Interaction-Laboratory/rs_ros2_python を利用
 
 ```sh
-ros2 run realsense_ros2_camera realsense_ros2_camera
+ros2 run rs_ros2_python rs_camera
 ```
 
 ### 2. Openpose ROS2 nodeの起動
