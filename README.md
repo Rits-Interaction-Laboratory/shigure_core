@@ -63,7 +63,7 @@ ros2 launch shigure_core shigure_core_launch.py
 
 ### 5. DBへの保存を行う場合
 
-DBの起動
+DBの起動 <br>
 ```sh
 cd shigure_core/resource/db
 docker-compose up
@@ -74,4 +74,10 @@ record_event nodeの起動 <br>
 Sample YMLファイルの配置フォルダ : [/shigure_core/shigure_core/shigure_core/nodes/params/](/shigure_core/shigure_core/shigure_core/nodes/params/))
 ```sh
 ros2 run shigure_core record_event --ros-args --params-file <ROS2 workspace>/src/shigure_core/shigure_core/shigure_core/nodes/params/record_event_params.yml
+```
+
+DBへの接続 <br>
+(PW : `shigure`) <br>
+```sh
+mysql -h 127.0.0.1 -P 3306 -u shigure -p
 ```
