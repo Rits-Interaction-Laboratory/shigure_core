@@ -1,45 +1,77 @@
 # Shigure Core
 ![Shigure Core](https://img.shields.io/badge/shigure-core-red)
 
-室内監視システム ROS2版
+ROS2による室内シーン変遷ロギングシステム 
+
+Wiki : https://github.com/Rits-Interaction-Laboratory/shigure_core/wiki
 
 ## Requires
-* ROS2 Dashing Diademata [公式インストール方法](https://index.ros.org/doc/ros2/Installation/Dashing/)
+* ROS2 Foxy [公式インストール方法](https://index.ros.org/doc/ros2/Installation/Foxy/)
 * Intel® RealSense™ D435
 * ROS2 Wrapper for Intel® RealSense™ Devices [公式リポジトリ](https://github.com/intel/ros2_intel_realsense)
+    * Rits-Interaction-Laboratory/rs_ros2_python [リポジトリ](https://github.com/Rits-Interaction-Laboratory/rs_ros2_python)
+* Rits-Interaction-Laboratory/openpose_ros2 [リポジトリ](https://github.com/Rits-Interaction-Laboratory/openpose_ros2)
+    * docker版 : Rits-Interaction-Laboratory/openpose_ros2_docker [リポジトリ](https://github.com/Rits-Interaction-Laboratory/openpose_ros2_docker)
+* Rits-Interaction-Laboratory/people_detection_ros2 [リポジトリ](https://github.com/Rits-Interaction-Laboratory/people_detection_ros2)
+    * docker版 : Rits-Interaction-Laboratory/people_detection_ros2_docker [リポジトリ](https://github.com/Rits-Interaction-Laboratory/people_detection_ros2)
 * OpenCV
-* OpenPose
+* Docker
+* Docker Compose
 * (OPTIONAL) web_video_server [ROS wiki](https://wiki.ros.org/web_video_server) [インストール方法](https://github.com/RobotWebTools/web_video_server/issues/108)
 
-## PacageName
-* Shigure
-
-## Nodes
-* bg_subtraction_node
-* bg_subtraction_preview_node
-
-## Topics
-### bg_subtraction_node
-* /shigure/bg_subtraction
-    * 本番用の背景差分用topic
-### bg_subtraction_preview_node
-* /shigure/preview/bg_subtraction/depth
-    * 深度画像のカラーマップ画像
-* /shigure/preview/bg_subtraction/avg
-    * 深度の平均画像のカラーマップ画像
-* /shigure/preview/bg_subtraction/sd
-    * 深度の標準偏差のカラーマップ画像
-* /shigure/preview/bg_subtraction/result
-    * 背景差分のデバッグ画像
-    * 画像にframe数, fpsが書き込まれている 
-
-## EntoryPoints
-* bg_subtraction
-    * 本番用背景差分ノード
-* bg_subtraction_preview
-    * デバッグ用背景差分ノード
 
 ## 起動方法
-1. `ros2 run realsense_ros2_camera realsense_ros2_camera` でRealSenseを起動する
-1. `ros2 run shigure %{EntoryPointName}` で任意のノードを起動する
-    * 例： `ros2 run shigure bg_subtraction` で本番用背景差分ノードを起動
+
+### 1. RealSense nodeの起動
+
+Rits-Interaction-Laboratory/rs_ros2_python を利用
+
+```sh
+ros2 run realsense_ros2_camera realsense_ros2_camera
+```
+
+### 2. Openpose ROS2 nodeの起動
+
+Rits-Interaction-Laboratory/openpose_ros2_dockerを利用
+
+```sh
+docker run -it --gpus all --net host openpose_ros2_docker
+bash /run.bash
+```
+
+### 3. People Detection ROS2 nodeの起動
+
+Rits-Interaction-Laboratory/people_detection_ros2_dockerを利用
+
+```sh
+docker run -it --gpus all --net host people_detection_ros2_docker
+bash /run.bash
+```
+
+### 4. shigure_core(本リポジトリ)の起動
+
+ビルド
+```sh
+colcon build
+. <ROS2 workspace>/install/setup.bash
+```
+
+実行(全ノードを実行)
+```sh
+ros2 launch shigure_core shigure_core_launch.py
+```
+
+### 5. DBへの保存を行う場合
+
+DBの起動
+```sh
+cd shigure_core/resource/db
+docker-compose up
+```
+
+record_event nodeの起動 <br>
+(パラメータ使用のためYMLファイルを読み込む。 <br>
+Sample YMLファイルの配置フォルダ : [/shigure_core/shigure_core/shigure_core/nodes/params/](/shigure_core/shigure_core/shigure_core/nodes/params/))
+```sh
+ros2 run shigure_core record_event --ros-args --params-file <ROS2 workspace>/src/shigure_core/shigure_core/shigure_core/nodes/params/record_event_params.yml
+```
