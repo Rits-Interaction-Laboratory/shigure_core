@@ -77,6 +77,7 @@ class BgSubtractionNode(ImagePreviewNode):
 
                     img = self.print_fps(data)
                     tile_img = cv2.vconcat([cv2.hconcat([color_depth, color_avg]), cv2.hconcat([color_sd, img])])
+                    cv2.namedWindow('bg_subtraction', cv2.WINDOW_NORMAL)
                     cv2.imshow("bg_subtraction", tile_img)
                     cv2.waitKey(1)
                 else:

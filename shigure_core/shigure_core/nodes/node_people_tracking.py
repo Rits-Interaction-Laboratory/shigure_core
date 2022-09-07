@@ -107,6 +107,7 @@ class PeopleTrackingNode(ImagePreviewNode):
                         cv2.FONT_HERSHEY_PLAIN, 1.5, (255, 255, 255), thickness=2)
 
         self.print_fps(color_img)
+        cv2.namedWindow('people_tracking', cv2.WINDOW_NORMAL)
         cv2.imshow('people_tracking', color_img)
         cv2.waitKey(1)
 
