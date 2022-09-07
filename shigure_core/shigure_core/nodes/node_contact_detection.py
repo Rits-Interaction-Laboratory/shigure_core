@@ -168,6 +168,7 @@ class ContactDetectionNode(ImagePreviewNode):
             tile_img = cv2.hconcat([color_img,
                                     cv2.vconcat([cv2.hconcat([self.action_list[0], self.action_list[1]]),
                                                  cv2.hconcat([self.action_list[2], self.action_list[3]])])])
+            cv2.namedWindow('contact_detection', cv2.WINDOW_NORMAL)
             cv2.imshow('contact_detection', tile_img)
 
             cv2.waitKey(1)
