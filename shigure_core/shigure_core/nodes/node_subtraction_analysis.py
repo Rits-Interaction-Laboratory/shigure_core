@@ -44,7 +44,7 @@ class SubtractionAnalysisNode(ImagePreviewNode):
                                      Timestamp(subtraction_src.header.stamp.sec,
                                                subtraction_src.header.stamp.nanosec))
             self.subtraction_frames.add_frame(frame)
-            result, data, result_frame = self.bg_subtraction_logic.execute(self.subtraction_frames)
+            result, data, result_frame = self.bg_subtraction_logic.execute(self.subtraction_frames, frame)
 
             if result:
                 self.get_logger().info('Buffering end', once=True)
