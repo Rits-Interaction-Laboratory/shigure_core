@@ -31,10 +31,6 @@ class SubtractionAnalysisNode(ImagePreviewNode):
             [people_subscriber, subtraction_subscriber, depth_camera_info_subscriber], 1000)
         self.time_synchronizer.registerCallback(self.callback)
 
-        self._colors = []
-        for i in range(255):
-            self._colors.append(tuple([random.randint(128, 255) for _ in range(3)]))
-
     def callback(self, people: People, subtraction_src: CompressedImage, camera_info: CameraInfo):
         try:
             self.get_logger().info('Buffering start', once=True)
