@@ -1,8 +1,8 @@
 CREATE TABLE IF NOT EXISTS `pose` (
   `id` INT NOT NULL AUTO_INCREMENT,
-  `sec` VARCHAR(100) NOT NULL,
-  `nanosec` VARCHAR(1024) NOT NULL,
-  `frame_id` INT NOT NULL,
+  `sec` INT NOT NULL,
+  `nanosec` INT NOT NULL,
+  `frame_id` VARCHAR(100) NOT NULL,
 
   `nose_x` FLOAT NOT NULL,
   `nose_y` FLOAT NOT NULL,
