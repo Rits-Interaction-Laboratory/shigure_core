@@ -14,7 +14,7 @@ class RecordingStartSignalNode():
             String,
             '/HL2/pose_record_signal',
             self.callback,
-            query_size=1
+            queue_size=10
         )
 
     def callback(self, msg: String):
@@ -31,7 +31,7 @@ class PoseSaveNode():
             PoseKeyPointsList,
             '/shigure/people_detection',
             self.callback,
-            query_size=10
+            queue_size=10
         )
 
     def callback(self, pose_key_points_list: PoseKeyPointsList):
