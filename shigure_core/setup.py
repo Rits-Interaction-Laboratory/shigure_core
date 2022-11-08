@@ -17,6 +17,7 @@ setup(
               node_package_name + '.subtraction_analysis', node_package_name + '.people_tracking',
               node_package_name + '.object_detection', node_package_name + '.object_tracking',
               node_package_name + '.contact_detection', node_package_name + '.record_event',
+              node_package_name + '.pose_save',
               util_package_name, enum_package_name, db_package_name],
     data_files=[
         ('share/ament_index/resource_index/packages',
@@ -41,6 +42,7 @@ setup(
             'contact_detection = shigure_core.nodes.node_contact_detection:main',
             'people_tracking = shigure_core.nodes.node_people_tracking:main',
             'record_event = shigure_core.nodes.node_record_event:main',
+            'pose_save = shigure_core.nodes.node_pose_save:main',
         ],
     },
 )
