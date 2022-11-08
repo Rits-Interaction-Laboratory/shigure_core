@@ -64,6 +64,18 @@ class EventRepository:
         ctx.close()
 
     @staticmethod
+    def insert_pose_meta(data):
+        ctx = mysql.connector.connect(**config)
+        cur = ctx.cursor()
+
+        json_data = ConvertMsg.message_to_json(data)
+
+        sql = f"INSERT INTO pose(pose_key_points_list) VALUES ('{json_data}')"
+        cur.execute(sql)
+        ctx.commit()
+        ctx.close()
+
+    @staticmethod
     def select_with_count(page: int):
         ctx = mysql.connector.connect(**config)
         cur = ctx.cursor()
