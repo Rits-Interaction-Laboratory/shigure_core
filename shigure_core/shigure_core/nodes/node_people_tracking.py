@@ -5,6 +5,7 @@ import cv2
 import message_filters
 import numpy as np
 import rclpy
+from rclpy.qos import QoSProfile, ReliabilityPolicy
 from openpose_ros2_msgs.msg import PoseKeyPointsList as OpenPosePoseKeyPointsList
 from sensor_msgs.msg import CompressedImage, CameraInfo
 from shigure_core_msgs.msg import PoseKeyPointsList as ShigurePoseKeyPointsList, PoseKeyPoints
@@ -20,13 +21,33 @@ class PeopleTrackingNode(ImagePreviewNode):
     def __init__(self):
         super().__init__('people_tracking_node')
 
-        self._publisher = self.create_publisher(ShigurePoseKeyPointsList, '/shigure/people_detection', 10)
+        # QoS Settings
+        shigure_qos = QoSProfile(depth=10, reliability=ReliabilityPolicy.BEST_EFFORT)
 
-        depth_subscriber = message_filters.Subscriber(self, CompressedImage,
-                                                      '/rs/aligned_depth_to_color/compressedDepth')
-        depth_camera_info_subscriber = message_filters.Subscriber(self, CameraInfo,
-                                                                  '/rs/aligned_depth_to_color/cameraInfo')
-        key_points_subscriber = message_filters.Subscriber(self, OpenPosePoseKeyPointsList, '/openpose/pose_key_points')
+        # publisher, subscriber
+        self._publisher = self.create_publisher(
+            ShigurePoseKeyPointsList, 
+            '/shigure/people_detection', 
+            10
+        )
+        depth_subscriber = message_filters.Subscriber(
+            self, 
+            CompressedImage,
+            '/rs/aligned_depth_to_color/compressedDepth', 
+            qos_profile=shigure_qos
+        )
+        depth_camera_info_subscriber = message_filters.Subscriber(
+            self, 
+            CameraInfo,
+            '/rs/aligned_depth_to_color/cameraInfo', 
+            qos_profile=shigure_qos
+        )
+        key_points_subscriber = message_filters.Subscriber(
+            self, 
+            OpenPosePoseKeyPointsList, 
+            '/openpose/pose_key_points', 
+            qos_profile=shigure_qos
+        )
 
         if not self.is_debug_mode:
             self.time_synchronizer = message_filters.TimeSynchronizer(
