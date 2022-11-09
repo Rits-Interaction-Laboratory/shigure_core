@@ -23,13 +23,30 @@ class ObjectTrackingNode(ImagePreviewNode):
         # QoS Settings
         shigure_qos = QoSProfile(depth=10, reliability=ReliabilityPolicy.BEST_EFFORT)
 
-        self._publisher = self.create_publisher(TrackedObjectList, '/shigure/object_tracking', 10)
-
-        depth_subscriber = message_filters.Subscriber(self, CompressedImage,
-                                                      '/rs/aligned_depth_to_color/compressedDepth', qos_profile=shigure_qos)
-        depth_camera_info_subscriber = message_filters.Subscriber(self, CameraInfo,
-                                                                  '/rs/aligned_depth_to_color/cameraInfo', qos_profile=shigure_qos)
-        object_detection_subscriber = message_filters.Subscriber(self, DetectedObjectList, '/shigure/object_detection', qos_profile=shigure_qos)
+        # publisher, subscriber
+        self._publisher = self.create_publisher(
+            TrackedObjectList, 
+            '/shigure/object_tracking', 
+            10
+        )
+        depth_subscriber = message_filters.Subscriber(
+            self, 
+            CompressedImage,
+            '/rs/aligned_depth_to_color/compressedDepth', 
+            qos_profile=shigure_qos
+        )
+        depth_camera_info_subscriber = message_filters.Subscriber(
+            self, 
+            CameraInfo,
+            '/rs/aligned_depth_to_color/cameraInfo', 
+            qos_profile=shigure_qos
+        )
+        object_detection_subscriber = message_filters.Subscriber(
+            self, 
+            DetectedObjectList, 
+            '/shigure/object_detection', 
+            qos_profile=shigure_qos
+        )
 
         if not self.is_debug_mode:
             self.time_synchronizer = message_filters.TimeSynchronizer(

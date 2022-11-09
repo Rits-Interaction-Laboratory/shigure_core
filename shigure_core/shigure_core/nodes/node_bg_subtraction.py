@@ -37,9 +37,19 @@ class BgSubtractionNode(ImagePreviewNode):
 
         self.depth_frames = DepthFrames()
         self.bg_subtraction_logic = BgSubtractionLogic()
-        self.publisher_ = self.create_publisher(CompressedImage, '/shigure/bg_subtraction', 10)
-        self.subscription = self.create_subscription(CompressedImage, '/rs/aligned_depth_to_color/compressedDepth',
-                                                     self.get_depth_callback, shigure_qos)
+
+        # publisher, subscriber
+        self.publisher_ = self.create_publisher(
+            CompressedImage, 
+            '/shigure/bg_subtraction', 
+            10
+        )
+        self.subscription = self.create_subscription(
+            CompressedImage, 
+            '/rs/aligned_depth_to_color/compressedDepth',
+            self.get_depth_callback, 
+            shigure_qos
+        )
 
         if self.is_debug_mode:
             self.get_logger().info(f'InputRound : {self.input_round}')

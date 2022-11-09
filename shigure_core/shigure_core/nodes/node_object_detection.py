@@ -29,12 +29,30 @@ class ObjectDetectionNode(ImagePreviewNode):
         # QoS Settings
         shigure_qos = QoSProfile(depth=10, reliability=ReliabilityPolicy.BEST_EFFORT)
 
-        self.detection_publisher = self.create_publisher(DetectedObjectList, '/shigure/object_detection', 10)
-
-        subtraction_analysis_subscriber = message_filters.Subscriber(self, CompressedImage,
-                                                                     '/shigure/subtraction_analysis', qos_profile=shigure_qos)
-        color_subscriber = message_filters.Subscriber(self, CompressedImage, '/rs/color/compressed', qos_profile=shigure_qos)
-        depth_camera_info_subscriber = message_filters.Subscriber(self, CameraInfo, '/rs/aligned_depth_to_color/cameraInfo', qos_profile=shigure_qos)
+        # publisher, subscriber
+        self.detection_publisher = self.create_publisher(
+            DetectedObjectList, 
+            '/shigure/object_detection', 
+            10
+        )
+        subtraction_analysis_subscriber = message_filters.Subscriber(
+            self, 
+            CompressedImage,
+            '/shigure/subtraction_analysis', 
+            qos_profile=shigure_qos
+        )
+        color_subscriber = message_filters.Subscriber(
+            self, 
+            CompressedImage, 
+            '/rs/color/compressed', 
+            qos_profile=shigure_qos
+        )
+        depth_camera_info_subscriber = message_filters.Subscriber(
+            self, 
+            CameraInfo, 
+            '/rs/aligned_depth_to_color/cameraInfo', 
+            qos_profile=shigure_qos
+        )
 
         self.time_synchronizer = message_filters.TimeSynchronizer(
             [subtraction_analysis_subscriber, color_subscriber, depth_camera_info_subscriber], 1000)

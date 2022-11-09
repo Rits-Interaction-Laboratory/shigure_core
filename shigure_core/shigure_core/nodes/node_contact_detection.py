@@ -30,11 +30,35 @@ class ContactDetectionNode(ImagePreviewNode):
         self.LEFT_HAND_INDEX = 4
         self.RIGHT_HAND_INDEX = 7
 
-        self._publisher = self.create_publisher(ContactedList, '/shigure/contacted', 10)
-        object_subscriber = message_filters.Subscriber(self, TrackedObjectList, '/shigure/object_tracking', qos_profile=shigure_qos)
-        people_subscriber = message_filters.Subscriber(self, PoseKeyPointsList, '/shigure/people_detection', qos_profile=shigure_qos)
-        color_subscriber = message_filters.Subscriber(self, CompressedImage, '/rs/color/compressed')
-        depth_camera_info_subscriber = message_filters.Subscriber(self, CameraInfo, '/rs/aligned_depth_to_color/cameraInfo', qos_profile=shigure_qos)
+        # publisher, subscriber
+        self._publisher = self.create_publisher(
+            ContactedList, 
+            '/shigure/contacted', 
+            10
+        )
+        object_subscriber = message_filters.Subscriber(
+            self, 
+            TrackedObjectList, 
+            '/shigure/object_tracking', 
+            qos_profile=shigure_qos
+        )
+        people_subscriber = message_filters.Subscriber(
+            self, 
+            PoseKeyPointsList, 
+            '/shigure/people_detection', 
+            qos_profile=shigure_qos
+        )
+        color_subscriber = message_filters.Subscriber(
+            self, 
+            CompressedImage, 
+            '/rs/color/compressed'
+        )
+        depth_camera_info_subscriber = message_filters.Subscriber(
+            self, 
+            CameraInfo, 
+            '/rs/aligned_depth_to_color/cameraInfo', 
+            qos_profile=shigure_qos
+        )
 
         self.time_synchronizer = message_filters.TimeSynchronizer(
             [object_subscriber, people_subscriber, color_subscriber, depth_camera_info_subscriber], 1500)

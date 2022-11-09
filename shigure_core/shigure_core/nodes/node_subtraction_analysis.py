@@ -26,12 +26,32 @@ class SubtractionAnalysisNode(ImagePreviewNode):
 
         self.subtraction_frames = SubtractionFrames()
         self.bg_subtraction_logic = SubtractionAnalysisLogic()
-        self._publisher = self.create_publisher(CompressedImage,
-                                                '/shigure/subtraction_analysis', 10)
-        people_subscriber = message_filters.Subscriber(self, People, '/people_detection', qos_profile=shigure_qos)
-        subtraction_subscriber = message_filters.Subscriber(self, CompressedImage,
-                                                            '/shigure/bg_subtraction', qos_profile=shigure_qos)
-        depth_camera_info_subscriber = message_filters.Subscriber(self, CameraInfo, '/rs/aligned_depth_to_color/cameraInfo', qos_profile=shigure_qos)
+
+        # publisher, subscriber
+        self._publisher = self.create_publisher(
+            CompressedImage,
+            '/shigure/subtraction_analysis', 
+            10
+        )
+        people_subscriber = message_filters.Subscriber(
+            self, 
+            People, 
+            '/people_detection', 
+            qos_profile=shigure_qos
+        )
+        subtraction_subscriber = message_filters.Subscriber(
+            self, 
+            CompressedImage,
+            '/shigure/bg_subtraction', 
+            qos_profile=shigure_qos
+        )
+        depth_camera_info_subscriber = message_filters.Subscriber(
+            self, 
+            CameraInfo, 
+            '/rs/aligned_depth_to_color/cameraInfo', 
+            qos_profile=shigure_qos
+        )
+        
         self.time_synchronizer = message_filters.TimeSynchronizer(
             [people_subscriber, subtraction_subscriber, depth_camera_info_subscriber], 1000)
         self.time_synchronizer.registerCallback(self.callback)
