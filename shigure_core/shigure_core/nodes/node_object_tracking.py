@@ -5,6 +5,7 @@ import cv2
 import message_filters
 import numpy as np
 import rclpy
+from rclpy.qos import QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import CompressedImage, CameraInfo
 from shigure_core_msgs.msg import DetectedObjectList, TrackedObjectList, TrackedObject, Cube
 
@@ -19,13 +20,16 @@ class ObjectTrackingNode(ImagePreviewNode):
     def __init__(self):
         super().__init__('object_tracking_node')
 
+        # QoS Settings
+        shigure_qos = QoSProfile(depth=10, reliability=ReliabilityPolicy.BEST_EFFORT)
+
         self._publisher = self.create_publisher(TrackedObjectList, '/shigure/object_tracking', 10)
 
         depth_subscriber = message_filters.Subscriber(self, CompressedImage,
-                                                      '/rs/aligned_depth_to_color/compressedDepth')
+                                                      '/rs/aligned_depth_to_color/compressedDepth', qos_profile=shigure_qos)
         depth_camera_info_subscriber = message_filters.Subscriber(self, CameraInfo,
-                                                                  '/rs/aligned_depth_to_color/cameraInfo')
-        object_detection_subscriber = message_filters.Subscriber(self, DetectedObjectList, '/shigure/object_detection')
+                                                                  '/rs/aligned_depth_to_color/cameraInfo', qos_profile=shigure_qos)
+        object_detection_subscriber = message_filters.Subscriber(self, DetectedObjectList, '/shigure/object_detection', qos_profile=shigure_qos)
 
         if not self.is_debug_mode:
             self.time_synchronizer = message_filters.TimeSynchronizer(
