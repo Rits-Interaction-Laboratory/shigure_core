@@ -51,7 +51,8 @@ class ContactDetectionNode(ImagePreviewNode):
         color_subscriber = message_filters.Subscriber(
             self, 
             CompressedImage, 
-            '/rs/color/compressed'
+            '/rs/color/compressed',
+            qos_profile=shigure_qos
         )
         depth_camera_info_subscriber = message_filters.Subscriber(
             self, 
