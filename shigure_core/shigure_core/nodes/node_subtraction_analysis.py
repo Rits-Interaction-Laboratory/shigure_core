@@ -5,6 +5,7 @@ import cv2
 import message_filters
 import numpy as np
 import rclpy
+from rclpy.qos import QoSProfile, ReliabilityPolicy
 from people_detection_ros2_msg.msg import People
 from sensor_msgs.msg import Image, CompressedImage, CameraInfo
 
@@ -19,14 +20,18 @@ class SubtractionAnalysisNode(ImagePreviewNode):
 
     def __init__(self):
         super().__init__('subtraction_analysis_node')
+
+        # QoS Settings
+        shigure_qos = QoSProfile(depth=10, reliability=ReliabilityPolicy.BEST_EFFORT)
+
         self.subtraction_frames = SubtractionFrames()
         self.bg_subtraction_logic = SubtractionAnalysisLogic()
         self._publisher = self.create_publisher(CompressedImage,
                                                 '/shigure/subtraction_analysis', 10)
-        people_subscriber = message_filters.Subscriber(self, People, '/people_detection')
+        people_subscriber = message_filters.Subscriber(self, People, '/people_detection', qos_profile=shigure_qos)
         subtraction_subscriber = message_filters.Subscriber(self, CompressedImage,
-                                                            '/shigure/bg_subtraction')
-        depth_camera_info_subscriber = message_filters.Subscriber(self, CameraInfo, '/rs/aligned_depth_to_color/cameraInfo')
+                                                            '/shigure/bg_subtraction', qos_profile=shigure_qos)
+        depth_camera_info_subscriber = message_filters.Subscriber(self, CameraInfo, '/rs/aligned_depth_to_color/cameraInfo', qos_profile=shigure_qos)
         self.time_synchronizer = message_filters.TimeSynchronizer(
             [people_subscriber, subtraction_subscriber, depth_camera_info_subscriber], 1000)
         self.time_synchronizer.registerCallback(self.callback)

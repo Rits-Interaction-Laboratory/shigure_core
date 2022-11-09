@@ -3,6 +3,7 @@ import datetime
 import cv2
 import numpy as np
 import rclpy
+from rclpy.qos import QoSProfile, ReliabilityPolicy
 from rcl_interfaces.msg import ParameterDescriptor, ParameterType
 from sensor_msgs.msg import Image, CompressedImage
 
@@ -16,6 +17,9 @@ class BgSubtractionNode(ImagePreviewNode):
 
     def __init__(self):
         super().__init__('bg_subtraction_node')
+
+        # QoS Settings
+        shigure_qos = QoSProfile(depth=10, reliability=ReliabilityPolicy.BEST_EFFORT)
 
         # ros params
         input_round_descriptor = ParameterDescriptor(type=ParameterType.PARAMETER_INTEGER,
@@ -35,7 +39,7 @@ class BgSubtractionNode(ImagePreviewNode):
         self.bg_subtraction_logic = BgSubtractionLogic()
         self.publisher_ = self.create_publisher(CompressedImage, '/shigure/bg_subtraction', 10)
         self.subscription = self.create_subscription(CompressedImage, '/rs/aligned_depth_to_color/compressedDepth',
-                                                     self.get_depth_callback, 10)
+                                                     self.get_depth_callback, shigure_qos)
 
         if self.is_debug_mode:
             self.get_logger().info(f'InputRound : {self.input_round}')
