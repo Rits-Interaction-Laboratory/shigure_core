@@ -17,7 +17,6 @@ setup(
               node_package_name + '.subtraction_analysis', node_package_name + '.people_tracking',
               node_package_name + '.object_detection', node_package_name + '.object_tracking',
               node_package_name + '.contact_detection', node_package_name + '.record_event',
-              node_package_name + '.pose_save',
               util_package_name, enum_package_name, db_package_name],
     data_files=[
         ('share/ament_index/resource_index/packages',
