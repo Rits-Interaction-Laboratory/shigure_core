@@ -1,61 +1,67 @@
 import rclpy
+from rclpy.node import Node
+from rclpy.qos import QoSProfile, ReliabilityPolicy
 from std_msgs.msg import String
 from shigure_core_msgs.msg import PoseKeyPointsList
 
 from shigure_core.db.event_repository import EventRepository
 
-class RecordingStartSignalNode():
-    def __init__(self):
-        super().__init__('recording_start_signal_node')
-
-        self.pose_record_signal: String = "None"
-
-        self.subscrption = self.create_subscrption(
-            String,
-            '/HL2/pose_record_signal',
-            self.callback,
-            queue_size=10
-        )
-
-    def callback(self, msg: String):
-        try:
-            self.pose_record_signal = msg.data
-        except Exception as err:
-            self.get_logger().error(err)
-
-class PoseSaveNode():
+class PoseSaveNode(Node):
     def __init__(self):
         super().__init__('pose_save_node')
 
-        self.subscription = self.create_subscription(
+        self.signal = "None"
+        self.start_flag = True
+        self.wait_flag = True
+        self.end_flag = True
+
+        # QoS Settings
+        shigure_qos = QoSProfile(depth=10, reliability=ReliabilityPolicy.BEST_EFFORT)
+
+        self.signal_subscription = self.create_subscription(
+            String, 
+            '/HL2/pose_record_signal', 
+            lambda msg: self.result_signal(msg),
+            qos_profile=shigure_qos
+        )
+        self.pose_subscription = self.create_subscription(
             PoseKeyPointsList,
             '/shigure/people_detection',
-            self.callback,
-            queue_size=10
+            lambda msg: self.pose_save(msg),
+            qos_profile=shigure_qos
         )
 
-    def callback(self, pose_key_points_list: PoseKeyPointsList):
+    def result_signal(self, msg):
+        self.signal = msg.data
+
+    def pose_save(self, pose_key_points_list: PoseKeyPointsList):
         try:
-            if RecordingStartSignalNode.pose_record_signal == 'Start':
-                print('記録開始')
+            if self.signal == 'Start':
+                if self.start_flag:
+                    print('記録開始')
+                    self.start_flag = False
                 EventRepository.insert_pose_meta(pose_key_points_list)
+            elif self.signal == 'End':
+                if self.end_flag:
+                    print('記録終了')
+                    self.end_flag = False   
             else:
-                print('記録中断')
+                if self.wait_flag:
+                    print('待機中')
+                    self.wait_flag = False
         except Exception as err:
             self.get_logger().error(err)
 
 def main(args=None):
     rclpy.init(args=args)
 
-    recording_start_signal_subscriber = RecordingStartSignalNode()
     pose_subscriber = PoseSaveNode()
 
-    rclpy.spin()
+    rclpy.spin(pose_subscriber)
 
     # Destroy the node explicitly
     # (optional - otherwise it will be done automatically
     # when the garbage collector destroys the node object)
-    recording_start_signal_subscriber.destroy_node()
     pose_subscriber.destroy_node()
     rclpy.shutdown()
 
