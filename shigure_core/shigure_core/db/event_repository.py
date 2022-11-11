@@ -64,16 +64,27 @@ class EventRepository:
         ctx.close()
 
     @staticmethod
-    def insert_pose_meta(data):
+    def insert_pose_meta(savedata: int, save_id: int, event_id: str, data):
         ctx = mysql.connector.connect(**config)
         cur = ctx.cursor()
 
         json_data = ConvertMsg.message_to_json(data)
 
-        sql = f"INSERT INTO pose(pose_key_points_list) VALUES ('{json_data}')"
+        sql = f"INSERT INTO pose(savedata, save_id, event_id, pose_key_points_list) VALUES ('{savedata}', '{save_id}', '{event_id}', '{json_data}')"
         cur.execute(sql)
         ctx.commit()
         ctx.close()
+
+    @staticmethod
+    def get_pose_latest_savedata_id():
+        ctx = mysql.connector.connect(**config)
+        cur = ctx.cursor()
+        sql = f"SELECT savedata FROM pose ORDER BY savedata DESC LIMIT 1;"
+        cur.execute(sql)
+        savedata_id = cur.fetchone()
+        ctx.close()
+
+        return savedata_id
 
     @staticmethod
     def select_with_count(page: int):

@@ -36,6 +36,8 @@ class PoseSaveNode(Node):
 
     def pose_save(self, pose_key_points_list: PoseKeyPointsList):
         try:
+            latest_savedata_id = EventRepository.get_pose_latest_savedata_id()
+
             if self.signal == 'Start':
                 if self.start_flag:
                     print('記録開始')
@@ -45,6 +47,7 @@ class PoseSaveNode(Node):
                 if self.end_flag:
                     print('記録終了')
                     self.end_flag = False   
+                latest_savedata_id += 1
             else:
                 if self.wait_flag:
                     print('待機中')
