@@ -81,7 +81,10 @@ class EventRepository:
         cur = ctx.cursor()
         sql = f"SELECT savedata FROM pose ORDER BY savedata DESC LIMIT 1;"
         cur.execute(sql)
-        savedata_id = cur.fetchone()
+        if cur.fetchone() == 0:
+            savedata_id = cur.fetchone()
+        else:
+            savedata_id = 0
         ctx.close()
 
         return savedata_id

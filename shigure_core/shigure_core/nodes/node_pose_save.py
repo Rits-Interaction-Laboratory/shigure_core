@@ -14,6 +14,7 @@ class PoseSaveNode(Node):
         self.start_flag = True
         self.wait_flag = True
         self.end_flag = True
+        self.save_id = 1
 
         # QoS Settings
         shigure_qos = QoSProfile(depth=10, reliability=ReliabilityPolicy.BEST_EFFORT)
@@ -38,23 +39,45 @@ class PoseSaveNode(Node):
         try:
             latest_savedata_id = EventRepository.get_pose_latest_savedata_id()
 
-            if self.signal == 'Start':
+            if self.signal == 'None':
+                if self.wait_flag:
+                    print('待機中')
+                    self.flag_controll(self.signal)
+            elif self.signal == 'Start':
                 if self.start_flag:
                     print('記録開始')
-                    self.start_flag = False
-                EventRepository.insert_pose_meta(pose_key_points_list)
+                    self.flag_controll(self.signal)
+                EventRepository.insert_pose_meta(latest_savedata_id, self.save_id, pose_key_points_list)
+                self.save_id += 1
             elif self.signal == 'End':
                 if self.end_flag:
                     print('記録終了')
-                    self.end_flag = False   
-                latest_savedata_id += 1
+                    latest_savedata_id += 1
+                    self.save_id = 1
+                    self.flag_controll(self.signal)
             else:
-                if self.wait_flag:
-                    print('待機中')
-                    self.wait_flag = False
+                print('データが流れていません')
+                
         except Exception as err:
             self.get_logger().error(err)
 
+    def flag_controll(self, state: str):
+        # None
+        if state == "None":
+            self.wait_flag = False
+            self.start_flag = True
+            self.end_flag = True
+        # Start
+        elif state == "Start":
+            self.wait_flag = True
+            self.start_flag = False
+            self.end_flag = True
+        # End
+        elif state == "End":
+            self.wait_flag = True
+            self.start_flag = True
+            self.end_flag = False
+        
 def main(args=None):
     rclpy.init(args=args)
 
