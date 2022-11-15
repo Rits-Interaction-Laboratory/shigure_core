@@ -70,7 +70,7 @@ class EventRepository:
 
         json_data = ConvertMsg.message_to_json(data)
 
-        sql = f"INSERT INTO pose(savedata, save_id, event_id, pose_key_points_list) VALUES ('{savedata}', '{save_id}', '{event_id}', '{json_data}')"
+        sql = f"INSERT INTO pose(savedata, save_id, pose_key_points_list) VALUES ('{savedata}', '{save_id}', '{json_data}')"
         cur.execute(sql)
         ctx.commit()
         ctx.close()
