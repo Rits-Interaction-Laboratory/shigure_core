@@ -41,6 +41,7 @@ setup(
             'contact_detection = shigure_core.nodes.node_contact_detection:main',
             'people_tracking = shigure_core.nodes.node_people_tracking:main',
             'record_event = shigure_core.nodes.node_record_event:main',
+            'pose_save = shigure_core.nodes.node_pose_save:main',
         ],
     },
 )

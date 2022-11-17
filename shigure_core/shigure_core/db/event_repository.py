@@ -64,6 +64,30 @@ class EventRepository:
         ctx.close()
 
     @staticmethod
+    def insert_pose_meta(data):
+        ctx = mysql.connector.connect(**config)
+        cur = ctx.cursor()
+
+        sql = "INSERT INTO pose(savedata, save_id, pose_key_points_list) VALUES (%s, %s, %s);"
+        cur.executemany(sql, data)
+        ctx.commit()
+        ctx.close()
+
+    @staticmethod
+    def get_pose_latest_savedata_id():
+        ctx = mysql.connector.connect(**config)
+        cur = ctx.cursor()
+        sql = "SELECT savedata FROM pose ORDER BY savedata DESC LIMIT 2"
+        cur.execute(sql)
+        if cur.fetchone()[0] == 0:
+            savedata_id = 0
+        else:
+            savedata_id = cur.fetchone()[0]
+        ctx.close()
+
+        return savedata_id
+
+    @staticmethod
     def select_with_count(page: int):
         ctx = mysql.connector.connect(**config)
         cur = ctx.cursor()
