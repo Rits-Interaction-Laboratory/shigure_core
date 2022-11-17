@@ -5,6 +5,7 @@ from std_msgs.msg import String
 from shigure_core_msgs.msg import PoseKeyPointsList
 
 from shigure_core.db.event_repository import EventRepository
+from shigure_core.db.convert_format import ConvertMsg
 
 class PoseSaveNode(Node):
     def __init__(self):
@@ -14,7 +15,9 @@ class PoseSaveNode(Node):
         self.start_flag = True
         self.wait_flag = True
         self.end_flag = True
+        self.latest_save_id = 0
         self.save_id = 1
+        self.save_pose_data = []
 
         # QoS Settings
         shigure_qos = QoSProfile(depth=10, reliability=ReliabilityPolicy.BEST_EFFORT)
@@ -37,8 +40,6 @@ class PoseSaveNode(Node):
 
     def pose_save(self, pose_key_points_list: PoseKeyPointsList):
         try:
-            latest_savedata_id = EventRepository.get_pose_latest_savedata_id()
-
             if self.signal == 'None':
                 if self.wait_flag:
                     print('待機中')
@@ -46,13 +47,19 @@ class PoseSaveNode(Node):
             elif self.signal == 'Start':
                 if self.start_flag:
                     print('記録開始')
+                    self.latest_savedata_id = EventRepository.get_pose_latest_savedata_id()
                     self.flag_controll(self.signal)
-                EventRepository.insert_pose_meta(latest_savedata_id, self.save_id, pose_key_points_list)
+
+                savedata_id = self.latest_savedata_id + 1
+                json_pose_key_points_list = ConvertMsg.message_to_json(pose_key_points_list)
+                pose_column = (savedata_id, self.save_id, json_pose_key_points_list)
+                self.save_pose_data.append(pose_column)
                 self.save_id += 1
             elif self.signal == 'End':
                 if self.end_flag:
+                    EventRepository.insert_pose_meta(self.save_pose_data)
                     print('記録終了')
-                    latest_savedata_id += 1
+                    self.save_pose_data.clear()
                     self.save_id = 1
                     self.flag_controll(self.signal)
             else:
