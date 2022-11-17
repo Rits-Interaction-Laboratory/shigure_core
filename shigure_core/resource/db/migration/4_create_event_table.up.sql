@@ -3,6 +3,7 @@ CREATE TABLE IF NOT EXISTS `event` (
   `people_id` INT NOT NULL,
   `object_id` INT NOT NULL,
   `camera_id` INT NOT NULL,
+  `pose_id` INT NOT NULL,
   `action` VARCHAR(45) NOT NULL,
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),

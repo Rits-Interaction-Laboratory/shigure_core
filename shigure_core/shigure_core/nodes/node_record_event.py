@@ -104,8 +104,9 @@ class SubtractionAnalysisNode(ImagePreviewNode):
                 person_id = EventRepository.select_autoincrement_person_id(contacted.people_id)
                 object_id = EventRepository.select_autoincrement_object_id(contacted.object_id)
                 camera_id = EventRepository.select_autoincrement_camera_id(frame_id)
-                EventRepository.insert_event(contacted.event_id, person_id, object_id, camera_id, contacted.action)
-
+                pose_id = EventRepository.match_pose_and_event_header(camera_info.header.stamp.sec, camera_info.header.stamp.nanosec)
+                EventRepository.insert_event(contacted.event_id, person_id, object_id, camera_id, pose_id, contacted.action)
+                
                 color_save_path = os.path.join(event_save_path, 'color')
                 depth_save_path = os.path.join(event_save_path, 'depth')
                 points_save_path = os.path.join(event_save_path, 'points')
