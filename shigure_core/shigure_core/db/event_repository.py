@@ -68,25 +68,25 @@ class EventRepository:
         ctx = mysql.connector.connect(**config)
         cur = ctx.cursor()
 
-        sql = "INSERT INTO pose(savedata, save_id, pose_key_points_list) VALUES (%s, %s, %s);"
+        sql = "INSERT INTO pose(sequence_id, frame_number, pose_key_points_list) VALUES (%s, %s, %s);"
         cur.executemany(sql, data)
         ctx.commit()
         ctx.close()
 
     @staticmethod
-    def get_pose_latest_savedata_id():
+    def get_pose_latest_sequence_id():
         ctx = mysql.connector.connect(**config)
         cur = ctx.cursor()
-        sql = "SELECT savedata FROM pose ORDER BY savedata DESC LIMIT 2"
+        sql = "SELECT sequence_id FROM pose ORDER BY sequence_id DESC LIMIT 2"
         cur.execute(sql)
         # 空の場合はNone -> False
         if cur.fetchone():
-            savedata_id = cur.fetchone()[0]
+            sequence_id = cur.fetchone()[0]
         else:
-            savedata_id = 0
+            sequence_id = 0
         ctx.close()
 
-        return savedata_id
+        return sequence_id
 
     @staticmethod
     def match_pose_and_event_header(sec, nanosec):

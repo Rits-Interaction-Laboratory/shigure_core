@@ -29,27 +29,48 @@ class SubtractionAnalysisNode(ImagePreviewNode):
         super().__init__('record_event_node')
 
         # ros params
-        save_path_descriptor = ParameterDescriptor(type=ParameterType.PARAMETER_STRING,
-                                                   description='Root path of save images.')
+        save_path_descriptor = ParameterDescriptor(
+            type=ParameterType.PARAMETER_STRING,
+            description='Root path of save images.'
+        )
         self.declare_parameter('save_root_path', '/opt/ros2/shigure_core/events', save_path_descriptor)
         self.save_root_path: str = self.get_parameter("save_root_path").get_parameter_value().string_value
 
-        frame_num_descriptor = ParameterDescriptor(type=ParameterType.PARAMETER_INTEGER,
-                                                   description='Number of save frames before and after.')
+        frame_num_descriptor = ParameterDescriptor(
+            type=ParameterType.PARAMETER_INTEGER,
+            description='Number of save frames before and after.'
+        )
         self.declare_parameter('frame_num', 60, frame_num_descriptor)
         self.frame_num: int = self.get_parameter("frame_num").get_parameter_value().integer_value
 
-        camera_id_descriptor = ParameterDescriptor(type=ParameterType.PARAMETER_INTEGER,
-                                                   description='Number of save frames before and after.')
+        camera_id_descriptor = ParameterDescriptor(
+            type=ParameterType.PARAMETER_INTEGER,
+            description='Number of save frames before and after.'
+        )
         self.declare_parameter('camera_id', 1, camera_id_descriptor)
         self.camera_id: int = self.get_parameter("camera_id").get_parameter_value().integer_value
 
-        contacted_subscriber = message_filters.Subscriber(self, ContactedList, '/shigure/contacted')
-        depth_subscriber = message_filters.Subscriber(self, CompressedImage,
-                                                      '/rs/aligned_depth_to_color/compressedDepth')
-        depth_camera_info_subscriber = message_filters.Subscriber(self, CameraInfo,
-                                                                  '/rs/aligned_depth_to_color/cameraInfo')
-        color_subscriber = message_filters.Subscriber(self, CompressedImage, '/rs/color/compressed')
+        # ros subscriber
+        contacted_subscriber = message_filters.Subscriber(
+            self, 
+            ContactedList, 
+            '/shigure/contacted'
+        )
+        depth_subscriber = message_filters.Subscriber(
+            self, 
+            CompressedImage,
+            '/rs/aligned_depth_to_color/compressedDepth'
+        )
+        depth_camera_info_subscriber = message_filters.Subscriber(
+            self, 
+            CameraInfo,
+            '/rs/aligned_depth_to_color/cameraInfo'
+        )
+        color_subscriber = message_filters.Subscriber(
+            self, 
+            CompressedImage, 
+            '/rs/color/compressed'
+        )
 
         # 保存先ディレクトリ作成
         os.makedirs(self.save_root_path, exist_ok=True)
