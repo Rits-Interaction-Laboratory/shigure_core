@@ -2,6 +2,7 @@ import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy
 from std_msgs.msg import String
+from shigure_core_msgs.msg import HeaderString
 from shigure_core_msgs.msg import PoseKeyPointsList
 
 from shigure_core.db.event_repository import EventRepository
@@ -26,7 +27,7 @@ class PoseSaveNode(Node):
 
         # publisher, subscriber
         self._publisher = self.create_publisher(
-            String, 
+            HeaderString, 
             '/shigure/current_pose_id', 
             10
         )
@@ -42,12 +43,6 @@ class PoseSaveNode(Node):
             lambda msg: self.pose_save(msg),
             qos_profile=shigure_qos
         )
-
-    def callback(self):
-        publish_msg = String()
-        publish_msg.data = '%s', self.pub_id
-        self.publisher_.publish(publish_msg)
-        self.pub_id += 1
 
     def result_signal(self, msg):
         self.signal = msg.data
@@ -78,6 +73,12 @@ class PoseSaveNode(Node):
                     self.flag_controll(self.signal)
             else:
                 print('データが流れていません')
+
+            publish_msg = HeaderString()
+            publish_msg.header.stamp = pose_key_points_list.header.stamp
+            publish_msg.data = str(self.pub_id)
+            self._publisher.publish(publish_msg)
+            self.pub_id += 1
                 
         except Exception as err:
             self.get_logger().error(err)

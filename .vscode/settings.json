@@ -1,0 +1,25 @@
+{
+    "ros.distro": "humble",
+    "python.autoComplete.extraPaths": [
+        "/home/koukemo/ros2_ws/install/shigure_core/lib/python3.10/site-packages",
+        "/home/koukemo/ros2_ws/install/shigure_core_msgs/local/lib/python3.10/dist-packages",
+        "/home/koukemo/ros2_ws/install/realsense2_camera_msgs/local/lib/python3.10/dist-packages",
+        "/home/koukemo/ros2_ws/install/pose_humanoid/lib/python3.10/site-packages",
+        "/home/koukemo/ros2_ws/install/pose_humanoid_msgs/local/lib/python3.10/dist-packages",
+        "/home/koukemo/ros2_ws/install/people_detection_ros2_msg/local/lib/python3.10/dist-packages",
+        "/home/koukemo/ros2_ws/install/openpose_ros2_msgs/local/lib/python3.10/dist-packages",
+        "/opt/ros/humble/lib/python3.10/site-packages",
+        "/opt/ros/humble/local/lib/python3.10/dist-packages"
+    ],
+    "python.analysis.extraPaths": [
+        "/home/koukemo/ros2_ws/install/shigure_core/lib/python3.10/site-packages",
+        "/home/koukemo/ros2_ws/install/shigure_core_msgs/local/lib/python3.10/dist-packages",
+        "/home/koukemo/ros2_ws/install/realsense2_camera_msgs/local/lib/python3.10/dist-packages",
+        "/home/koukemo/ros2_ws/install/pose_humanoid/lib/python3.10/site-packages",
+        "/home/koukemo/ros2_ws/install/pose_humanoid_msgs/local/lib/python3.10/dist-packages",
+        "/home/koukemo/ros2_ws/install/people_detection_ros2_msg/local/lib/python3.10/dist-packages",
+        "/home/koukemo/ros2_ws/install/openpose_ros2_msgs/local/lib/python3.10/dist-packages",
+        "/opt/ros/humble/lib/python3.10/site-packages",
+        "/opt/ros/humble/local/lib/python3.10/dist-packages"
+    ]
+}

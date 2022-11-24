@@ -11,6 +11,7 @@ import rclpy
 import shigure_core_msgs
 from rcl_interfaces.msg import ParameterDescriptor, ParameterType
 from sensor_msgs.msg import CompressedImage, CameraInfo
+from shigure_core_msgs.msg import HeaderString
 from shigure_core_msgs.msg import ContactedList, Contacted
 
 from shigure_core.enum.contact_action_enum import ContactActionEnum
@@ -71,12 +72,17 @@ class SubtractionAnalysisNode(ImagePreviewNode):
             CompressedImage, 
             '/rs/color/compressed'
         )
+        pose_id_subscriber = message_filters.Subscriber(
+            self,
+            HeaderString,
+            'shigure/current_pose_id'
+        )
 
         # 保存先ディレクトリ作成
         os.makedirs(self.save_root_path, exist_ok=True)
 
         self.time_synchronizer = message_filters.TimeSynchronizer(
-            [contacted_subscriber, depth_subscriber, depth_camera_info_subscriber, color_subscriber], 3000)
+            [contacted_subscriber, depth_subscriber, depth_camera_info_subscriber, color_subscriber, pose_id_subscriber], 3000)
         self.time_synchronizer.registerCallback(self.callback)
 
         self._color_img_buffer = []
@@ -85,7 +91,7 @@ class SubtractionAnalysisNode(ImagePreviewNode):
         self._scene_list: List[Scene] = []
 
     def callback(self, contacted_list: ContactedList, depth_src: CompressedImage, camera_info: CameraInfo,
-                 color_src: CompressedImage):
+                 color_src: CompressedImage, current_save_id: HeaderString):
         try:
             self.get_logger().info('Buffering start', once=True)
 
@@ -125,7 +131,7 @@ class SubtractionAnalysisNode(ImagePreviewNode):
                 person_id = EventRepository.select_autoincrement_person_id(contacted.people_id)
                 object_id = EventRepository.select_autoincrement_object_id(contacted.object_id)
                 camera_id = EventRepository.select_autoincrement_camera_id(frame_id)
-                pose_id = EventRepository.match_pose_and_event_header(camera_info.header.stamp.sec, camera_info.header.stamp.nanosec)
+                pose_id = current_save_id.data
                 EventRepository.insert_event(contacted.event_id, person_id, object_id, camera_id, pose_id, contacted.action)
                 
                 color_save_path = os.path.join(event_save_path, 'color')

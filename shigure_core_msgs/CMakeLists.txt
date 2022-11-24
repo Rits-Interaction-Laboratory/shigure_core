@@ -39,6 +39,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/TrackedObjectList.msg"
   "msg/Contacted.msg"
   "msg/ContactedList.msg"
+  "msg/HeaderString.msg"
   DEPENDENCIES builtin_interfaces std_msgs sensor_msgs
 )
 
