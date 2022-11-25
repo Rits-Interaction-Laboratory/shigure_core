@@ -91,7 +91,7 @@ class SubtractionAnalysisNode(ImagePreviewNode):
         self._scene_list: List[Scene] = []
 
     def callback(self, contacted_list: ContactedList, depth_src: CompressedImage, camera_info: CameraInfo,
-                 color_src: CompressedImage, current_save_id: HeaderString):
+                 color_src: CompressedImage, current_pose_id: HeaderString):
         try:
             self.get_logger().info('Buffering start', once=True)
 
@@ -131,7 +131,7 @@ class SubtractionAnalysisNode(ImagePreviewNode):
                 person_id = EventRepository.select_autoincrement_person_id(contacted.people_id)
                 object_id = EventRepository.select_autoincrement_object_id(contacted.object_id)
                 camera_id = EventRepository.select_autoincrement_camera_id(frame_id)
-                pose_id = current_save_id.data
+                pose_id = current_pose_id.data
                 EventRepository.insert_event(contacted.event_id, person_id, object_id, camera_id, pose_id, contacted.action)
                 
                 color_save_path = os.path.join(event_save_path, 'color')
