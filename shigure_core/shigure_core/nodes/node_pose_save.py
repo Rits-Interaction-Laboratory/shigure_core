@@ -57,6 +57,7 @@ class PoseSaveNode(Node):
                 if self.start_flag:
                     print('記録開始')
                     self.latest_sequence_id = EventRepository.get_pose_latest_sequence_id()
+                    self.pub_id = EventRepository.get_latest_pose_id()
                     self.flag_controll(self.signal)
 
                 sequence_id = self.latest_sequence_id + 1
@@ -64,6 +65,12 @@ class PoseSaveNode(Node):
                 pose_column = (sequence_id, self.frame_number, json_pose_key_points_list)
                 self.save_pose_data.append(pose_column)
                 self.frame_number += 1
+
+                publish_msg = HeaderString()
+                publish_msg.header.stamp = pose_key_points_list.header.stamp
+                publish_msg.data = str(self.pub_id)
+                self._publisher.publish(publish_msg)
+                self.pub_id += 1
             elif self.signal == 'End':
                 if self.end_flag:
                     EventRepository.insert_pose_meta(self.save_pose_data)
@@ -73,12 +80,6 @@ class PoseSaveNode(Node):
                     self.flag_controll(self.signal)
             else:
                 print('データが流れていません')
-
-            publish_msg = HeaderString()
-            publish_msg.header.stamp = pose_key_points_list.header.stamp
-            publish_msg.data = str(self.pub_id)
-            self._publisher.publish(publish_msg)
-            self.pub_id += 1
                 
         except Exception as err:
             self.get_logger().error(err)

@@ -74,6 +74,21 @@ class EventRepository:
         ctx.close()
 
     @staticmethod
+    def get_latest_pose_id():
+        ctx = mysql.connector.connect(**config)
+        cur = ctx.cursor()
+        sql = "SELECT id FROM pose ORDER BY sequence_id DESC LIMIT 2"
+        cur.execute(sql)
+        # 空の場合はNone -> False
+        if cur.fetchone():
+            pose_id = cur.fetchone()[0]
+        else:
+            pose_id = 0
+        ctx.close()
+
+        return pose_id
+
+    @staticmethod
     def get_pose_latest_sequence_id():
         ctx = mysql.connector.connect(**config)
         cur = ctx.cursor()
