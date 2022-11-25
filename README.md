@@ -76,6 +76,11 @@ Sample YMLファイルの配置フォルダ : [/shigure_core/shigure_core/shigur
 ros2 run shigure_core record_event --ros-args --params-file <ROS2 workspace>/src/shigure_core/shigure_core/shigure_core/nodes/params/record_event_params.yml
 ```
 
+pose save nodeの起動 <br>
+```sh
+ros2 run shigure_core pose_save
+```
+
 DBへの接続 <br>
 (PW : `shigure`) <br>
 ```sh
