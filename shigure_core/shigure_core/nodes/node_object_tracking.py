@@ -53,7 +53,12 @@ class ObjectTrackingNode(ImagePreviewNode):
                 [depth_subscriber, object_detection_subscriber, depth_camera_info_subscriber], 30000)
             self.time_synchronizer.registerCallback(self.callback)
         else:
-            color_subscriber = message_filters.Subscriber(self, CompressedImage, '/rs/color/compressed')
+            color_subscriber = message_filters.Subscriber(
+                self, 
+                CompressedImage, 
+                '/rs/color/compressed',
+                qos_profile=shigure_qos
+            )
             self.time_synchronizer = message_filters.TimeSynchronizer(
                 [depth_subscriber, object_detection_subscriber, depth_camera_info_subscriber, color_subscriber], 400000)
             self.time_synchronizer.registerCallback(self.callback_debug)
