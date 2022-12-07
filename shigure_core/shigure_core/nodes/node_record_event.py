@@ -8,6 +8,7 @@ import cv2
 import message_filters
 import numpy as np
 import rclpy
+from rclpy.qos import QoSProfile, ReliabilityPolicy
 import shigure_core_msgs
 from rcl_interfaces.msg import ParameterDescriptor, ParameterType
 from sensor_msgs.msg import CompressedImage, CameraInfo
@@ -28,6 +29,9 @@ class SubtractionAnalysisNode(ImagePreviewNode):
 
     def __init__(self):
         super().__init__('record_event_node')
+
+        # QoS Settings
+        shigure_qos = QoSProfile(depth=10, reliability=ReliabilityPolicy.BEST_EFFORT)
 
         # ros params
         save_path_descriptor = ParameterDescriptor(
@@ -55,27 +59,32 @@ class SubtractionAnalysisNode(ImagePreviewNode):
         contacted_subscriber = message_filters.Subscriber(
             self, 
             ContactedList, 
-            '/shigure/contacted'
+            '/shigure/contacted',
+            qos_profile=shigure_qos
         )
         depth_subscriber = message_filters.Subscriber(
             self, 
             CompressedImage,
-            '/rs/aligned_depth_to_color/compressedDepth'
+            '/rs/aligned_depth_to_color/compressedDepth',
+            qos_profile=shigure_qos
         )
         depth_camera_info_subscriber = message_filters.Subscriber(
             self, 
             CameraInfo,
-            '/rs/aligned_depth_to_color/cameraInfo'
+            '/rs/aligned_depth_to_color/cameraInfo',
+            qos_profile=shigure_qos
         )
         color_subscriber = message_filters.Subscriber(
             self, 
             CompressedImage, 
-            '/rs/color/compressed'
+            '/rs/color/compressed',
+            qos_profile=shigure_qos
         )
         pose_id_subscriber = message_filters.Subscriber(
             self,
             HeaderString,
-            'shigure/current_pose_id'
+            'shigure/current_pose_id',
+            qos_profile=shigure_qos
         )
 
         # 保存先ディレクトリ作成
