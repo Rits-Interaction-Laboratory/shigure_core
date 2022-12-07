@@ -11,6 +11,7 @@ import rclpy
 import shigure_core_msgs
 from rcl_interfaces.msg import ParameterDescriptor, ParameterType
 from sensor_msgs.msg import CompressedImage, CameraInfo
+from shigure_core_msgs.msg import HeaderString
 from shigure_core_msgs.msg import ContactedList, Contacted
 
 from shigure_core.enum.contact_action_enum import ContactActionEnum
@@ -29,33 +30,59 @@ class SubtractionAnalysisNode(ImagePreviewNode):
         super().__init__('record_event_node')
 
         # ros params
-        save_path_descriptor = ParameterDescriptor(type=ParameterType.PARAMETER_STRING,
-                                                   description='Root path of save images.')
+        save_path_descriptor = ParameterDescriptor(
+            type=ParameterType.PARAMETER_STRING,
+            description='Root path of save images.'
+        )
         self.declare_parameter('save_root_path', '/opt/ros2/shigure_core/events', save_path_descriptor)
         self.save_root_path: str = self.get_parameter("save_root_path").get_parameter_value().string_value
 
-        frame_num_descriptor = ParameterDescriptor(type=ParameterType.PARAMETER_INTEGER,
-                                                   description='Number of save frames before and after.')
+        frame_num_descriptor = ParameterDescriptor(
+            type=ParameterType.PARAMETER_INTEGER,
+            description='Number of save frames before and after.'
+        )
         self.declare_parameter('frame_num', 60, frame_num_descriptor)
         self.frame_num: int = self.get_parameter("frame_num").get_parameter_value().integer_value
 
-        camera_id_descriptor = ParameterDescriptor(type=ParameterType.PARAMETER_INTEGER,
-                                                   description='Number of save frames before and after.')
+        camera_id_descriptor = ParameterDescriptor(
+            type=ParameterType.PARAMETER_INTEGER,
+            description='Number of save frames before and after.'
+        )
         self.declare_parameter('camera_id', 1, camera_id_descriptor)
         self.camera_id: int = self.get_parameter("camera_id").get_parameter_value().integer_value
 
-        contacted_subscriber = message_filters.Subscriber(self, ContactedList, '/shigure/contacted')
-        depth_subscriber = message_filters.Subscriber(self, CompressedImage,
-                                                      '/rs/aligned_depth_to_color/compressedDepth')
-        depth_camera_info_subscriber = message_filters.Subscriber(self, CameraInfo,
-                                                                  '/rs/aligned_depth_to_color/cameraInfo')
-        color_subscriber = message_filters.Subscriber(self, CompressedImage, '/rs/color/compressed')
+        # ros subscriber
+        contacted_subscriber = message_filters.Subscriber(
+            self, 
+            ContactedList, 
+            '/shigure/contacted'
+        )
+        depth_subscriber = message_filters.Subscriber(
+            self, 
+            CompressedImage,
+            '/rs/aligned_depth_to_color/compressedDepth'
+        )
+        depth_camera_info_subscriber = message_filters.Subscriber(
+            self, 
+            CameraInfo,
+            '/rs/aligned_depth_to_color/cameraInfo'
+        )
+        color_subscriber = message_filters.Subscriber(
+            self, 
+            CompressedImage, 
+            '/rs/color/compressed'
+        )
+        pose_id_subscriber = message_filters.Subscriber(
+            self,
+            HeaderString,
+            'shigure/current_pose_id'
+        )
 
         # 保存先ディレクトリ作成
         os.makedirs(self.save_root_path, exist_ok=True)
 
         self.time_synchronizer = message_filters.TimeSynchronizer(
-            [contacted_subscriber, depth_subscriber, depth_camera_info_subscriber, color_subscriber], 3000)
+            [contacted_subscriber, depth_subscriber, depth_camera_info_subscriber, color_subscriber, pose_id_subscriber], 3000)
         self.time_synchronizer.registerCallback(self.callback)
 
         self._color_img_buffer = []
@@ -64,7 +91,7 @@ class SubtractionAnalysisNode(ImagePreviewNode):
         self._scene_list: List[Scene] = []
 
     def callback(self, contacted_list: ContactedList, depth_src: CompressedImage, camera_info: CameraInfo,
-                 color_src: CompressedImage):
+                 color_src: CompressedImage, current_pose_id: HeaderString):
         try:
             self.get_logger().info('Buffering start', once=True)
 
@@ -104,8 +131,9 @@ class SubtractionAnalysisNode(ImagePreviewNode):
                 person_id = EventRepository.select_autoincrement_person_id(contacted.people_id)
                 object_id = EventRepository.select_autoincrement_object_id(contacted.object_id)
                 camera_id = EventRepository.select_autoincrement_camera_id(frame_id)
-                EventRepository.insert_event(contacted.event_id, person_id, object_id, camera_id, contacted.action)
-
+                pose_id = current_pose_id.data
+                EventRepository.insert_event(contacted.event_id, person_id, object_id, camera_id, pose_id, contacted.action)
+                
                 color_save_path = os.path.join(event_save_path, 'color')
                 depth_save_path = os.path.join(event_save_path, 'depth')
                 points_save_path = os.path.join(event_save_path, 'points')

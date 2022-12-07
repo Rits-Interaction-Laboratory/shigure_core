@@ -2,6 +2,7 @@ import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy
 from std_msgs.msg import String
+from shigure_core_msgs.msg import HeaderString
 from shigure_core_msgs.msg import PoseKeyPointsList
 
 from shigure_core.db.event_repository import EventRepository
@@ -15,13 +16,21 @@ class PoseSaveNode(Node):
         self.start_flag = True
         self.wait_flag = True
         self.end_flag = True
-        self.latest_save_id = 0
-        self.save_id = 1
+        self.latest_sequence_id = 0
+        self.frame_number = 1
         self.save_pose_data = []
+
+        self.pub_id = 0
 
         # QoS Settings
         shigure_qos = QoSProfile(depth=10, reliability=ReliabilityPolicy.BEST_EFFORT)
 
+        # publisher, subscriber
+        self._publisher = self.create_publisher(
+            HeaderString, 
+            '/shigure/current_pose_id', 
+            10
+        )
         self.signal_subscription = self.create_subscription(
             String, 
             '/HL2/pose_record_signal', 
@@ -47,20 +56,27 @@ class PoseSaveNode(Node):
             elif self.signal == 'Start':
                 if self.start_flag:
                     print('記録開始')
-                    self.latest_savedata_id = EventRepository.get_pose_latest_savedata_id()
+                    self.latest_sequence_id = EventRepository.get_pose_latest_sequence_id()
+                    self.pub_id = EventRepository.get_latest_pose_id()
                     self.flag_controll(self.signal)
 
-                savedata_id = self.latest_savedata_id + 1
+                sequence_id = self.latest_sequence_id + 1
                 json_pose_key_points_list = ConvertMsg.message_to_json(pose_key_points_list)
-                pose_column = (savedata_id, self.save_id, json_pose_key_points_list)
+                pose_column = (sequence_id, self.frame_number, json_pose_key_points_list)
                 self.save_pose_data.append(pose_column)
-                self.save_id += 1
+                self.frame_number += 1
+
+                publish_msg = HeaderString()
+                publish_msg.header.stamp = pose_key_points_list.header.stamp
+                publish_msg.data = str(self.pub_id)
+                self._publisher.publish(publish_msg)
+                self.pub_id += 1
             elif self.signal == 'End':
                 if self.end_flag:
                     EventRepository.insert_pose_meta(self.save_pose_data)
                     print('記録終了')
                     self.save_pose_data.clear()
-                    self.save_id = 1
+                    self.frame_number = 1
                     self.flag_controll(self.signal)
             else:
                 print('データが流れていません')
@@ -88,14 +104,14 @@ class PoseSaveNode(Node):
 def main(args=None):
     rclpy.init(args=args)
 
-    pose_subscriber = PoseSaveNode()
+    pose_save_node = PoseSaveNode()
 
-    rclpy.spin(pose_subscriber)
+    rclpy.spin(pose_save_node)
 
     # Destroy the node explicitly
     # (optional - otherwise it will be done automatically
     # when the garbage collector destroys the node object)
-    pose_subscriber.destroy_node()
+    pose_save_node.destroy_node()
     rclpy.shutdown()
 
 

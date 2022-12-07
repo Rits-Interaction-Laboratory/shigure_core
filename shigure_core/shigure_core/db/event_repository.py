@@ -34,10 +34,10 @@ class EventRepository:
         ctx.close()
 
     @staticmethod
-    def insert_event(event_id: str, people_id: int, object_id: int, camera_id: int, action: str):
+    def insert_event(event_id: str, people_id: int, object_id: int, camera_id: int, pose_id: int, action: str):
         ctx = mysql.connector.connect(**config)
         cur = ctx.cursor()
-        sql = f"INSERT INTO event(id, people_id, object_id, camera_id, action) VALUES ('{event_id}', {people_id}, '{object_id}', {camera_id}, '{action}') "
+        sql = f"INSERT INTO event(id, people_id, object_id, camera_id, pose_id, action) VALUES ('{event_id}', {people_id}, '{object_id}', {camera_id}, '{pose_id}', '{action}') "
         cur.execute(sql)
         ctx.commit()
         ctx.close()
@@ -68,24 +68,58 @@ class EventRepository:
         ctx = mysql.connector.connect(**config)
         cur = ctx.cursor()
 
-        sql = "INSERT INTO pose(savedata, save_id, pose_key_points_list) VALUES (%s, %s, %s);"
+        sql = "INSERT INTO pose(sequence_id, frame_number, pose_key_points_list) VALUES (%s, %s, %s);"
         cur.executemany(sql, data)
         ctx.commit()
         ctx.close()
 
     @staticmethod
-    def get_pose_latest_savedata_id():
+    def get_latest_pose_id():
         ctx = mysql.connector.connect(**config)
         cur = ctx.cursor()
-        sql = "SELECT savedata FROM pose ORDER BY savedata DESC LIMIT 2"
+        sql = "SELECT id FROM pose ORDER BY sequence_id DESC LIMIT 2"
         cur.execute(sql)
-        if cur.fetchone()[0] == 0:
-            savedata_id = 0
+        # 空の場合はNone -> False
+        if cur.fetchone():
+            pose_id = cur.fetchone()[0]
         else:
-            savedata_id = cur.fetchone()[0]
+            pose_id = 0
         ctx.close()
 
-        return savedata_id
+        return pose_id
+
+    @staticmethod
+    def get_pose_latest_sequence_id():
+        ctx = mysql.connector.connect(**config)
+        cur = ctx.cursor()
+        sql = "SELECT sequence_id FROM pose ORDER BY sequence_id DESC LIMIT 2"
+        cur.execute(sql)
+        # 空の場合はNone -> False
+        if cur.fetchone():
+            sequence_id = cur.fetchone()[0]
+        else:
+            sequence_id = 0
+        ctx.close()
+
+        return sequence_id
+
+    @staticmethod
+    def match_pose_and_event_header(sec, nanosec):
+        ctx = mysql.connector.connect(**config)
+        cur = ctx.cursor()
+        print(sec)
+        print(nanosec)
+        sql = "SELECT id FROM pose WHERE  pose_key_points_list->'$.header.stamp.sec' = (%s) AND pose_key_points_list->'$.header.stamp.nanosec' = (%s) ORDER BY id DESC;"
+        cur.execute(sql, (sec, nanosec,))
+
+        # 空の場合はNone -> False
+        if cur.fetchone():
+            pose_id = cur.fetchone()[0]
+        else:
+            pose_id = 0
+        ctx.close()
+
+        return pose_id
 
     @staticmethod
     def select_with_count(page: int):
