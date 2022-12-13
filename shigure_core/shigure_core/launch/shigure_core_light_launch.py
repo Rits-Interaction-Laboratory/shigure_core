@@ -1,8 +1,13 @@
+import os
 from launch import LaunchDescription
 from launch_ros.actions import Node
+from launch.actions import SetEnvironmentVariable
 
 
 def generate_launch_description():
+    package_path = os.path.abspath(os.path.join(__file__ , '../../../../../src/shigure_core/shigure_core'))
+    rtps_path = os.path.join(package_path, 'resource/network/rtps_config.xml')
+
     return LaunchDescription([
         Node(
             package="shigure_core",
