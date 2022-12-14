@@ -1,15 +1,21 @@
+import os
 from launch import LaunchDescription
 from launch_ros.actions import Node
+from launch.actions import SetEnvironmentVariable
 
 
 def generate_launch_description():
+    package_path = os.path.abspath(os.path.join(__file__ , '../../../../../src/shigure_core/shigure_core'))
+    rtps_path = os.path.join(package_path, 'resource/network/rtps_config.xml')
+
     return LaunchDescription([
+        SetEnvironmentVariable(name='FASTRTPS_DEFAULT_PROFILES_FILE', value=str(rtps_path)),
         Node(
             package="shigure_core",
             executable="bg_subtraction",
             prefix="gnome-terminal --tab -t 'bg_subtraction' --",
             parameters=[
-                {"is_debug_mode": False},
+                {"is_debug_mode": True},
                 {"input_round":1500},
                 {"avg_round":1500},
                 {"sd_round":500},
@@ -28,7 +34,7 @@ def generate_launch_description():
             executable="object_detection",
             prefix="gnome-terminal --tab -t 'object_detection' --",
             parameters=[
-                {"is_debug_mode": False},
+                {"is_debug_mode": True},
             ],
         ),
         Node(
