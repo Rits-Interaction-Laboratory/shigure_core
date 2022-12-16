@@ -107,8 +107,10 @@ class ObjectTrackingNode(ImagePreviewNode):
             right = min(int(bounding_box.x + bounding_box.width), width - 1)
             bottom = min(int(bounding_box.y + bounding_box.height), height - 1)
 
-            depth_min = depth_img[top:bottom, left:right].min()
-            depth_max = depth_img[top:bottom, left:right].max()
+            masked_depth_img = np.ma.masked_equal(depth_img[top:bottom, left:right], 0.0, copy=False)
+
+            depth_min = masked_depth_img.min()
+            depth_max = masked_depth_img.max()
 
             s1 = np.asarray([[bounding_box.x, bounding_box.y, 1]]).T
             s2 = np.asarray([[bounding_box.x + bounding_box.width,
@@ -118,8 +120,8 @@ class ObjectTrackingNode(ImagePreviewNode):
             m2 = (depth_img[bottom, right] * np.matmul(k_inv, s2)).T
 
             collider = Cube()
-            collider.x, collider.y = m1[0, 0], m1[0, 1]
-            collider.width, collider.height = m2[0, 0] - m1[0, 0], m2[0, 1] - m1[0, 1]
+            collider.x, collider.y = float(m1[0, 0]), float(m1[0, 1])
+            collider.width, collider.height = float(m2[0, 0] - m1[0, 0]), float(m2[0, 1] - m1[0, 1])
             collider.z = float(depth_min)
             collider.depth = float(depth_max - depth_min)
             tracked_object.collider = collider
