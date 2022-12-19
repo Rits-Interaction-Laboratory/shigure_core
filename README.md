@@ -13,7 +13,7 @@ Wiki : https://github.com/Rits-Interaction-Laboratory/shigure_core/wiki
 * Rits-Interaction-Laboratory/openpose_ros2 [リポジトリ](https://github.com/Rits-Interaction-Laboratory/openpose_ros2)
     * docker版 : Rits-Interaction-Laboratory/openpose_ros2_docker [リポジトリ](https://github.com/Rits-Interaction-Laboratory/openpose_ros2_docker)
 * Rits-Interaction-Laboratory/people_detection_ros2 [リポジトリ](https://github.com/Rits-Interaction-Laboratory/people_detection_ros2)
-    * docker版 : Rits-Interaction-Laboratory/people_detection_ros2_docker [リポジトリ](https://github.com/Rits-Interaction-Laboratory/people_detection_ros2)
+    * docker版 : Rits-Interaction-Laboratory/people_detection_ros2_docker [リポジトリ](https://github.com/Rits-Interaction-Laboratory/people_detection_ros2_docker)
 * OpenCV
 * Docker
 * Docker Compose
