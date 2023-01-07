@@ -58,12 +58,16 @@ class ContactDetectionLogic:
         object_cube: Cube
         hand_cube: Cube
         for object_item in object_cube_list:
-            _, object_cube = object_item
+            tracked_object_info, object_cube = object_item
+            result = False
+            is_bring_in_or_take_out = tracked_object_info.action == TrackedObjectActionEnum.BRING_IN.value or tracked_object_info.action == TrackedObjectActionEnum.TAKE_OUT.value
             for hand in hand_cube_list:
                 _, hand_cube, _ = hand
                 result, volume = object_cube.is_collided(hand_cube)
-                if result:
+                if result | is_bring_in_or_take_out:
                     linked_list.append((hand, object_item, volume))
+            if (not result) & is_bring_in_or_take_out:
+                    print("Note : The system did not detect contact between the wrist and the object, but prioritized the determination of whether the object was brought in or taken away.")
 
         result_list = []
         linked_list = sorted(linked_list, key=itemgetter(2), reverse=True)
