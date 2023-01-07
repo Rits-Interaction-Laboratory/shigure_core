@@ -3,3 +3,4 @@ record_event_node:
     save_root_path: '~/ros2_ws/src/shigure_core/events'
     frame_num: 120
     camera_id: 1
+    is_recording_depth_info: false
