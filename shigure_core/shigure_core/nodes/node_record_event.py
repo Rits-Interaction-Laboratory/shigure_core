@@ -55,6 +55,11 @@ class SubtractionAnalysisNode(ImagePreviewNode):
         self.declare_parameter('camera_id', 1, camera_id_descriptor)
         self.camera_id: int = self.get_parameter("camera_id").get_parameter_value().integer_value
 
+        is_recording_depth_info_descriptor = ParameterDescriptor(type=ParameterType.PARAMETER_BOOL,
+                                                       description='If true, record depth images and point clouds.')
+        self.declare_parameter('is_recording_depth_info', False, is_recording_depth_info_descriptor)
+        self.is_recording_depth_info: bool = self.get_parameter("is_recording_depth_info").get_parameter_value().bool_value
+
         # ros subscriber
         contacted_subscriber = message_filters.Subscriber(
             self, 
@@ -177,8 +182,7 @@ class SubtractionAnalysisNode(ImagePreviewNode):
         x, y, width, height = bounding_box.x, bounding_box.y, bounding_box.width, bounding_box.height
         return BoundingBox(int(x), int(y), int(width), int(height))
 
-    @staticmethod
-    def save_scene(scene: Scene, save_root_path: str):
+    def save_scene(self, scene: Scene, save_root_path: str):
         print('保存を開始')
 
         color_save_path = os.path.join(save_root_path, scene.event.event_id, 'color')
@@ -194,21 +198,22 @@ class SubtractionAnalysisNode(ImagePreviewNode):
             file_path = os.path.join(color_save_path, str(i + 1) + '.png')
             cv2.imwrite(file_path, color_img)
 
-        for i, depth_img in enumerate(scene.depth_img_list):
-            file_path = os.path.join(depth_save_path, str(i + 1) + '.png')
-            cv2.imwrite(file_path, depth_img)
+        if self.is_recording_depth_info:
+            for i, depth_img in enumerate(scene.depth_img_list):
+                file_path = os.path.join(depth_save_path, str(i + 1) + '.png')
+                cv2.imwrite(file_path, depth_img)
 
-            height, width = depth_img.shape[:2]
-            points = []
-            for y in range(height):
-                for x in range(width):
-                    s = np.asarray([[x, y, 1]]).T
-                    depth = depth_img[y, x]
-                    m = (depth * np.matmul(scene.k_inv, s)).T
-                    points.append([m[0, 0], m[0, 1], depth])
+                height, width = depth_img.shape[:2]
+                points = []
+                for y in range(height):
+                    for x in range(width):
+                        s = np.asarray([[x, y, 1]]).T
+                        depth = depth_img[y, x]
+                        m = (depth * np.matmul(scene.k_inv, s)).T
+                        points.append([m[0, 0], m[0, 1], depth])
 
-            file_path = os.path.join(points_save_path, str(i + 1) + '.png')
-            np.save(file_path, np.asarray(points))
+                file_path = os.path.join(points_save_path, str(i + 1) + '.png')
+                np.save(file_path, np.asarray(points))
 
         color_img_for_icon = scene.color_img_for_icon
         file_path = os.path.join(icon_save_path, 'people_icon.png')
