@@ -42,7 +42,8 @@ class Scene:
 
     @property
     def color_img_for_icon(self) -> np.ndarray:
-        if ContactActionEnum.value_of(self.event.action) == ContactActionEnum.BRING_IN:
-            return self._color_img_list[self._frame_num // 2 + 30]
-        else:
-            return self._color_img_list[self._frame_num // 2 - 30]
+        return self._color_img_list[self._frame_num - 1]
+        # if ContactActionEnum.value_of(self.event.action) == ContactActionEnum.BRING_IN:
+        #     return self._color_img_list[self._frame_num // 2 + 30]
+        # else:
+        #     return self._color_img_list[self._frame_num // 2 - 30]
