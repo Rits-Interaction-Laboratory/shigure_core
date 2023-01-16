@@ -140,12 +140,12 @@ class SubtractionAnalysisNode(ImagePreviewNode):
                 EventRepository.insert_object(
                     contacted.object_id, 
                     event_save_path, 
-                    contacted.cube.x, 
-                    contacted.cube.y, 
-                    contacted.cube.z, 
-                    contacted.cube.width, 
-                    contacted.cube.height, 
-                    contacted.cube.depth, 
+                    contacted.object_cube.x, 
+                    contacted.object_cube.y, 
+                    contacted.object_cube.z, 
+                    contacted.object_cube.width, 
+                    contacted.object_cube.height, 
+                    contacted.object_cube.depth, 
                 )
 
                 frame_id = str(camera_info.header.frame_id)
