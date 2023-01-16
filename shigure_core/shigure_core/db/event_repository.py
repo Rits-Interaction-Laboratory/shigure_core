@@ -16,10 +16,10 @@ class EventRepository:
         ctx.close()
 
     @staticmethod
-    def insert_object(object_id: str, icon_path: str, icon_width: int, icon_height: int):
+    def insert_object(object_id: str, icon_path: str, x: float, y: float, z: float, width: float, height: float, depth: float):
         ctx = mysql.connector.connect(**config)
         cur = ctx.cursor()
-        sql = f"INSERT INTO object(object_id, icon_path, icon_width, icon_height) VALUES ('{object_id}', '{icon_path}', '{icon_width}', '{icon_height}')"
+        sql = f"INSERT INTO object(object_id, icon_path, x, y, z, width, height, depth) VALUES ('{object_id}', '{icon_path}', '{x}', '{y}', '{z}', '{width}', '{height}', '{depth}')"
         cur.execute(sql)
         ctx.commit()
         ctx.close()
