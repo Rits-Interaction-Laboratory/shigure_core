@@ -21,6 +21,7 @@ class PoseSaveNode(Node):
         self.save_pose_data = []
 
         self.pub_id = 0
+        self.latest_created_at = '2030-01-01 00:00:00'
 
         # QoS Settings
         shigure_qos = QoSProfile(depth=10, reliability=ReliabilityPolicy.BEST_EFFORT)
@@ -58,6 +59,7 @@ class PoseSaveNode(Node):
                     print('記録開始')
                     self.latest_sequence_id = EventRepository.get_pose_latest_sequence_id()
                     self.pub_id = EventRepository.get_latest_pose_id()
+                    self.latest_created_at = EventRepository.get_pose_latest_created_at()
                     self.flag_controll(self.signal)
 
                 sequence_id = self.latest_sequence_id + 1
@@ -71,9 +73,19 @@ class PoseSaveNode(Node):
                 publish_msg.data = str(self.pub_id)
                 self._publisher.publish(publish_msg)
                 self.pub_id += 1
+
+                if len(self.save_pose_data) >= 100:
+                    EventRepository.insert_pose_meta(self.save_pose_data)
+                    self.save_pose_data.clear()
+
             elif self.signal == 'End':
                 if self.end_flag:
                     EventRepository.insert_pose_meta(self.save_pose_data)
+                    
+                    # fix_pose_list -> [[fix_pose_id, event_id], ...]
+                    fix_pose_list = EventRepository.select_fix_pose_id_and_event_id(self.latest_created_at)
+                    for fix_pose_data in fix_pose_list:
+                        EventRepository.update_event_fix_pose_id(fix_pose_data[0], fix_pose_data[1])
                     print('記録終了')
                     self.save_pose_data.clear()
                     self.frame_number = 1

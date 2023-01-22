@@ -167,3 +167,40 @@ class EventRepository:
         ctx.close()
 
         return camera_id[0]
+
+    @staticmethod
+    def get_pose_latest_created_at():
+        ctx = mysql.connector.connect(**config)
+        cur = ctx.cursor()
+        sql = "SELECT created_at FROM pose ORDER BY created_at DESC LIMIT 2"
+        cur.execute(sql)
+        # 空の場合はNone -> False
+        if cur.fetchone():
+            created_at = cur.fetchone()[0]
+        else:
+            created_at = 0
+        ctx.close()
+
+        return created_at
+
+    @staticmethod
+    def select_fix_pose_id_and_event_id(pose_created_at):
+        ctx = mysql.connector.connect(**config)
+        cur = ctx.cursor()
+        sql = f"SELECT p.id, em.event_id FROM pose p INNER JOIN event_metadata em ON p.`pose_key_points_list`->'$.header.stamp'=em.`camera_info`->'$.header.stamp' AND created_at > '{pose_created_at}';"
+        cur.execute(sql)
+
+        rows = cur.fetchall()
+
+        ctx.close()
+
+        return rows
+
+    @staticmethod 
+    def update_event_fix_pose_id(fix_pose_id, event_id):
+        ctx = mysql.connector.connect(**config)
+        cur = ctx.cursor()
+        sql = f"UPDATE event SET pose_id='{fix_pose_id}' WHERE id='{event_id}';"
+        cur.execute(sql)
+        ctx.commit()
+        ctx.close()
