@@ -63,7 +63,7 @@ class YoloxObjectDetectionNode(ImagePreviewNode):
 		self.yolox_object_detection_logic = YoloxObjectDetectionLogic()
 		
 		self.frame_object_list: List[FrameObject] = []
-		self.start_item_list:List[BboxObject]= []
+		#self.start_item_list:List[BboxObject]= []
 		self.bring_in_list:List[BboxObject] = []
 		self.wait_item_list:List[BboxObject] = []
 		self._color_img_buffer: List[np.ndarray] = []
@@ -71,7 +71,7 @@ class YoloxObjectDetectionNode(ImagePreviewNode):
 		self._buffer_size = 90
 		
 		self._judge_params = JudgeParams(50)
-		self._count = 0
+		#self._count = 0
 		
 		self._colors = []
 		for i in range(255):
@@ -100,14 +100,14 @@ class YoloxObjectDetectionNode(ImagePreviewNode):
 		timestamp = Timestamp(color_img_src.header.stamp.sec, color_img_src.header.stamp.nanosec)
 		frame = ColorImageFrame(timestamp, self._color_img_buffer[0], color_img)
 		self._color_img_frames.add(frame)
-		frame_object_dict,start_item_list,bring_in_list,wait_item_list,count= self.yolox_object_detection_logic.execute(yolox_bbox_src, timestamp,color_img,self.frame_object_list,self._judge_params,self.start_item_list,self.bring_in_list,self.wait_item_list,self._count)
+		frame_object_dict,bring_in_list,wait_item_list = self.yolox_object_detection_logic.execute(yolox_bbox_src, timestamp,color_img,self.frame_object_list,self._judge_params,self.bring_in_list,self.wait_item_list)
 		
-		if self._count == 0:
-			self.start_item_list = start_item_list
+		#if self._count == 0:
+			#self.start_item_list = start_item_list
 		self.bring_in_list = bring_in_list
 		self.wait_item_list = wait_item_list
-		count = 1
-		self._count = count
+		#count = 1
+		#self._count = count
 		self.frame_object_list = list(chain.from_iterable(frame_object_dict.values()))
 		
 		#result_img = cv2.cvtColor(subtraction_analysis_img, cv2.COLOR_GRAY2BGR)
@@ -139,10 +139,10 @@ class YoloxObjectDetectionNode(ImagePreviewNode):
 				result_img = color_img.copy()
 				yolox_img = color_img.copy()
 				
-				for s_item in start_item_list:
-					bounding_box_src = s_item._bounding_box
-					x, y, width, height = bounding_box_src.items
-					result_img = cv2.rectangle(result_img, (x, y), (x + width, y + height), (0,153,255), thickness=3)
+				#for s_item in start_item_list:
+					#bounding_box_src = s_item._bounding_box
+					#x, y, width, height = bounding_box_src.items
+					#result_img = cv2.rectangle(result_img, (x, y), (x + width, y + height), (0,153,255), thickness=3)
 					#brack_img = np.zeros_like(color_img)
 					#img = self.print_fps(result_img)
 					
@@ -208,7 +208,7 @@ class YoloxObjectDetectionNode(ImagePreviewNode):
 			
 			if self.is_debug_mode:
 				item_color_img = frame.new_image if action == DetectedObjectActionEnum.BRING_IN else frame.old_image
-				print('オブジェクトが検出されました(',
+				print('イベントが検出されました(',
 					f'action: {action.value}, x: {x}, y: {y}, width: {width}, height: {height}, size: {size},class_id:{class_id})')
 				icon = np.zeros((height + 10, width, 3), dtype=np.uint8)
 				icon[0:height, 0:width, :] = item_color_img[y:y + height, x:x + width, :]
