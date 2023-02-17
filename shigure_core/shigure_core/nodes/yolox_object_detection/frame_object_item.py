@@ -10,12 +10,13 @@ from shigure_core.nodes.common_model.bounding_box import BoundingBox
 class FrameObjectItem:
 
     def __init__(self, action: DetectedObjectActionEnum, bounding_box: BoundingBox, size: int,
-                 mask: np.ndarray, detected_at: Timestamp):
+                 mask: np.ndarray, detected_at: Timestamp, class_id:str):
         self._action = action
         self._bounding_box = bounding_box
         self._size = size
         self._mask = mask
         self._detected_at = detected_at
+        self._class_id = class_id
 
     def is_match(self, other) -> Tuple[bool, int]:
         if self.action != other.action:
