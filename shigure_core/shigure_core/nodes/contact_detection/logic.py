@@ -46,7 +46,7 @@ class ContactDetectionLogic:
                 TrackedObjectActionEnum.value_of(tracked_object.action)
             )
 
-            is_not_touch |= action != ContactActionEnum.TOUCH
+            is_not_touch = action != ContactActionEnum.TOUCH
 
             collider: Cube = tracked_object.collider
             x, y, z = int(collider.x), int(collider.y), int(collider.z)
@@ -76,6 +76,9 @@ class ContactDetectionLogic:
                 hand_cube_list.remove(hand)
                 object_cube_list.remove(object_item)
                 result_list.append((hand, object_item))
+
+        if result_list == []:
+            is_not_touch = False
 
         return result_list, is_not_touch
 
