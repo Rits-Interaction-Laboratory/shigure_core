@@ -1,6 +1,7 @@
 import datetime
 import re
 from typing import List, Tuple
+from copy import deepcopy
 
 import cv2
 import message_filters
@@ -73,6 +74,7 @@ class ContactDetectionNode(ImagePreviewNode):
 
         self.hand_collider_distance = 300  # 手の当たり判定の距離
 
+        self.is_not_touch = False
         self.action_index = 0
         self._id_manager = IdManager()
 
@@ -81,7 +83,7 @@ class ContactDetectionNode(ImagePreviewNode):
 
         color_img: np.ndarray = self.bridge.compressed_imgmsg_to_cv2(color_img_src)
 
-        result_list, is_not_touch = self.contact_detection_logic.execute(object_list, people)
+        result_list, self.is_not_touch = self.contact_detection_logic.execute(object_list, people)
 
         publish_msg = ContactedList()
         publish_msg.header.stamp = people.header.stamp
@@ -122,11 +124,15 @@ class ContactDetectionNode(ImagePreviewNode):
         if self.is_debug_mode:
             height, width = color_img.shape[:2]
 
+            event_frame = deepcopy(color_img)
+
             if not hasattr(self, 'action_list'):
                 self.action_list = []
+                self.event_frame_list = []
                 black_img = np.zeros_like(color_img)
                 for i in range(4):
                     self.action_list.append(cv2.resize(black_img.copy(), (width // 2, height // 2)))
+                    self.event_frame_list.append(cv2.resize(black_img.copy(), (width // 2, height // 2)))
 
             # すべての人物領域を書く
             for person in people.pose_key_points_list:
@@ -141,17 +147,24 @@ class ContactDetectionNode(ImagePreviewNode):
                 x = np.clip(int(pixel_point.x), 0, width - 1)
                 y = np.clip(int(pixel_point.y), 0, height - 1)
                 cv2.circle(color_img, (x, y), 5, (255, 0, 0), thickness=-1)
+                cv2.circle(event_frame, (x, y), 5, (255, 0, 0), thickness=-1)
                 pixel_point = person.point_data[self.RIGHT_HAND_INDEX].pixel_point
                 x = np.clip(int(pixel_point.x), 0, width - 1)
                 y = np.clip(int(pixel_point.y), 0, height - 1)
                 cv2.circle(color_img, (x, y), 5, (255, 0, 0), thickness=-1)
+                cv2.circle(event_frame, (x, y), 5, (255, 0, 0), thickness=-1)
 
                 cv2.rectangle(color_img, (left, top), (right, bottom), (255, 0, 0), thickness=3)
+                cv2.rectangle(event_frame, (left, top), (right, bottom), (255, 0, 0), thickness=3)
                 text_w, text_h = cv2.getTextSize(f'ID : {re.sub(".*_", "", person.people_id)}',
                                                  cv2.FONT_HERSHEY_PLAIN, 1.5, 2)[0]
                 cv2.rectangle(color_img, (left, top), (left + text_w, top - text_h), (255, 0, 0), -1)
+                cv2.rectangle(event_frame, (left, top), (left + text_w, top - text_h), (255, 0, 0), -1)
                 cv2.putText(color_img, f'ID : {re.sub(".*_", "", person.people_id)}', (left, top),
                             cv2.FONT_HERSHEY_PLAIN, 1.5, (255, 255, 255), thickness=2)
+                cv2.putText(event_frame, f'ID : {re.sub(".*_", "", person.people_id)}', (left, top),
+                            cv2.FONT_HERSHEY_PLAIN, 1.5, (255, 255, 255), thickness=2)
+                
 
             # すべての物体領域を書く
             for tracked_object in object_list.tracked_object_list:
@@ -165,6 +178,11 @@ class ContactDetectionNode(ImagePreviewNode):
                 cv2.putText(color_img, f'ID : {re.sub(".*_", "", tracked_object.object_id)}', (left, top),
                             cv2.FONT_HERSHEY_PLAIN, 1.5, (0, 128, 255), thickness=2)
 
+                if tracked_object.action == "bring_in" or tracked_object.action == "take_out":
+                    cv2.rectangle(event_frame, (left, top), (right, bottom), (0, 128, 255), thickness=3)
+                    cv2.putText(event_frame, f'ID : {re.sub(".*_", "", tracked_object.object_id)}', (left, top),
+                                cv2.FONT_HERSHEY_PLAIN, 1.5, (0, 128, 255), thickness=2)
+
             for hand, object_item in result_list:
                 person, _, index = hand
                 tracked_object, _ = object_item
@@ -173,7 +191,7 @@ class ContactDetectionNode(ImagePreviewNode):
                     TrackedObjectActionEnum.value_of(tracked_object.action)
                 )
 
-                is_not_touch = action != ContactActionEnum.TOUCH
+                self.is_not_touch = action != ContactActionEnum.TOUCH
 
                 color = self.get_color_from_action(action)
 
@@ -183,6 +201,8 @@ class ContactDetectionNode(ImagePreviewNode):
                 y = np.clip(int(pixel_point.y), 0, height - 1)
                 cv2.putText(color_img, f'Action : {action.value}', (x - 40, y - 10), cv2.FONT_HERSHEY_PLAIN, 1.5, color,
                             thickness=2)
+                cv2.putText(event_frame, f'Action : {action.value}', (x - 40, y - 10), cv2.FONT_HERSHEY_PLAIN, 3.0, color,
+                            thickness=2)
 
             if len(result_list) > 0:
                 cv2.putText(color_img, 'Detected', (0, 10), cv2.FONT_HERSHEY_PLAIN, 1, (0, 0, 255))
@@ -190,13 +210,20 @@ class ContactDetectionNode(ImagePreviewNode):
             color_img = self.print_fps(color_img)
             # cv2.imshow('color', color_img)
 
-            if is_not_touch:
+            if self.is_not_touch:
+                print("is_not_touch", self.is_not_touch)
                 # cv2.imshow(f'{people.header.stamp.sec}.{people.header.stamp.nanosec}', color_img)
-                self.action_list[self.action_index] = cv2.resize(color_img.copy(), (width // 2, height // 2))
+                self.action_list[self.action_index] = cv2.resize(event_frame, (width // 2, height // 2))
+                self.event_frame_list = deepcopy(self.action_list)
+                self.event_frame_list[self.action_index] = self.draw_outer_frame_line(self.event_frame_list[self.action_index], color= [255, 0, 255])
                 self.action_index = (self.action_index + 1) % 4
-            tile_img = cv2.hconcat([color_img,
-                                    cv2.vconcat([cv2.hconcat([self.action_list[0], self.action_list[1]]),
-                                                 cv2.hconcat([self.action_list[2], self.action_list[3]])])])
+            tile_img = cv2.hconcat([
+                color_img,
+                cv2.vconcat([
+                cv2.hconcat([self.event_frame_list[0], self.event_frame_list[1]]),
+                cv2.hconcat([self.event_frame_list[2], self.event_frame_list[3]])
+                ])
+            ])
             cv2.namedWindow('contact_detection', cv2.WINDOW_NORMAL)
             cv2.imshow('contact_detection', tile_img)
 
