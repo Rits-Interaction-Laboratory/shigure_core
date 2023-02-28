@@ -3,6 +3,7 @@ import os
 import threading
 from multiprocessing import Process
 from typing import List
+import time
 
 import cv2
 import message_filters
@@ -230,7 +231,14 @@ class SubtractionAnalysisNode(ImagePreviewNode):
         cv2.imwrite(file_path, color_img_for_icon[bb.y:bb.y + bb.height, bb.x:bb.x + bb.width])
         file_path = os.path.join(icon_save_path, 'object_icon.png')
         bb = scene.event.object_bounding_box
-        cv2.imwrite(file_path, color_img_for_icon[bb.y:bb.y + bb.height, bb.x:bb.x + bb.width])
+
+        # 物体アイコン画像が小さすぎて認識できない場合があるので, extend_image_sizeピクセル分左右上下に拡張
+        im_height, im_width, _ = color_img_for_icon.shape
+        extend_image_size = 10
+        if 0< bb.y - extend_image_size and bb.y + bb.height + extend_image_size < im_height and 0 < bb.x - extend_image_size and bb.x + bb.width + extend_image_size < im_width:  
+            cv2.imwrite(file_path, color_img_for_icon[bb.y - extend_image_size:bb.y + bb.height + extend_image_size, bb.x - extend_image_size:bb.x + bb.width + extend_image_size])
+        else:
+            cv2.imwrite(file_path, color_img_for_icon[bb.y:bb.y + bb.height, bb.x:bb.x + bb.width])
 
         print('保存終了')
 
