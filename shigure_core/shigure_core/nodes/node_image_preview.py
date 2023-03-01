@@ -88,3 +88,54 @@ class ImagePreviewNode(Node):
         img[:, width - band_width:width, :] = color
 
         return img
+    
+    def overlay_image(self, overlapping_img: np.ndarray, underlying_img: np.ndarray, shift, resize_scale, is_frame_line: bool=True):
+        """
+        2枚の画像を重ね合わせます.
+
+        :param overlapping_img: 重ね合わせる画像
+        :param underlying_img: 下地画像
+        :param shift: 左上を原点としたときの移動量(x, y)
+        :param resize_scale: 重ね合わせる画像の拡大・縮小倍率(width, height)
+        :param is_frame_line: 重ね合わせる画像に外枠線を付与するか
+        """
+
+        shift_x, shift_y = shift
+        resize_width, resize_height = resize_scale
+
+        # 重ね合わせる画像のリサイズ
+        overlapping_img = cv2.resize(overlapping_img, None, None, fx=resize_width, fy=resize_height)
+        if is_frame_line:
+            overlapping_img = self.draw_outer_frame_line(overlapping_img, band_width=4, color=(0, 0, 0))
+
+        # 重ね合わせる画像のパラメータ
+        overlapping_height, overlapping_width = overlapping_img.shape[:2]
+        overlapping_x_min, overlapping_x_max = 0, overlapping_width
+        overlapping_y_min, overlapping_y_max = 0, overlapping_height
+
+        # 下地画像のパラメータ
+        underlying_height, underlying_width = underlying_img.shape[:2]
+        underlying_x_min, underlying_x_max = shift_x, shift_x + overlapping_width 
+        underlying_y_min, underlying_y_max = shift_y, shift_y + overlapping_height
+
+        # 下地画像の上下左右端に合わせる
+        # 
+        if underlying_x_min < 0:
+            overlapping_x_min = overlapping_x_min - underlying_x_min
+            underlying_x_min = 0
+
+        if underlying_width < underlying_x_max:
+            overlapping_x_max = overlapping_x_max - (underlying_x_max - underlying_width)
+            underlying_x_max = underlying_width
+        
+        if underlying_y_min < 0:
+            overlapping_y_min = overlapping_y_min - underlying_y_min
+            underlying_y_min = 0
+
+        if underlying_height < underlying_y_max:
+            overlapping_y_max = overlapping_y_max - (underlying_y_max - underlying_height)
+            underlying_y_max = underlying_height
+
+        underlying_img[underlying_y_min:underlying_y_max, underlying_x_min:underlying_x_max] = overlapping_img[overlapping_y_min:overlapping_y_max, overlapping_x_min:overlapping_x_max]
+
+        return underlying_img
