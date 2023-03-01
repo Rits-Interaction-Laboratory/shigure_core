@@ -182,6 +182,20 @@ class ContactDetectionNode(ImagePreviewNode):
                     cv2.rectangle(event_frame, (left, top), (right, bottom), (0, 128, 255), thickness=3)
                     cv2.putText(event_frame, f'ID : {re.sub(".*_", "", tracked_object.object_id)}', (left, top),
                                 cv2.FONT_HERSHEY_PLAIN, 1.5, (0, 128, 255), thickness=2)
+                    
+                    # 右側ウインドウへの検知物体の拡大表示
+                    # 物体画像は, 上下左右にexpansion_paramだけ大きく切り取る
+                    object_image = []
+                    expansion_param = 20
+                    left_expansion = left - expansion_param
+                    top_expansion = top - expansion_param
+                    right_expansion = right + expansion_param
+                    bottom_expansion = bottom + expansion_param
+                    if (0 <= left_expansion) and (right_expansion <= width) and (0 <= top_expansion) and (bottom_expansion <= height):
+                        object_image = event_frame[top_expansion : bottom_expansion, left_expansion : right_expansion]
+                    else:
+                        object_image = event_frame[top : bottom, left : right]
+                    event_frame = self.overlay_image(overlapping_img=object_image, underlying_img=event_frame, shift=(0, 0), resize_scale=(3, 3), is_frame_line=True)
 
             for hand, object_item in result_list:
                 person, _, index = hand
@@ -195,14 +209,13 @@ class ContactDetectionNode(ImagePreviewNode):
 
                 color = self.get_color_from_action(action)
 
-                # 対象の手首の位置
+                # Actionの表示
                 pixel_point = person.point_data[index].pixel_point
                 x = np.clip(int(pixel_point.x), 0, width - 1)
                 y = np.clip(int(pixel_point.y), 0, height - 1)
-                cv2.putText(color_img, f'Action : {action.value}', (x - 40, y - 10), cv2.FONT_HERSHEY_PLAIN, 1.5, color,
-                            thickness=2)
-                cv2.putText(event_frame, f'Action : {action.value}', (x - 40, y - 10), cv2.FONT_HERSHEY_PLAIN, 3.0, color,
-                            thickness=2)
+                cv2.putText(color_img, f'Action : {action.value}', (x - 40, y - 10), cv2.FONT_HERSHEY_PLAIN, 1.5, color, thickness=2)
+                cv2.rectangle(event_frame, (0, height - 100), (width//4 + 40, height), (0,0,0), -1)
+                cv2.putText(event_frame, f'{action.value}', (20, height - 30), cv2.FONT_HERSHEY_SIMPLEX, 2.5, color, thickness=5)
 
             if len(result_list) > 0:
                 cv2.putText(color_img, 'Detected', (0, 10), cv2.FONT_HERSHEY_PLAIN, 1, (0, 0, 255))
@@ -215,7 +228,7 @@ class ContactDetectionNode(ImagePreviewNode):
                 # cv2.imshow(f'{people.header.stamp.sec}.{people.header.stamp.nanosec}', color_img)
                 self.action_list[self.action_index] = cv2.resize(event_frame, (width // 2, height // 2))
                 self.event_frame_list = deepcopy(self.action_list)
-                self.event_frame_list[self.action_index] = self.draw_outer_frame_line(self.event_frame_list[self.action_index], color= [255, 0, 255])
+                self.event_frame_list[self.action_index] = self.draw_outer_frame_line(self.event_frame_list[self.action_index], band_width=10, color= [255, 0, 255])
                 self.action_index = (self.action_index + 1) % 4
             tile_img = cv2.hconcat([
                 color_img,
