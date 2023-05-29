@@ -1,9 +1,9 @@
 class JudgeParams:
     """判定に利用するパラメータ."""
 
-    def __init__(self, allow_empty_frame_count: int):
-        #self._min_size = min_size
-        #self._max_size = max_size
+    def __init__(self, min_size: int, max_size: int, allow_empty_frame_count: int):
+        self._min_size = min_size
+        self._max_size = max_size
         self._allow_empty_frame_count = allow_empty_frame_count
 
     @property
