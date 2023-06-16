@@ -4,7 +4,7 @@ from shigure_core.nodes.object_detection.color_image_frame import ColorImageFram
 
 
 class ColorImageFrames:
-    def __init__(self, buffer_size: int = 50):
+    def __init__(self, buffer_size: int = 25):
         self._buffer_size = buffer_size
         self._buffer: List[ColorImageFrame] = []
 

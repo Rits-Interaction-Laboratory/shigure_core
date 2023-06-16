@@ -40,7 +40,7 @@ class YoloxObjectDetectionLogic:
             Returns:
                 bool: 物体と思われるものの規定の物体でないものかどうか
             """
-            DEFAULT_OBJECTS = ['person','chair','laptop','tv','microwave','refrigerator','potted plant','cup','keyboard','couch','mouse','sink','book']
+            DEFAULT_OBJECTS = ['person','chair','laptop','tv','microwave','refrigerator','potted plant','cup','keyboard','couch','mouse','sink','book','dining table']
             is_object: bool = probability > object_threshold
             is_default_object = class_id in DEFAULT_OBJECTS
             return is_object and not(is_default_object)
@@ -154,7 +154,7 @@ class YoloxObjectDetectionLogic:
                     bbox_people_list.append(bounding_box)
 
 
-        if bring_in_list:
+        # if bring_in_list:
             del_idx_list = []
             # 持ち込み確定リストと現フレームリストを全照合
             for i, bring_in_item in enumerate(bring_in_list):
@@ -169,55 +169,61 @@ class YoloxObjectDetectionLogic:
 
                        
                     else: #持ち込みアイテムと一致する現フレームアイテムがないとき
-                       
-                        #人物に隠れていないかを確かめる
-                        for person in people.pose_key_points_list:
+                        
+                        if len(people.pose_key_points_list) == 0:
                             
-                            #color_imgのサイズ
-                            img_height, img_width = color_img.shape[:2]
+                            bring_in_item.fhist.append(False)
+                        
+                        else:
 
-                            bounding_box = person.bounding_box
-                            left = np.clip(int(bounding_box.x), 0, img_width- 1)
-                            top = np.clip(int(bounding_box.y), 0, img_height - 1)
-                            right = np.clip(int(bounding_box.x + bounding_box.width), 0, img_width - 1)
-                            bottom = np.clip(int(bounding_box.y + bounding_box.height), 0, img_height - 1)
-                            part_count: int  = len(person.point_data)
-                            
-                            for part in range(part_count):
-                            # 対象の位置
-                                pixel_point = person.point_data[part].pixel_point
-                                x = np.clip(int(pixel_point.x), 0, img_width - 1)
-                                y = np.clip(int(pixel_point.y), 0, img_height - 1)
+
+                            #人物に隠れていないかを確かめる
+                            for person in people.pose_key_points_list:
                                 
-                                POSE_PAIRS:List[List[int]] =  [ [1,0],[1,2],[1,5],[2,3],[3,4],[5,6],[6,7],[1,8],[8,9],[8,12],[9,10],[10,11],[11,22],[11,24],[12,13],[13,14],[14,19],[14,21],[15,0],[15,17],[16,0],[16,18],[19,20],[22,11],[22,23]]
-                                # Draw Skeleton
-                                for pair in POSE_PAIRS:
-                                    partA:int  = pair[0]
-                                    partB:int  = pair[1]
+                                #color_imgのサイズ
+                                img_height, img_width = color_img.shape[:2]
 
-                                    if person.point_data[partA].pixel_point.x > 0 and person.point_data[partA].pixel_point.y > 0 and  person.point_data[partB].pixel_point.x>0  and person.point_data[partB].pixel_point.x>0  :
-                                        segment: tuple[float, float, float, float] =[person.point_data[partA].pixel_point.x,person.point_data[partA].pixel_point.y,person.point_data[partB].pixel_point.x,person.point_data[partB].pixel_point.y]
-                                        bounding_box_src = bring_in_item._bounding_box
-                                        b_item_x, b_item_y, b_item_width, b_item_height = bounding_box_src.items
-                                        rectangle: tuple[float, float, float, float] = [b_item_x,b_item_y ,b_item_width,b_item_height]
-                                        
-                                        #骨格と持ち込み物体の重なり判定
-                                        if YoloxObjectDetectionLogic.intersect(rectangle,segment):
-                                            hide_judge = True
+                                bounding_box = person.bounding_box
+                                left = np.clip(int(bounding_box.x), 0, img_width- 1)
+                                top = np.clip(int(bounding_box.y), 0, img_height - 1)
+                                right = np.clip(int(bounding_box.x + bounding_box.width), 0, img_width - 1)
+                                bottom = np.clip(int(bounding_box.y + bounding_box.height), 0, img_height - 1)
+                                part_count: int  = len(person.point_data)
+                                
+                                for part in range(part_count):
+                                # 対象の位置
+                                    pixel_point = person.point_data[part].pixel_point
+                                    x = np.clip(int(pixel_point.x), 0, img_width - 1)
+                                    y = np.clip(int(pixel_point.y), 0, img_height - 1)
+                                    
+                                    POSE_PAIRS:List[List[int]] =  [ [1,0],[1,2],[1,5],[2,3],[3,4],[5,6],[6,7],[1,8],[8,9],[8,12],[9,10],[10,11],[11,22],[11,24],[12,13],[13,14],[14,19],[14,21],[15,0],[15,17],[16,0],[16,18],[19,20],[22,11],[22,23]]
+                                    # Draw Skeleton
+                                    for pair in POSE_PAIRS:
+                                        partA:int  = pair[0]
+                                        partB:int  = pair[1]
 
-                                            #print('hide')
-                                            break
-                                        else:
+                                        if person.point_data[partA].pixel_point.x > 0 and person.point_data[partA].pixel_point.y > 0 and  person.point_data[partB].pixel_point.x>0  and person.point_data[partB].pixel_point.x>0  :
+                                            segment: tuple[float, float, float, float] =[person.point_data[partA].pixel_point.x,person.point_data[partA].pixel_point.y,person.point_data[partB].pixel_point.x,person.point_data[partB].pixel_point.y]
+                                            bounding_box_src = bring_in_item._bounding_box
+                                            b_item_x, b_item_y, b_item_width, b_item_height = bounding_box_src.items
+                                            rectangle: tuple[float, float, float, float] = [b_item_x,b_item_y ,b_item_width,b_item_height]
 
+                                            #骨格と持ち込み物体の重なり判定
+                                            if YoloxObjectDetectionLogic.chickhide(rectangle,segment):
 
-                                            hide_judge = False
-                        
-                        if not hide_judge:
-                            
-                            bring_in_item.fhist.append(False) # 持ち込み物体が持ち去られているなら検知履歴リストにFalseを追加
-                        
+                                                hide_judge = True
+                                                break
+                                            else:
+
+                                                hide_judge = False
+
+                            if not hide_judge:                         
+                                bring_in_item.fhist.append(False) # 持ち込み物体が持ち去られているなら検知履歴リストにFalseを追加
+
+                    
                 if len(bring_in_item.fhist) >= FHIST_SIZE: # その持ち込みアイテムの検知履歴が十分に溜まっていたら
                     if judge_take_out_object(bring_in_item):
+                        print('take_out')
                         del_idx_list.append(i) # 持ち去りイベント発生(持ち込み確定リストから削除予約)
                         action = DetectedObjectActionEnum.TAKE_OUT
                         item = FrameObjectItem(
@@ -294,7 +300,7 @@ class YoloxObjectDetectionLogic:
         # 初期状態リスト・持ち込み確定リスト・待機リストいずれにも存在しない現フレームアイテムは、待機リストに追加
         for bbox_item in bbox_item_list:
             if not(bbox_item.is_exist_bring or bbox_item.is_exist_wait):
-                print(f'wait_item_append : {bbox_item._class_id}')
+                #print(f'wait_item_append : {bbox_item._class_id}')
                 wait_item_list.append(bbox_item)
                 #wait = [[i._class_id, i._bounding_box._x, i._bounding_box._y, i._found_count, i._not_found_count] for i in wait_item_list]
                 #_ = [print(w) for w in wait]
@@ -349,11 +355,11 @@ class YoloxObjectDetectionLogic:
         mask_img[y:y + height, x:x + width] = np.where(mask > 0, mask, mask_img[y:y + height, x:x + width])
         return mask_img
     
-    @staticmethod
-    def intersect(a, b) :
-        ax_mn, ay_mn, ax_mx, ay_mx = a[0], a[1], a[2], a[3]
-        bx_mn, by_mn, bx_mx, by_mx = b[0], b[1], b[2], b[3]
-        return (ax_mn <= bx_mx and  ax_mx >= bx_mn) and (ay_mn <=  by_mx and ay_mx >= by_mn) # and (a.minZ <= b.maxZ and a.maxZ >= b.minZ)
+    # @staticmethod
+    # def intersect(a, b) :
+    #     ax_mn, ay_mn, ax_mx, ay_mx = a[0], a[1], a[2], a[3]
+    #     bx_mn, by_mn, bx_mx, by_mx = b[0], b[1], b[2], b[3]
+    #     return (ax_mn <= bx_mx and  ax_mx >= bx_mn) and (ay_mn <=  by_mx and ay_mx >= by_mn) # and (a.minZ <= b.maxZ and a.maxZ >= b.minZ)
     
     @staticmethod
     def is_overlap(Personbox, Bring_inbox):
@@ -373,7 +379,7 @@ class YoloxObjectDetectionLogic:
             return False
         
     @staticmethod
-    def intersect(rectangle, segment):
+    def chickhide(rectangle, segment):
 	# 矩形の頂点を取得
         rect_x, rect_y, rect_width, rect_height = rectangle
         rect_top_left = (rect_x, rect_y)
@@ -387,58 +393,59 @@ class YoloxObjectDetectionLogic:
         seg_end = (seg_x2, seg_y2)
 
         # 線分が矩形の内部にあるかチェック
-        if point_in_rectangle(seg_start, rectangle) or point_in_rectangle(seg_end, rectangle):
+        if YoloxObjectDetectionLogic.point_in_rectangle(seg_start, rectangle) or YoloxObjectDetectionLogic.point_in_rectangle(seg_end, rectangle):
             return True
 
         # 線分と矩形の各辺との交差判定
-        if line_segment_intersect(seg_start, seg_end, rect_top_left, rect_top_right):
+        if YoloxObjectDetectionLogic.line_segment_intersect(seg_start, seg_end, rect_top_left, rect_top_right):
             return True
-        if line_segment_intersect(seg_start, seg_end, rect_top_right, rect_bottom_right):
+        if YoloxObjectDetectionLogic.line_segment_intersect(seg_start, seg_end, rect_top_right, rect_bottom_right):
             return True
-        if line_segment_intersect(seg_start, seg_end, rect_bottom_right, rect_bottom_left):
+        if YoloxObjectDetectionLogic.line_segment_intersect(seg_start, seg_end, rect_bottom_right, rect_bottom_left):
             return True
-        if line_segment_intersect(seg_start, seg_end, rect_bottom_left, rect_top_left):
+        if YoloxObjectDetectionLogic.line_segment_intersect(seg_start, seg_end, rect_bottom_left, rect_top_left):
             return True
 
         return False
 
 
-def point_in_rectangle(point, rectangle):
-	x, y = point
-	rect_x, rect_y, rect_width, rect_height = rectangle
-	return rect_x <= x <= rect_x + rect_width and rect_y <= y <= rect_y + rect_height
+    @staticmethod
+    def point_in_rectangle(point, rectangle):
+        x, y = point
+        rect_x, rect_y, rect_width, rect_height = rectangle
+        return rect_x <= x <= rect_x + rect_width and rect_y <= y <= rect_y + rect_height
 
-
-def line_segment_intersect(seg1_start, seg1_end, seg2_start, seg2_end):
-	# 2つの線分の方程式の係数を計算
-	a1, b1, c1 = line_equation(seg1_start, seg1_end)
-	a2, b2, c2 = line_equation(seg2_start, seg2_end)
-	
-
-	# 交差点の座標を計算
-	try:
-		x = (b1 * c2 - b2 * c1) / (a1 * b2 - a2 * b1)
-		y = (a2 * c1 - a1 * c2) / (a1 * b2 - a2 * b1)
-	except ZeroDivisionError:
-		x = 0
-		y = 0
-
-	# 交差点が線分の内部にあるかチェック
-	if (min(seg1_start[0], seg1_end[0]) <= x <= max(seg1_start[0], seg1_end[0]) and
-			min(seg1_start[1], seg1_end[1]) <= y <= max(seg1_start[1], seg1_end[1]) and
-			min(seg2_start[0], seg2_end[0]) <= x <= max(seg2_start[0], seg2_end[0]) and
-			min(seg2_start[1], seg2_end[1]) <= y <= max(seg2_start[1], seg2_end[1])):
-		return True
-
-	return False
-
-def line_equation(start_point, end_point):
-	x1, y1 = start_point
-	x2, y2 = end_point
-	a = y2 - y1
-	b = x1 - x2
-	c = x2 * y1 - x1 * y2
-	return a, b, c      
-
+    @staticmethod
+    def line_segment_intersect(seg1_start, seg1_end, seg2_start, seg2_end):
+        # 2つの線分の方程式の係数を計算
+        a1, b1, c1 = YoloxObjectDetectionLogic.line_equation(seg1_start, seg1_end)
+        a2, b2, c2 = YoloxObjectDetectionLogic.line_equation(seg2_start, seg2_end)
         
+
+        # 交差点の座標を計算
+        try:
+            x = (b1 * c2 - b2 * c1) / (a1 * b2 - a2 * b1)
+            y = (a2 * c1 - a1 * c2) / (a1 * b2 - a2 * b1)
+        except ZeroDivisionError:
+            x = 0
+            y = 0
+
+        # 交差点が線分の内部にあるかチェック
+        if (min(seg1_start[0], seg1_end[0]) <= x <= max(seg1_start[0], seg1_end[0]) and
+                min(seg1_start[1], seg1_end[1]) <= y <= max(seg1_start[1], seg1_end[1]) and
+                min(seg2_start[0], seg2_end[0]) <= x <= max(seg2_start[0], seg2_end[0]) and
+                min(seg2_start[1], seg2_end[1]) <= y <= max(seg2_start[1], seg2_end[1])):
+            return True
+
+        return False
+    @staticmethod
+    def line_equation(start_point, end_point):
+        x1, y1 = start_point
+        x2, y2 = end_point
+        a = y2 - y1
+        b = x1 - x2
+        c = x2 * y1 - x1 * y2
+        return a, b, c      
+
+            
     

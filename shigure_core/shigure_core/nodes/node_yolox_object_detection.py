@@ -102,15 +102,14 @@ class YoloxObjectDetectionNode(ImagePreviewNode):
 				self.object_list.append(cv2.resize(black_img.copy(), (width // 2, height // 2)))
 			#print('brack')
 		
-		if len(self._color_img_buffer) > 30:
-			self._color_img_buffer = self._color_img_buffer[1:]
-			self._color_img_frames.get(-30).new_image = color_img
-		self._color_img_buffer.append(color_img)
+		if len(self._color_img_buffer) > 25:  
+			self._color_img_buffer = self._color_img_buffer[1:] #self._color_img_bufferのリストを先頭以外上書き
+			self._color_img_frames.get(-25).new_image = color_img  #color_img_framesの先頭の画像を新しい画像に置き換える
+		self._color_img_buffer.append(color_img) 
 		
 		timestamp = Timestamp(color_img_src.header.stamp.sec, color_img_src.header.stamp.nanosec)
-		frame = ColorImageFrame(timestamp, self._color_img_buffer[0], color_img)
-		self._color_img_frames.add(frame)
-
+		frame = ColorImageFrame(timestamp, self._color_img_buffer[0], color_img) #bufferの先頭の画像と新しい画像
+		self._color_img_frames.add(frame) #ColorImageFrameslistの更新して、listに追加
 
 		frame_object_dict,bring_in_list,wait_item_list,people_item_list,test_item_list = self.yolox_object_detection_logic.execute(yolox_bbox_src, timestamp,people,color_img,self.frame_object_list,self._judge_params,self.bring_in_list,self.wait_item_list)
 		
@@ -122,149 +121,152 @@ class YoloxObjectDetectionNode(ImagePreviewNode):
 		self.test_item_list = test_item_list		
 		#count = 1
 		#self._count = count
-		self.frame_object_list = list(chain.from_iterable(frame_object_dict.values()))
+		self.frame_object_list = list(chain.from_iterable(frame_object_dict.values())) #frame_object_dictをすべて取り出し
 		
 		#result_img = cv2.cvtColor(subtraction_analysis_img, cv2.COLOR_GRAY2BGR)
 		#print(len(bring_in_list))
 		
-		if self._color_img_frames.is_full():
-			self.get_logger().info('Buffering end', once=True)
-			
-			frame = self._color_img_frames.top_frame
-			
-			sec, nano_sec = frame.timestamp.timestamp
-			detected_object_list = DetectedObjectList()
-			detected_object_list.header.stamp.sec = sec
-			detected_object_list.header.stamp.nanosec = nano_sec
-			detected_object_list.header.frame_id = camera_info.header.frame_id
-			
-			timestamp_str = str(frame.timestamp)
-			if timestamp_str in frame_object_dict.keys():
-				frame_object_list = frame_object_dict.get(timestamp_str)
-				#print(time)
-				# 検知開始時間が同じのフレームオブジェクトが検知済でなければ警告
-				if not all([frame_object.is_finished() for frame_object in frame_object_list]):
-					self.get_logger().warning('検知が終了していないオブジェクトを含んでいます')
-					
-				detected_object_list = self.create_msg(frame_object_list, detected_object_list, frame)
-			
-			self.detection_publisher.publish(detected_object_list)
-			if self.is_debug_mode:
-				img_height, img_width = color_img.shape[:2]
+		#if self._color_img_frames.is_full():　<--self._color_img_framesのフレームが最大ならTrue
+		self.get_logger().info('Buffering end', once=True)
+		
+		#frame = self._color_img_frames.top_frame 
+		
+		sec, nano_sec = frame.timestamp.timestamp
+		detected_object_list = DetectedObjectList()
+		detected_object_list.header.stamp.sec = sec
+		detected_object_list.header.stamp.nanosec = nano_sec
+		detected_object_list.header.frame_id = camera_info.header.frame_id
+		
 
-				result_img = color_img.copy()
-				yolox_img = color_img.copy()
+		# timestamp_str = str(frame.timestamp)
+		# if timestamp_str in frame_object_dict.keys():
+		# 	frame_object_list = frame_object_dict.get(timestamp_str)
+		# 	#print(time)
+		# 	# 検知開始時間が同じのフレームオブジェクトが検知済でなければ警告
+		# 	if not all([frame_object.is_finished() for frame_object in frame_object_list]):
+		# 		self.get_logger().warning('検知が終了していないオブジェクトを含んでいます')
+
+		if self.frame_object_list:		
+			detected_object_list = self.create_msg(self.frame_object_list, detected_object_list, frame)
+		
+		self.detection_publisher.publish(detected_object_list)
+		
+		if self.is_debug_mode:
+			img_height, img_width = color_img.shape[:2]
+
+			result_img = color_img.copy()
+			yolox_img = color_img.copy()
+			
+			#for s_item in start_item_list:
+				#bounding_box_src = s_item._bounding_box
+				#x, y, width, height = bounding_box_src.items
+				#result_img = cv2.rectangle(result_img, (x, y), (x + width, y + height), (0,153,255), thickness=3)
+				#brack_img = np.zeros_like(color_img)
+				#img = self.print_fps(result_img)
 				
-				#for s_item in start_item_list:
-					#bounding_box_src = s_item._bounding_box
-					#x, y, width, height = bounding_box_src.items
-					#result_img = cv2.rectangle(result_img, (x, y), (x + width, y + height), (0,153,255), thickness=3)
-					#brack_img = np.zeros_like(color_img)
-					#img = self.print_fps(result_img)
-					
-				for w_item in wait_item_list:
-					bounding_box_src = w_item._bounding_box
-					x, y, width, height = bounding_box_src.items
-					result_img = cv2.rectangle(result_img, (x, y), (x + width, y + height), (255,204,102), thickness=3)
-					
-				for b_item in bring_in_list:
-					bounding_box_src = b_item._bounding_box
-					x, y, width, height = bounding_box_src.items
-					result_img = cv2.rectangle(result_img, (x, y), (x + width, y + height), (255,0,102), thickness=3)
-					
-				for bbox in yolox_bbox_src.bounding_boxes:
-
-					x = bbox.xmin
-					y = bbox.ymin
-					xmax = bbox.xmax
-					ymax = bbox.ymax
-					yolox_img = cv2.rectangle(yolox_img, (x, y), (xmax, ymax), (102,204,51), thickness=3)
+			for w_item in wait_item_list:
+				bounding_box_src = w_item._bounding_box
+				x, y, width, height = bounding_box_src.items
+				result_img = cv2.rectangle(result_img, (x, y), (x + width, y + height), (255,204,102), thickness=3)
 				
-				#人物が検出されたかどうか <--1以上検出されるとTrue
-				if len(self.people_item_list ) > 0:
-					for bounding_box in self.people_item_list :
-						peoplex_min, peopley_min, people_width, people_height = bounding_box.items
-						people_item = [peoplex_min,peopley_min, people_width+peoplex_min, people_height+peopley_min]
+			for b_item in bring_in_list:
+				bounding_box_src = b_item._bounding_box
+				x, y, width, height = bounding_box_src.items
+				result_img = cv2.rectangle(result_img, (x, y), (x + width, y + height), (255,0,102), thickness=3)
+				
+			for bbox in yolox_bbox_src.bounding_boxes:
 
+				x = bbox.xmin
+				y = bbox.ymin
+				xmax = bbox.xmax
+				ymax = bbox.ymax
+				yolox_img = cv2.rectangle(yolox_img, (x, y), (xmax, ymax), (102,204,51), thickness=3)
+			
+			#人物が検出されたかどうか <--1以上検出されるとTrue
+			if len(self.people_item_list ) > 0:
+				for bounding_box in self.people_item_list :
+					peoplex_min, peopley_min, people_width, people_height = bounding_box.items
+					people_item = [peoplex_min,peopley_min, people_width+peoplex_min, people_height+peopley_min]
+
+					for bbox in bring_in_list:
+						bounding_box_src = bbox._bounding_box
+						class_id = bbox._class_id
+						b_item_x, b_item_y, b_item_width, b_item_height = bounding_box_src.items
+						object_item = [b_item_x,b_item_y ,b_item_width+b_item_x,b_item_height+b_item_y]
+						
+						# #人物と持ち込み物体の重なりを判定
+						# if is_overlap(people_item, object_item):
+						# 	#print(f'class_ed  : {class_id }')
+						# 	cv2.putText(result_img, f'OVERLAP', (b_item_x, b_item_height+b_item_y),cv2.FONT_HERSHEY_PLAIN, 1.5, (255, 75, 0), thickness=3)
+
+			# すべての人物領域を書く
+			for person in people.pose_key_points_list:
+				bounding_box = person.bounding_box
+				left = np.clip(int(bounding_box.x), 0, img_width- 1)
+				top = np.clip(int(bounding_box.y), 0, img_height - 1)
+				right = np.clip(int(bounding_box.x + bounding_box.width), 0, img_width - 1)
+				bottom = np.clip(int(bounding_box.y + bounding_box.height), 0, img_height - 1)
+				part_count: int  = len(person.point_data)
+
+				for part in range(part_count):
+					# 対象の位置
+					pixel_point = person.point_data[part].pixel_point
+
+					x = np.clip(int(pixel_point.x), 0, img_width - 1)
+					y = np.clip(int(pixel_point.y), 0, img_height - 1)
+
+					#骨格ポイントの表示
+					cv2.circle(result_img, (x, y), 5, (255, 0, 0), thickness=-1)
+					#cv2.rectangle(result_img, (left, top), (right, bottom), (255, 0, 0), thickness=3)
+					# text_w, text_h = cv2.getTextSize(f'ID : {re.sub(".*_", "", person.people_id)}',
+					# 						 cv2.FONT_HERSHEY_PLAIN, 1.5, 2)[0]
+					
+					#人物のBoundingBox表示
+					#cv2.rectangle(result_img, (left, top), (left + text_w, top - text_h), (255, 0, 0), -1)
+					# cv2.putText(result_img, f'ID : {re.sub(".*_", "", person.people_id)}', (left, top),
+					# 	cv2.FONT_HERSHEY_PLAIN, 1.5, (255, 255, 255), thickness=2)
+					
+
+				POSE_PAIRS:List[List[int]] =  [ [1,0],[1,2],[1,5],[2,3],[3,4],[5,6],[6,7],[1,8],[8,9],[8,12],[9,10],[10,11],[11,22],[11,24],[12,13],[13,14],[14,19],[14,21],[15,0],[15,17],[16,0],[16,18],[19,20],[22,11],[22,23]]
+					
+				# Draw Skeleton
+				for pair in POSE_PAIRS:
+					partA:int  = pair[0]
+					partB:int  = pair[1]
+					
+					if person.point_data[partA].pixel_point.x > 0 and person.point_data[partA].pixel_point.y > 0 and  person.point_data[partB].pixel_point.x>0  and person.point_data[partB].pixel_point.x>0  :
+						#骨格の表示
+						cv2.line(result_img, (int(person.point_data[partA].pixel_point.x),int(person.point_data[partA].pixel_point.y)), (int(person.point_data[partB].pixel_point.x),int(person.point_data[partB].pixel_point.y)), (0, 255, 255), 3)
+						segment: tuple[float, float, float, float] =[person.point_data[partA].pixel_point.x,person.point_data[partA].pixel_point.y,person.point_data[partB].pixel_point.x,person.point_data[partB].pixel_point.y]
 						for bbox in bring_in_list:
 							bounding_box_src = bbox._bounding_box
 							class_id = bbox._class_id
 							b_item_x, b_item_y, b_item_width, b_item_height = bounding_box_src.items
-							object_item = [b_item_x,b_item_y ,b_item_width+b_item_x,b_item_height+b_item_y]
+							rectangle: tuple[float, float, float, float] = [b_item_x,b_item_y ,b_item_width,b_item_height]
 							
-							# #人物と持ち込み物体の重なりを判定
-							# if is_overlap(people_item, object_item):
-							# 	#print(f'class_ed  : {class_id }')
-							# 	cv2.putText(result_img, f'OVERLAP', (b_item_x, b_item_height+b_item_y),cv2.FONT_HERSHEY_PLAIN, 1.5, (255, 75, 0), thickness=3)
+							if intersect(rectangle,segment):
+								cv2.putText(result_img, f'OVERLAP', (b_item_x, b_item_height+b_item_y),cv2.FONT_HERSHEY_PLAIN, 1.5, (255, 75, 0), thickness=3)
 
-				# すべての人物領域を書く
-				for person in people.pose_key_points_list:
-					bounding_box = person.bounding_box
-					left = np.clip(int(bounding_box.x), 0, img_width- 1)
-					top = np.clip(int(bounding_box.y), 0, img_height - 1)
-					right = np.clip(int(bounding_box.x + bounding_box.width), 0, img_width - 1)
-					bottom = np.clip(int(bounding_box.y + bounding_box.height), 0, img_height - 1)
-					part_count: int  = len(person.point_data)
-
-					for part in range(part_count):
-						# 対象の位置
-						pixel_point = person.point_data[part].pixel_point
-
-						x = np.clip(int(pixel_point.x), 0, img_width - 1)
-						y = np.clip(int(pixel_point.y), 0, img_height - 1)
-
-						#骨格ポイントの表示
-						cv2.circle(result_img, (x, y), 5, (255, 0, 0), thickness=-1)
-						#cv2.rectangle(result_img, (left, top), (right, bottom), (255, 0, 0), thickness=3)
-						# text_w, text_h = cv2.getTextSize(f'ID : {re.sub(".*_", "", person.people_id)}',
-						# 						 cv2.FONT_HERSHEY_PLAIN, 1.5, 2)[0]
-						
-						#人物のBoundingBox表示
-						#cv2.rectangle(result_img, (left, top), (left + text_w, top - text_h), (255, 0, 0), -1)
-						# cv2.putText(result_img, f'ID : {re.sub(".*_", "", person.people_id)}', (left, top),
-						# 	cv2.FONT_HERSHEY_PLAIN, 1.5, (255, 255, 255), thickness=2)
-						
-
-					POSE_PAIRS:List[List[int]] =  [ [1,0],[1,2],[1,5],[2,3],[3,4],[5,6],[6,7],[1,8],[8,9],[8,12],[9,10],[10,11],[11,22],[11,24],[12,13],[13,14],[14,19],[14,21],[15,0],[15,17],[16,0],[16,18],[19,20],[22,11],[22,23]]
-						
-					# Draw Skeleton
-					for pair in POSE_PAIRS:
-						partA:int  = pair[0]
-						partB:int  = pair[1]
-						
-						if person.point_data[partA].pixel_point.x > 0 and person.point_data[partA].pixel_point.y > 0 and  person.point_data[partB].pixel_point.x>0  and person.point_data[partB].pixel_point.x>0  :
-							#骨格の表示
-							cv2.line(result_img, (int(person.point_data[partA].pixel_point.x),int(person.point_data[partA].pixel_point.y)), (int(person.point_data[partB].pixel_point.x),int(person.point_data[partB].pixel_point.y)), (0, 255, 255), 3)
-							segment: tuple[float, float, float, float] =[person.point_data[partA].pixel_point.x,person.point_data[partA].pixel_point.y,person.point_data[partB].pixel_point.x,person.point_data[partB].pixel_point.y]
-							for bbox in bring_in_list:
-								bounding_box_src = bbox._bounding_box
-								class_id = bbox._class_id
-								b_item_x, b_item_y, b_item_width, b_item_height = bounding_box_src.items
-								rectangle: tuple[float, float, float, float] = [b_item_x,b_item_y ,b_item_width,b_item_height]
-								
-								if intersect(rectangle,segment):
-									cv2.putText(result_img, f'OVERLAP', (b_item_x, b_item_height+b_item_y),cv2.FONT_HERSHEY_PLAIN, 1.5, (255, 75, 0), thickness=3)
-
-				for frame_obj in self.frame_object_list:
-					action_str = ''
-					action = frame_obj._item._action
-					if action == DetectedObjectActionEnum.TAKE_OUT:
-						action_str = 'TAKE_OUT'
-					else:
-						action_str = 'BRING_IN'
-					x = frame_obj._item._bounding_box._x
-					y = frame_obj._item._bounding_box._y
-					
-					cv2.putText(result_img, f'{action_str}', (x, y),cv2.FONT_HERSHEY_PLAIN, 1.5, (255, 255, 255), thickness=2)
-
-					
-				tile_img = cv2.hconcat([yolox_img, result_img])
-				cv2.namedWindow('yolox_object_detection', cv2.WINDOW_NORMAL)
-				cv2.imshow("yolox_object_detection", tile_img)
-				cv2.waitKey(1)
-			#else:
-				#print(f'[{datetime.datetime.now()}] fps : {self.fps}', end='\r')
+			for frame_obj in self.frame_object_list:
+				action_str = ''
+				action = frame_obj._item._action
+				if action == DetectedObjectActionEnum.TAKE_OUT:
+					action_str = 'TAKE_OUT'
+				else:
+					action_str = 'BRING_IN'
+				x = frame_obj._item._bounding_box._x
+				y = frame_obj._item._bounding_box._y
 				
+				cv2.putText(result_img, f'{action_str}', (x, y),cv2.FONT_HERSHEY_PLAIN, 1.5, (255, 255, 255), thickness=2)
+
+				
+			tile_img = cv2.hconcat([yolox_img, result_img])
+			cv2.namedWindow('yolox_object_detection', cv2.WINDOW_NORMAL)
+			cv2.imshow("yolox_object_detection", tile_img)
+			cv2.waitKey(1)
+		#else:
+			#print(f'[{datetime.datetime.now()}] fps : {self.fps}', end='\r')
+			
 			
 			
 			
@@ -277,7 +279,7 @@ class YoloxObjectDetectionNode(ImagePreviewNode):
 			detected_object = DetectedObject()
 			detected_object.action = action.value
 			detected_object.mask = self.bridge.cv2_to_compressed_imgmsg(mask_img, 'png')
-			
+			#print(detected_object.action)
 			bounding_box = BoundingBox()
 			bounding_box.x = float(x)
 			bounding_box.y = float(y)
