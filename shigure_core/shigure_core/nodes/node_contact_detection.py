@@ -63,7 +63,7 @@ class ContactDetectionNode(ImagePreviewNode):
         )
 
         self.time_synchronizer = message_filters.TimeSynchronizer(
-            [object_subscriber, people_subscriber, color_subscriber, depth_camera_info_subscriber], 1500)
+            [object_subscriber, people_subscriber, color_subscriber, depth_camera_info_subscriber], 1000)
         self.time_synchronizer.registerCallback(self.callback)
 
         self.contact_detection_logic = ContactDetectionLogic()
