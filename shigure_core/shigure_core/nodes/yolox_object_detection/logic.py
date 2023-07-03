@@ -3,7 +3,7 @@ from typing import List, Dict, Tuple
 import copy
 import cv2
 import numpy as np
-
+import string
 from shigure_core_msgs.msg import PoseKeyPointsList
 from bboxes_ex_msgs.msg import BoundingBoxes
 
@@ -21,7 +21,7 @@ class YoloxObjectDetectionLogic:
     """物体検出ロジッククラス"""
     @staticmethod
     def execute(yolox_bbox: BoundingBoxes, started_at: Timestamp, people:PoseKeyPointsList, color_img:np.ndarray, frame_object_list: List[FrameObject],
-                judge_params: JudgeParams, bring_in_list:List[BboxObject],wait_item_list:[BboxObject] )-> Dict[str, List[FrameObject]]:
+                judge_params: JudgeParams,take_out_people_id:string,take_out_obj_class_id:string, bring_in_list:List[BboxObject],wait_item_list:[BboxObject] )-> Dict[str, List[FrameObject]]:
         """
         物体検出ロジック
         :param yolox_bbox:
@@ -40,7 +40,7 @@ class YoloxObjectDetectionLogic:
             Returns:
                 bool: 物体と思われるものの規定の物体でないものかどうか
             """
-            DEFAULT_OBJECTS = ['person','chair','laptop','tv','microwave','refrigerator','potted plant','cup','keyboard','couch','mouse','sink','book','dining table']
+            DEFAULT_OBJECTS = ['person','dog','cat','chair','laptop','tv','microwave','refrigerator','potted plant','cup','keyboard','couch','mouse','sink','book','dining table','skateboard']
             is_object: bool = probability > object_threshold
             is_default_object = class_id in DEFAULT_OBJECTS
             return is_object and not(is_default_object)
@@ -67,6 +67,7 @@ class YoloxObjectDetectionLogic:
             """
             # 検知率(履歴リスト中のTrueの存在率)を計算
             found_rate = sum(bring_in_item.fhist) / len(bring_in_item.fhist)
+
             # 検知率が15%未満だったら
             return found_rate < threshold
 
@@ -96,6 +97,9 @@ class YoloxObjectDetectionLogic:
         is_exist_start = False
         is_exist_wait = False
         is_exist_bring = False
+
+
+        samepeople_judge =False
         
         hide_judge = False
 
@@ -123,6 +127,7 @@ class YoloxObjectDetectionLogic:
             height = ymax - y
             width = xmax - x
             class_id = bbox.class_id
+            
             
             # if (probability < 0.48) or (class_id in ['person','chair','laptop','tv','microwave','refrigerator','potted plant','cup','keyboard','couch','mouse']):
             if is_unknown_object(class_id, probability):
@@ -154,7 +159,7 @@ class YoloxObjectDetectionLogic:
                     bbox_people_list.append(bounding_box)
 
 
-        # if bring_in_list:
+        #if bring_in_list:
             del_idx_list = []
             # 持ち込み確定リストと現フレームリストを全照合
             for i, bring_in_item in enumerate(bring_in_list):
@@ -166,64 +171,107 @@ class YoloxObjectDetectionLogic:
                         bring_in_item.fhist.append(True) # その持ち込みアイテムの検知履歴リストにTrueを追加
                         bbox_item.is_exist_bring = True # その現フレームアイテムの「持ち込み確定リストに存在する？」フラグをオン
                         break
+                    
+                    
+                    elif len(people.pose_key_points_list) == 0: #持ち込みアイテムと一致する現フレームアイテムがないとき
+                        bring_in_item.fhist.append(False)
 
                        
-                    else: #持ち込みアイテムと一致する現フレームアイテムがないとき
+
                         
-                        if len(people.pose_key_points_list) == 0:
+                    else:
+
+
+                        #人物に隠れていないかを確かめる
+                        for person in people.pose_key_points_list:
                             
-                            bring_in_item.fhist.append(False)
-                        
-                        else:
+                            #color_imgのサイズ
+                            img_height, img_width = color_img.shape[:2]
 
-
-                            #人物に隠れていないかを確かめる
-                            for person in people.pose_key_points_list:
+                            bounding_box = person.bounding_box
+                            left = np.clip(int(bounding_box.x), 0, img_width- 1)
+                            top = np.clip(int(bounding_box.y), 0, img_height - 1)
+                            right = np.clip(int(bounding_box.x + bounding_box.width), 0, img_width - 1)
+                            bottom = np.clip(int(bounding_box.y + bounding_box.height), 0, img_height - 1)
+                            part_count: int  = len(person.point_data)
+                            
+                            for part in range(part_count):
+                            # 対象の位置
+                                pixel_point = person.point_data[part].pixel_point
+                                x = np.clip(int(pixel_point.x), 0, img_width - 1)
+                                y = np.clip(int(pixel_point.y), 0, img_height - 1)
                                 
-                                #color_imgのサイズ
-                                img_height, img_width = color_img.shape[:2]
+                                POSE_PAIRS:List[List[int]] =  [ [1,0],[1,2],[1,5],[2,3],[3,4],[5,6],[6,7],[1,8],[8,9],[8,12],[9,10],[10,11],[11,22],[11,24],[12,13],[13,14],[14,19],[14,21],[15,0],[15,17],[16,0],[16,18],[19,20],[22,11],[22,23]]
+                                # Draw Skeleton
+                                for pair in POSE_PAIRS:
+                                    partA:int  = pair[0]
+                                    partB:int  = pair[1]
 
-                                bounding_box = person.bounding_box
-                                left = np.clip(int(bounding_box.x), 0, img_width- 1)
-                                top = np.clip(int(bounding_box.y), 0, img_height - 1)
-                                right = np.clip(int(bounding_box.x + bounding_box.width), 0, img_width - 1)
-                                bottom = np.clip(int(bounding_box.y + bounding_box.height), 0, img_height - 1)
-                                part_count: int  = len(person.point_data)
-                                
-                                for part in range(part_count):
-                                # 対象の位置
-                                    pixel_point = person.point_data[part].pixel_point
-                                    x = np.clip(int(pixel_point.x), 0, img_width - 1)
-                                    y = np.clip(int(pixel_point.y), 0, img_height - 1)
-                                    
-                                    POSE_PAIRS:List[List[int]] =  [ [1,0],[1,2],[1,5],[2,3],[3,4],[5,6],[6,7],[1,8],[8,9],[8,12],[9,10],[10,11],[11,22],[11,24],[12,13],[13,14],[14,19],[14,21],[15,0],[15,17],[16,0],[16,18],[19,20],[22,11],[22,23]]
-                                    # Draw Skeleton
-                                    for pair in POSE_PAIRS:
-                                        partA:int  = pair[0]
-                                        partB:int  = pair[1]
+                                    if person.point_data[partA].pixel_point.x > 0 and person.point_data[partA].pixel_point.y > 0 and  person.point_data[partB].pixel_point.x>0  and person.point_data[partB].pixel_point.x>0  :
+                                        segment: tuple[float, float, float, float] =[person.point_data[partA].pixel_point.x,person.point_data[partA].pixel_point.y,person.point_data[partB].pixel_point.x,person.point_data[partB].pixel_point.y]
+                                        bounding_box_src = bring_in_item._bounding_box
+                                        b_item_x, b_item_y, b_item_width, b_item_height = bounding_box_src.items
+                                        rectangle: tuple[float, float, float, float] = [b_item_x,b_item_y ,b_item_width,b_item_height]
 
-                                        if person.point_data[partA].pixel_point.x > 0 and person.point_data[partA].pixel_point.y > 0 and  person.point_data[partB].pixel_point.x>0  and person.point_data[partB].pixel_point.x>0  :
-                                            segment: tuple[float, float, float, float] =[person.point_data[partA].pixel_point.x,person.point_data[partA].pixel_point.y,person.point_data[partB].pixel_point.x,person.point_data[partB].pixel_point.y]
-                                            bounding_box_src = bring_in_item._bounding_box
-                                            b_item_x, b_item_y, b_item_width, b_item_height = bounding_box_src.items
-                                            rectangle: tuple[float, float, float, float] = [b_item_x,b_item_y ,b_item_width,b_item_height]
+                                        #骨格と持ち込み物体の重なり判定
+                                        if YoloxObjectDetectionLogic.chickhide(rectangle,segment):
 
-                                            #骨格と持ち込み物体の重なり判定
-                                            if YoloxObjectDetectionLogic.chickhide(rectangle,segment):
+                                            hide_judge = True
 
-                                                hide_judge = True
-                                                break
-                                            else:
 
-                                                hide_judge = False
+                                            break
+                                        else:
+
+                                            hide_judge = False
 
                             if not hide_judge:                         
                                 bring_in_item.fhist.append(False) # 持ち込み物体が持ち去られているなら検知履歴リストにFalseを追加
+                                
 
                     
                 if len(bring_in_item.fhist) >= FHIST_SIZE: # その持ち込みアイテムの検知履歴が十分に溜まっていたら
                     if judge_take_out_object(bring_in_item):
-                        print('take_out')
+                        for person in people.pose_key_points_list:
+                            
+                            #color_imgのサイズ
+                            img_height, img_width = color_img.shape[:2]
+
+                            bounding_box = person.bounding_box
+                            left = np.clip(int(bounding_box.x), 0, img_width- 1)
+                            top = np.clip(int(bounding_box.y), 0, img_height - 1)
+                            right = np.clip(int(bounding_box.x + bounding_box.width), 0, img_width - 1)
+                            bottom = np.clip(int(bounding_box.y + bounding_box.height), 0, img_height - 1)
+                            part_count: int  = len(person.point_data)
+                            
+                            for part in range(part_count):
+                            # 対象の位置
+                                pixel_point = person.point_data[part].pixel_point
+                                x = np.clip(int(pixel_point.x), 0, img_width - 1)
+                                y = np.clip(int(pixel_point.y), 0, img_height - 1)
+                                
+                                POSE_PAIRS:List[List[int]] =  [ [1,0],[1,2],[1,5],[2,3],[3,4],[5,6],[6,7],[1,8],[8,9],[8,12],[9,10],[10,11],[11,22],[11,24],[12,13],[13,14],[14,19],[14,21],[15,0],[15,17],[16,0],[16,18],[19,20],[22,11],[22,23]]
+                                # Draw Skeleton
+                                for pair in POSE_PAIRS:
+                                    partA:int  = pair[0]
+                                    partB:int  = pair[1]
+
+                                    if person.point_data[partA].pixel_point.x > 0 and person.point_data[partA].pixel_point.y > 0 and  person.point_data[partB].pixel_point.x>0  and person.point_data[partB].pixel_point.x>0  :
+                                        segment: tuple[float, float, float, float] =[person.point_data[partA].pixel_point.x,person.point_data[partA].pixel_point.y,person.point_data[partB].pixel_point.x,person.point_data[partB].pixel_point.y]
+                                        bounding_box_src = bring_in_item._bounding_box
+                                        b_item_x, b_item_y, b_item_width, b_item_height = bounding_box_src.items
+                                        rectangle: tuple[float, float, float, float] = [b_item_x,b_item_y ,b_item_width,b_item_height]
+
+                                        #骨格と持ち込み物体の重なり判定
+                                        if YoloxObjectDetectionLogic.chickhide(rectangle,segment):
+                                            take_out_people_id = person.people_id
+                                        else:
+                                            take_out_people_id = person.people_id
+
+
+
+
+                        take_out_obj_class_id = bring_in_item._class_id
+                        #print('take_out')
                         del_idx_list.append(i) # 持ち去りイベント発生(持ち込み確定リストから削除予約)
                         action = DetectedObjectActionEnum.TAKE_OUT
                         item = FrameObjectItem(
@@ -266,31 +314,65 @@ class YoloxObjectDetectionLogic:
                     wait_item.fhist.append(False) #最後までどれとも一致しなかったらその待機アイテムの検知履歴リストにFalseを追加
                     
                 if len(wait_item.fhist) >= FHIST_SIZE: # その待機アイテムの検知履歴が十分に溜まっていたら
+
+                    for person in people.pose_key_points_list:
+                        if person.people_id == take_out_people_id :
+                            samepeople_judge = True
+                            break
+
+
+
                     found_rate = sum(wait_item.fhist) / len(wait_item.fhist) # 検知率(検知履歴リスト中のTrueの存在率)を計算
                     if (found_rate < 0.2) or (found_rate > 0.7): # 検知率が20%未満 or 70%超過だったら
                         del_idx_list.append(i) # 幻だった or 持ち込みイベント発生(待機リストから削除予約)
                     if found_rate > 0.7: # 持ち込みイベント発生の場合
-                        action = DetectedObjectActionEnum.BRING_IN
-                        item = FrameObjectItem(
-                            action,
-                            wait_item._bounding_box, 
-                            wait_item._size, 
-                            wait_item._mask, 
-                            wait_item._found_at,
-                            wait_item._class_id
-                        )
-                        frame_object_item_list.append(item)
-                        bring_in_list.append(wait_item)
-                        for prev_item, frame_object in prev_frame_object_dict.items():
-                            is_matched, size = prev_item.is_match(item)
-                            if is_matched:
-                                if not union_find_tree.has_item(prev_item):
-                                    union_find_tree.add(prev_item)
-                                    frame_object_list.remove(frame_object)
-                                if not union_find_tree.has_item(item):
-                                    union_find_tree.add(item)
-                                    frame_object_item_list.remove(item)
-                                union_find_tree.unite(prev_item, item)
+
+                        if wait_item._class_id == take_out_obj_class_id and  samepeople_judge :
+                            action = DetectedObjectActionEnum.OBJ_MOVE
+                            item = FrameObjectItem(
+                                action,
+                                wait_item._bounding_box, 
+                                wait_item._size, 
+                                wait_item._mask, 
+                                wait_item._found_at,
+                                wait_item._class_id
+                            )
+                            frame_object_item_list.append(item)
+                            bring_in_list.append(wait_item)
+                            for prev_item, frame_object in prev_frame_object_dict.items():
+                                is_matched, size = prev_item.is_match(item)
+                                if is_matched:
+                                    if not union_find_tree.has_item(prev_item):
+                                        union_find_tree.add(prev_item)
+                                        frame_object_list.remove(frame_object)
+                                    if not union_find_tree.has_item(item):
+                                        union_find_tree.add(item)
+                                        frame_object_item_list.remove(item)
+                                    union_find_tree.unite(prev_item, item)
+                        
+                        else:
+
+                            action = DetectedObjectActionEnum.BRING_IN
+                            item = FrameObjectItem(
+                                action,
+                                wait_item._bounding_box, 
+                                wait_item._size, 
+                                wait_item._mask, 
+                                wait_item._found_at,
+                                wait_item._class_id
+                            )
+                            frame_object_item_list.append(item)
+                            bring_in_list.append(wait_item)
+                            for prev_item, frame_object in prev_frame_object_dict.items():
+                                is_matched, size = prev_item.is_match(item)
+                                if is_matched:
+                                    if not union_find_tree.has_item(prev_item):
+                                        union_find_tree.add(prev_item)
+                                        frame_object_list.remove(frame_object)
+                                    if not union_find_tree.has_item(item):
+                                        union_find_tree.add(item)
+                                        frame_object_item_list.remove(item)
+                                    union_find_tree.unite(prev_item, item)
                     wait_item.fhist = wait_item.fhist[-(FHIST_SIZE-1):] # その待機アイテムの検知履歴リストを最新分のみ確保して更新
             # 持ち込まれた or 幻だったアイテムを待機リストから削除
             if del_idx_list:
@@ -326,7 +408,7 @@ class YoloxObjectDetectionLogic:
             frame_object = FrameObject(frame_object_item, judge_params.allow_empty_frame_count)
             result[str(frame_object_item.detected_at)].append(frame_object)
             
-        return result,bring_in_list,wait_item_list,bbox_people_list,bbox_testobject_list
+        return result,bring_in_list,wait_item_list,bbox_people_list,take_out_people_id,take_out_obj_class_id
     
     @staticmethod
     def update_item(left: FrameObjectItem, right: FrameObjectItem, mask_img: np.ndarray) -> Tuple[FrameObjectItem, np.ndarray]:

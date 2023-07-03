@@ -73,7 +73,7 @@ class ContactDetectionLogic:
         for object_item in object_cube_list:
             tracked_object_info, object_cube = object_item
             result = False
-            is_bring_in_or_take_out = tracked_object_info.action == TrackedObjectActionEnum.BRING_IN.value or tracked_object_info.action == TrackedObjectActionEnum.TAKE_OUT.value
+            is_bring_in_or_take_out = tracked_object_info.action == TrackedObjectActionEnum.BRING_IN.value or tracked_object_info.action == TrackedObjectActionEnum.TAKE_OUT.value or tracked_object_info.action == TrackedObjectActionEnum.OBJ_MOVE.value
             for hand in hand_cube_list:
                 _, hand_cube, _ = hand
                 result, volume = object_cube.is_collided(hand_cube)

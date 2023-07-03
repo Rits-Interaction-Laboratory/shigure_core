@@ -8,6 +8,7 @@ import message_filters
 from typing import List
 import numpy as np
 import rclpy
+import string
 from rcl_interfaces.msg import ParameterDescriptor, ParameterType
 from rclpy.qos import QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import Image, CompressedImage, CameraInfo
@@ -79,6 +80,9 @@ class YoloxObjectDetectionNode(ImagePreviewNode):
 		self._color_img_buffer: List[np.ndarray] = []
 		self._color_img_frames = ColorImageFrames()
 		self._buffer_size = 90
+
+		self.take_out_obj_class_id  = string
+		self.take_out_people_id = string
 		
 		self._judge_params = JudgeParams(200, 5000, 5)
 		#self._count = 0
@@ -111,14 +115,15 @@ class YoloxObjectDetectionNode(ImagePreviewNode):
 		frame = ColorImageFrame(timestamp, self._color_img_buffer[0], color_img) #bufferの先頭の画像と新しい画像
 		self._color_img_frames.add(frame) #ColorImageFrameslistの更新して、listに追加
 
-		frame_object_dict,bring_in_list,wait_item_list,people_item_list,test_item_list = self.yolox_object_detection_logic.execute(yolox_bbox_src, timestamp,people,color_img,self.frame_object_list,self._judge_params,self.bring_in_list,self.wait_item_list)
+		frame_object_dict,bring_in_list,wait_item_list,people_item_list,take_out_people_id,take_out_obj_class_id = self.yolox_object_detection_logic.execute(yolox_bbox_src, timestamp,people,color_img,self.frame_object_list,self._judge_params,self.take_out_people_id ,self.take_out_obj_class_id ,self.bring_in_list,self.wait_item_list)
 		
 		#if self._count == 0:
 			#self.start_item_list = start_item_list
 		self.bring_in_list = bring_in_list
 		self.wait_item_list = wait_item_list
 		self.people_item_list = people_item_list
-		self.test_item_list = test_item_list		
+		self.take_out_people_id = take_out_people_id
+		self.take_out_obj_class_id = take_out_obj_class_id		
 		#count = 1
 		#self._count = count
 		self.frame_object_list = list(chain.from_iterable(frame_object_dict.values())) #frame_object_dictをすべて取り出し
@@ -150,7 +155,7 @@ class YoloxObjectDetectionNode(ImagePreviewNode):
 			detected_object_list = self.create_msg(self.frame_object_list, detected_object_list, frame)
 		
 		self.detection_publisher.publish(detected_object_list)
-		
+
 		if self.is_debug_mode:
 			img_height, img_width = color_img.shape[:2]
 
@@ -292,18 +297,22 @@ class YoloxObjectDetectionNode(ImagePreviewNode):
 			self.frame_object_list.remove(frame_object)
 			
 			if self.is_debug_mode:
-				item_color_img = frame.new_image if action == DetectedObjectActionEnum.BRING_IN else frame.old_image
-				print('イベントが検出されました(',
-					f'action: {action.value}, x: {x}, y: {y}, width: {width}, height: {height}, size: {size},class_id:{class_id})')
-				icon = np.zeros((height + 10, width, 3), dtype=np.uint8)
-				icon[0:height, 0:width, :] = item_color_img[y:y + height, x:x + width, :]
-				
-				img_height, img_width = item_color_img.shape[:2]
-				icon = cv2.resize(icon.copy(), (img_width // 2, img_height // 2))
-				cv2.putText(icon, f'Action : {action.value}', (0, img_height // 2 - 5), cv2.FONT_HERSHEY_PLAIN, 1.5,(255, 255, 255), thickness=2)
-				
-				self.object_list[self.object_index] = icon
-				self.object_index = (self.object_index + 1) % 4
+				try:
+					item_color_img = frame.new_image if action == DetectedObjectActionEnum.BRING_IN else frame.old_image
+					print('イベントが検出されました(',
+						f'action: {action.value}, x: {x}, y: {y}, width: {width}, height: {height}, size: {size},class_id:{class_id})')
+					icon = np.zeros((height + 10, width, 3), dtype=np.uint8)
+					icon[0:height, 0:width, :] = item_color_img[y:y + height, x:x + width, :]
+					
+					img_height, img_width = item_color_img.shape[:2]
+					icon = cv2.resize(icon.copy(), (img_width // 2, img_height // 2))
+					cv2.putText(icon, f'Action : {action.value}', (0, img_height // 2 - 5), cv2.FONT_HERSHEY_PLAIN, 1.5,(255, 255, 255), thickness=2)
+					
+					self.object_list[self.object_index] = icon
+					self.object_index = (self.object_index + 1) % 4
+				except Exception as e: 
+					print(e)
+
 				
 				#for bbox in frame_object_list:
 					#color = random.choice(self._colors)

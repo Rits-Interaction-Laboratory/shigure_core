@@ -86,7 +86,7 @@ class ContactDetectionNode(ImagePreviewNode):
         result_list, self.is_not_touch = self.contact_detection_logic.execute(object_list, people)
 
         publish_msg = ContactedList()
-        publish_msg.header.stamp = people.header.stamp
+        publish_msg.header.stamp = color_img_src.header.stamp
         publish_msg.header.frame_id = camera_info.header.frame_id
         for hand, object_item in result_list:
             person, _, _ = hand
@@ -178,7 +178,7 @@ class ContactDetectionNode(ImagePreviewNode):
                 cv2.putText(color_img, f'ID : {re.sub(".*_", "", tracked_object.object_id)}', (left, top),
                             cv2.FONT_HERSHEY_PLAIN, 1.5, (0, 128, 255), thickness=2)
 
-                if tracked_object.action == "bring_in" or tracked_object.action == "take_out":
+                if tracked_object.action == "bring_in" or tracked_object.action == "take_out" or tracked_object.action == "obj_move":
                     cv2.rectangle(event_frame, (left, top), (right, bottom), (0, 128, 255), thickness=3)
                     cv2.putText(event_frame, f'ID : {re.sub(".*_", "", tracked_object.object_id)}', (left, top),
                                 cv2.FONT_HERSHEY_PLAIN, 1.5, (0, 128, 255), thickness=2)
@@ -226,10 +226,13 @@ class ContactDetectionNode(ImagePreviewNode):
             if self.is_not_touch:
                 print("is_not_touch", self.is_not_touch)
                 # cv2.imshow(f'{people.header.stamp.sec}.{people.header.stamp.nanosec}', color_img)
-                self.action_list[self.action_index] = cv2.resize(event_frame, (width // 2, height // 2))
+                self.action_list.insert(0,cv2.resize(event_frame, (width // 2, height // 2)))
                 self.event_frame_list = deepcopy(self.action_list)
-                self.event_frame_list[self.action_index] = self.draw_outer_frame_line(self.event_frame_list[self.action_index], band_width=10, color= [255, 0, 255])
-                self.action_index = (self.action_index + 1) % 4
+                self.event_frame_list[0] = self.draw_outer_frame_line(self.event_frame_list[0], band_width=10, color= [255, 0, 255])
+                if len(self.event_frame_list) > 4:
+                    del self.event_frame_list[-1]
+
+               # self.action_index = (self.action_index + 1) % 4
             tile_img = cv2.hconcat([
                 color_img,
                 cv2.vconcat([
@@ -250,6 +253,8 @@ class ContactDetectionNode(ImagePreviewNode):
             return 128, 255, 255
         if action == ContactActionEnum.TOUCH:
             return 255, 128, 128
+        if action == ContactActionEnum.OBJ_MOVE:
+            return 125, 255, 255
         return 255, 128, 255
 
 

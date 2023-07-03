@@ -18,6 +18,13 @@ class TrackingInfo:
     def _get_object_id(self, object_num: int) -> str:
         """物体idを取得します."""
         return f'{self._id_prefix}{object_num}'
+        
+        
+    def old_object_id(self) -> str:
+        """持ち去り物体idを取得します."""
+        self._object_num = self._object_num
+        return self._get_object_id(self._object_num)
+
 
     @property
     def object_dict(self) -> dict:

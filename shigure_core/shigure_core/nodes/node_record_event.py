@@ -3,6 +3,8 @@ import os
 import threading
 from multiprocessing import Process
 from typing import List
+import time
+import gc
 
 import cv2
 import message_filters
@@ -99,13 +101,14 @@ class SubtractionAnalysisNode(ImagePreviewNode):
             [contacted_subscriber, depth_subscriber, depth_camera_info_subscriber, color_subscriber, pose_id_subscriber], 3000)
         self.time_synchronizer.registerCallback(self.callback)
 
-        self._color_img_buffer = []
-        self._depth_img_buffer = []
+
 
         self._scene_list: List[Scene] = []
 
     def callback(self, contacted_list: ContactedList, depth_src: CompressedImage, camera_info: CameraInfo,
                  color_src: CompressedImage, current_pose_id: HeaderString):
+        color_img_buffer = []
+        depth_img_buffer = []
         try:
             self.get_logger().info('Buffering start', once=True)
 
@@ -114,11 +117,13 @@ class SubtractionAnalysisNode(ImagePreviewNode):
 
             color_img: np.ndarray = self.bridge.compressed_imgmsg_to_cv2(color_src)
             depth_img: np.ndarray = compressed_depth_util.convert_compressed_depth_img_to_cv2(depth_src)
+            
+            
 
             contacted: Contacted
             for contacted in contacted_list.contacted_list:
-                # 接触は弾く
-                if ContactActionEnum.value_of(contacted.action) == ContactActionEnum.TOUCH:
+                # 接触と移動は弾く
+                if ContactActionEnum.value_of(contacted.action) == ContactActionEnum.TOUCH or ContactActionEnum.value_of(contacted.action) ==  ContactActionEnum.OBJ_MOVE:
                     continue
 
                 people_bounding_box = self.convert_bounding_box(contacted.people_bounding_box)
@@ -126,7 +131,7 @@ class SubtractionAnalysisNode(ImagePreviewNode):
                 event = Event(contacted.event_id, contacted.people_id, contacted.object_id, contacted.action, people_bounding_box,
                               object_bounding_box)
                 scene = Scene(self.frame_num, camera_info.k.reshape((3, 3)), event,
-                              self._color_img_buffer[-self.frame_num:], self._depth_img_buffer[-self.frame_num:])
+                              color_img_buffer[-self.frame_num:], depth_img_buffer[-self.frame_num:])
                 self._scene_list.append(scene)
 
                 # json形式でcamera_infoを出力
@@ -178,8 +183,13 @@ class SubtractionAnalysisNode(ImagePreviewNode):
 
             self._scene_list = new_scene_list
 
-            self._color_img_buffer.append(color_img)
-            self._depth_img_buffer.append(depth_img)
+            color_img_buffer.append(color_img)
+            depth_img_buffer.append(depth_img)
+            
+            del color_img_buffer
+            del depth_img_buffer
+            
+            gc.collect()
 
             print(f'[{datetime.datetime.now()}] fps : {self.fps}', end='\r')
 
@@ -230,7 +240,14 @@ class SubtractionAnalysisNode(ImagePreviewNode):
         cv2.imwrite(file_path, color_img_for_icon[bb.y:bb.y + bb.height, bb.x:bb.x + bb.width])
         file_path = os.path.join(icon_save_path, 'object_icon.png')
         bb = scene.event.object_bounding_box
-        cv2.imwrite(file_path, color_img_for_icon[bb.y:bb.y + bb.height, bb.x:bb.x + bb.width])
+
+        # 物体アイコン画像が小さすぎて認識できない場合があるので, extend_image_sizeピクセル分左右上下に拡張
+        im_height, im_width, _ = color_img_for_icon.shape
+        extend_image_size = 10
+        if 0< bb.y - extend_image_size and bb.y + bb.height + extend_image_size < im_height and 0 < bb.x - extend_image_size and bb.x + bb.width + extend_image_size < im_width:  
+            cv2.imwrite(file_path, color_img_for_icon[bb.y - extend_image_size:bb.y + bb.height + extend_image_size, bb.x - extend_image_size:bb.x + bb.width + extend_image_size])
+        else:
+            cv2.imwrite(file_path, color_img_for_icon[bb.y:bb.y + bb.height, bb.x:bb.x + bb.width])
 
         print('保存終了')
 

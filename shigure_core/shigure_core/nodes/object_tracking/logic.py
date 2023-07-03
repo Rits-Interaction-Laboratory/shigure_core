@@ -16,6 +16,7 @@ class ObjectTrackingLogic:
     def execute(depth_img: np.ndarray, detected_object_list: DetectedObjectList,
                 tracking_info: TrackingInfo) -> TrackingInfo:
         bring_in_list = []
+        obj_move_list = []
         take_out_list = []
 
         detected_object: DetectedObject
@@ -23,17 +24,25 @@ class ObjectTrackingLogic:
             action = DetectedObjectActionEnum.value_of(detected_object.action)
             bounding_box = ObjectTrackingLogic.convert_to_bounding_box(detected_object, depth_img.shape[:2])
 
-            if action == DetectedObjectActionEnum.BRING_IN:
+            if action == DetectedObjectActionEnum.BRING_IN :
                 bring_in_list.append((detected_object, bounding_box))
-            else:
+
+            elif action == DetectedObjectActionEnum.OBJ_MOVE:
+                obj_move_list.append((detected_object, bounding_box))
+
+            else:    
                 take_out_list.append((detected_object, bounding_box))
 
-        return ObjectTrackingLogic.tracking(bring_in_list, take_out_list, tracking_info)
+        return ObjectTrackingLogic.tracking(bring_in_list, obj_move_list, take_out_list, tracking_info)
 
     @staticmethod
-    def tracking(bring_in_list: list, take_out_list: list, tracking_info: TrackingInfo) -> TrackingInfo:
+    def tracking(bring_in_list: list,obj_move_list: list, take_out_list: list, tracking_info: TrackingInfo) -> TrackingInfo:
         previous_object_dict = tracking_info.object_dict
         current_object_dict = {}
+        buffer_obj_id = str
+
+
+        
 
         linked_list: List[Tuple[str, Tuple[DetectedObject, BoundingBox], Tuple[DetectedObject, BoundingBox], int]] = []
         for object_id, prev_item in list(previous_object_dict.items()):
@@ -42,6 +51,7 @@ class ObjectTrackingLogic:
             # 持ち出しは無視
             action = DetectedObjectActionEnum.value_of(prev_object.action)
             if action == DetectedObjectActionEnum.TAKE_OUT:
+                buffer_obj_id = object_id
                 del previous_object_dict[object_id]
                 continue
 
@@ -72,9 +82,14 @@ class ObjectTrackingLogic:
             item[0].action = "stay"
             current_object_dict[object_id] = item
 
+        
+        for obj_move_object in obj_move_list:
+            current_object_dict[tracking_info.old_object_id()] = obj_move_object
+
         # 持ち込みは新規登録
         for bring_in_object in bring_in_list:
             current_object_dict[tracking_info.new_object_id()] = bring_in_object
+
 
         tracking_info.object_dict = current_object_dict
 
