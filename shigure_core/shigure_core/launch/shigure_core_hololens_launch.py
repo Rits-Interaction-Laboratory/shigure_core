@@ -56,4 +56,20 @@ def generate_launch_description():
                 {"is_debug_mode": True},
             ],
         ),
-    ])
+        Node(
+            package="shigure_core",
+            executable="pose_save",
+            prefix="gnome-terminal --tab -t 'pose_save' --",     
+        ),
+        Node(
+            package="shigure_core",
+            executable="record_event",
+            prefix="gnome-terminal --tab -t 'record_event' --",
+            parameters=[
+                {"save_root_path":'/home/azuma/ros2_ws/src/shigure_core/events'},
+                {"frame_num": 120},
+                {"camera_id": 1},
+                {"is_recording_depth_info": False},
+            ],
+        )
+            ])

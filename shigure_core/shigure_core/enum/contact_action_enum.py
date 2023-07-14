@@ -6,6 +6,7 @@ from shigure_core.enum.tracked_object_action_enum import TrackedObjectActionEnum
 class ContactActionEnum(Enum):
     TAKE_OUT = 'take_out'  # 持ち出し
     BRING_IN = 'bring_in'  # 持ち込み
+    OBJ_MOVE = 'obj_move'  #　移動
     TOUCH = 'touch'
 
     @classmethod
@@ -22,6 +23,7 @@ class ContactActionEnum(Enum):
             return cls.TOUCH
         if value == TrackedObjectActionEnum.TAKE_OUT:
             return cls.TAKE_OUT
-
+        if value == TrackedObjectActionEnum.OBJ_MOVE:
+            return cls.OBJ_MOVE
         # TODO: error処理
         return cls.BRING_IN

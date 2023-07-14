@@ -31,7 +31,7 @@ class YoloxObjectDetectionLogic:
         :return: 検出したObjectリスト, 更新された既知マスク
         """
     
-        def is_unknown_object(class_id: str, probability: float, object_threshold=0.48) -> bool:
+        def is_unknown_object(class_id: str, probability: float, object_threshold=0.70) -> bool:
             """物体と思われるものの規定の物体でないものかどうか調べる関数
             Args:
                 class_id (str): 物体のクラス名
@@ -40,7 +40,8 @@ class YoloxObjectDetectionLogic:
             Returns:
                 bool: 物体と思われるものの規定の物体でないものかどうか
             """
-            DEFAULT_OBJECTS = ['person','dog','cat','chair','laptop','tv','microwave','refrigerator','potted plant','cup','keyboard','couch','mouse','sink','book','dining table','skateboard']
+            #DEFAULT_OBJECTS = []
+            DEFAULT_OBJECTS = ['person','dog','cat','chair','laptop','tv','microwave','refrigerator','potted plant','cup','keyboard','couch','mouse','sink','dining table','skateboard']
             is_object: bool = probability > object_threshold
             is_default_object = class_id in DEFAULT_OBJECTS
             return is_object and not(is_default_object)
@@ -54,7 +55,7 @@ class YoloxObjectDetectionLogic:
             Returns:
                 bool: 物体が人物であるかどうか
             """
-            PEOPLE_OBJECTS = ['person']
+            PEOPLE_OBJECTS = ['person','dog','cat','chair','laptop','tv','microwave','refrigerator','potted plant','cup','keyboard','couch','mouse','sink','dining table','skateboard']
             is_object: bool = probability > object_threshold
             is_people_object = class_id in PEOPLE_OBJECTS 
             return is_object and (is_people_object)
@@ -264,6 +265,7 @@ class YoloxObjectDetectionLogic:
                                         #骨格と持ち込み物体の重なり判定
                                         if YoloxObjectDetectionLogic.chickhide(rectangle,segment):
                                             take_out_people_id = person.people_id
+                                            break
                                         else:
                                             take_out_people_id = person.people_id
 
