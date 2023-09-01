@@ -6,29 +6,10 @@ def generate_launch_description():
     return LaunchDescription([
         Node(
             package="shigure_core",
-            executable="bg_subtraction",
-            prefix="gnome-terminal --tab -t 'bg_subtraction' --",
+            executable="yolox_object_detection",
+            prefix="gnome-terminal --tab -t 'yolox_object_detection' --",
             parameters=[
-                {"is_debug_mode": False},
-                {"input_round":1500},
-                {"avg_round":1500},
-                {"sd_round":500},
-            ],
-        ),
-        Node(
-            package="shigure_core",
-            executable="subtraction_analysis",
-            prefix="gnome-terminal --tab -t 'subtraction_analysis' --",
-            parameters=[
-                {"is_debug_mode": False},
-            ],
-        ),
-        Node(
-            package="shigure_core",
-            executable="object_detection",
-            prefix="gnome-terminal --tab -t 'object_detection' --",
-            parameters=[
-                {"is_debug_mode": False},
+                {"is_debug_mode": True},
             ],
         ),
         Node(
@@ -44,7 +25,7 @@ def generate_launch_description():
             executable="people_tracking",
             prefix="gnome-terminal --tab -t 'people_tracking' --",
             parameters=[
-                {"is_debug_mode": True},
+                {"is_debug_mode": False},
                 {"focal_length":1.0},
             ],
         ),
