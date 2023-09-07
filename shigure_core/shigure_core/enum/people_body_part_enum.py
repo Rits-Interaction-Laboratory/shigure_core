@@ -35,7 +35,7 @@ class PeopleBodyPartEnum(Enum):
     RIGHT_BIG_TOE = "right_big_toe"
     RIGHT_SMALL_TOE = "right_small_toe"
     RIGHT_HEEL = "right_heel"
-
+    
     LEFT_WRIST_P = "left_wrist_p"
 
     LEFT_THUMB_CMC = "left_thumb_cmc"

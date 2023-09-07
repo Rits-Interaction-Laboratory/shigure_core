@@ -1,5 +1,6 @@
 import random
 import re
+import time
 
 import cv2
 import message_filters
@@ -27,7 +28,7 @@ class PeopleTrackingNode(ImagePreviewNode):
         # publisher, subscriber
         self._publisher = self.create_publisher(
             ShigurePoseKeyPointsList, 
-            '/shigure/people_detection', 
+            '/shigure/people_detections', 
             10
         )
         depth_subscriber = message_filters.Subscriber(
@@ -84,6 +85,10 @@ class PeopleTrackingNode(ImagePreviewNode):
         k = camera_info.k.reshape((3, 3))
 
         self.tracking_info = self.people_tracking_logic.execute(depth_img, key_points_list, self.tracking_info, k)
+        
+        depth_img2 = depth_img /20
+        depth_img2 = depth_img2.astype(np.uint8)
+        depth_img2 = cv2.applyColorMap(depth_img2, cv2.COLORMAP_JET)
 
         # publish
         publish_msg = ShigurePoseKeyPointsList()
@@ -91,11 +96,44 @@ class PeopleTrackingNode(ImagePreviewNode):
         publish_msg.header.frame_id = camera_info.header.frame_id
         for people_id, people in self.tracking_info.get_people_dict().items():
             _, _, _, openpose_pose_key_points = people
+            time_sta = time.time()
             shigure_pose_key_points = pose_key_points_util.convert_openpose_to_shigure(openpose_pose_key_points,
                                                                                        depth_img, people_id, k)
+            time_end = time.time()
+            #print("time" + str(time_end - time_sta))
             publish_msg.pose_key_points_list.append(shigure_pose_key_points)
+            i = 0
+            for pose_key_point in openpose_pose_key_points.pose_key_points:
+                #if any([i == 0, i == 8, i == 15, i == 19, i == 22, i == 25, i == 46]):
+                x = int(pose_key_point.x)
+                y = int(pose_key_point.y)
+                score = pose_key_point.score
+                if (i < 67):
+                    if (score < 1.20):
+                        #color (b,g,r)
+                        cv2.rectangle(depth_img2, (x-4,y-4), (x+4,y+4), (0,0,0), 1)
+                    elif (score < 0.40):
+                        cv2.rectangle(depth_img2, (x-4,y-4), (x+4,y+4), (0,255,255), 3)
+                    elif (score < 0.60):
+                        cv2.rectangle(depth_img2, (x-4,y-4), (x+4,y+4), (0,255,0), 3)
+                    elif (score < 0.80):
+                        cv2.rectangle(depth_img2, (x-4,y-4), (x+4,y+4), (255,255,0), 3)
+                    else:
+                        cv2.rectangle(depth_img2, (x-4,y-4), (x+4,y+4), (255,0,0), 3) 
+                i = i + 1
         self._publisher.publish(publish_msg)
-
+        
+        #cv2.rectangle(depth_img, (10,575), (20,625), (0,255,0), 2)
+        #print(str(depth_img[300,500]) + "depth300,500")
+        #print(str(depth_img[400,550]) + "depth400,550")
+        #print(str(depth_img[500,600]) + "depth500,600")
+        #depth_img = depth_img /30
+        #depth_img = depth_img.astype(np.uint8)
+        #depth_img = cv2.bitwise_not(depth_img)
+        #print(str(np.min(depth_img)))
+        cv2.imshow('depth_img', depth_img2)
+        cv2.waitKey(1)
+        
         return publish_msg
 
     def callback_debug(self, depth_src: CompressedImage, key_points_list: OpenPosePoseKeyPointsList,
@@ -136,7 +174,6 @@ class PeopleTrackingNode(ImagePreviewNode):
         cv2.namedWindow('people_tracking', cv2.WINDOW_NORMAL)
         cv2.imshow('people_tracking', color_img)
         cv2.waitKey(1)
-
 
 def main(args=None):
     rclpy.init(args=args)
