@@ -5,6 +5,16 @@ ROS2による室内シーン変遷ロギングシステム
 
 Wiki : https://github.com/Rits-Interaction-Laboratory/shigure_core/wiki
 
+## Description
+
+Shigureではカメラの色情報や深度情報をもとに、監視している範囲のイベントを検知し記録できます。
+Shigureに関する詳細な情報は以下を参照してください。
+
+- [概要](/docs/overview.md)
+- [環境](/docs/environment.md)
+- [システム構成](/docs/system-structure.md)
+- [コード構成](/docs/code-structure.md)
+
 ## Requires
 * ROS2 Foxy [公式インストール方法](https://index.ros.org/doc/ros2/Installation/Foxy/)
 * Intel® RealSense™ D435
