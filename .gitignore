@@ -2,7 +2,6 @@
 events/*
 
 shigure_core/resource/db/Dockerfile.sample
-shigure_core/resource/db/Dockerfile_db
 shigure_core/resource/db/Dockerfile_migration
 shigure_core/shigure_core/nodes/past_record_script/
 shigure_core/shigure_core/nodes/yolox_object_detection/logic.py_sample

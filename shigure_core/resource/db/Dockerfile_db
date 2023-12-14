@@ -1,0 +1,12 @@
+FROM mysql:8
+
+EXPOSE 3306
+
+ENV MYSQL_ROOT_PASSWORD=shigure
+ENV MYSQL_DATABASE=shigure
+ENV MYSQL_USER=shigure
+ENV MYSQL_PASSWORD=shigure
+
+VOLUME ["./mysql_data:/var/lib/mysql"]
+COPY ./migration/* /docker-entrypoint-initdb.d/
+
