@@ -97,7 +97,7 @@ class ObjectTrackingNode(ImagePreviewNode):
             stay_object, bounding_box = item
 
             tracked_object = TrackedObject()
-            tracked_object.object_id = object_id
+            tracked_object.object_id = stay_object.object_id
             tracked_object.action = stay_object.action
             tracked_object.bounding_box = stay_object.bounding_box
 

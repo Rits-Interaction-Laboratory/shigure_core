@@ -77,6 +77,8 @@ class ContactDetectionNode(ImagePreviewNode):
         self.is_not_touch = False
         self.action_index = 0
         self._id_manager = IdManager()
+        self.count = 0
+        self.frame_list = []
 
     def callback(self, object_list: TrackedObjectList, people: PoseKeyPointsList, color_img_src: CompressedImage, camera_info: CameraInfo):
         self.frame_count_up()
@@ -125,14 +127,26 @@ class ContactDetectionNode(ImagePreviewNode):
             height, width = color_img.shape[:2]
 
             event_frame = deepcopy(color_img)
+            
+            self.frame_list.append(deepcopy(color_img))
+            
+            if len(self.frame_list)> 10:
+                self.frame_list.pop(0)
+
+                
+
+            
 
             if not hasattr(self, 'action_list'):
                 self.action_list = []
                 self.event_frame_list = []
                 black_img = np.zeros_like(color_img)
+                
+                
                 for i in range(4):
                     self.action_list.append(cv2.resize(black_img.copy(), (width // 2, height // 2)))
                     self.event_frame_list.append(cv2.resize(black_img.copy(), (width // 2, height // 2)))
+                    
 
             # すべての人物領域を書く
             for person in people.pose_key_points_list:
@@ -192,9 +206,10 @@ class ContactDetectionNode(ImagePreviewNode):
                     right_expansion = right + expansion_param
                     bottom_expansion = bottom + expansion_param
                     if (0 <= left_expansion) and (right_expansion <= width) and (0 <= top_expansion) and (bottom_expansion <= height):
-                        object_image = event_frame[top_expansion : bottom_expansion, left_expansion : right_expansion]
+                        past_frame = self.frame_list[0]
+                        object_image = past_frame[top_expansion : bottom_expansion, left_expansion : right_expansion]
                     else:
-                        object_image = event_frame[top : bottom, left : right]
+                        object_image = past_frame[top : bottom, left : right]
                     event_frame = self.overlay_image(overlapping_img=object_image, underlying_img=event_frame, shift=(0, 0), resize_scale=(3, 3), is_frame_line=True)
 
             for hand, object_item in result_list:

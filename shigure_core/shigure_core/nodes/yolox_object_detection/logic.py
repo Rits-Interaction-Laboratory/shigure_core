@@ -31,7 +31,7 @@ class YoloxObjectDetectionLogic:
         :return: 検出したObjectリスト, 更新された既知マスク
         """
     
-        def is_unknown_object(class_id: str, probability: float, object_threshold=0.70) -> bool:
+        def is_unknown_object(class_id: str, probability: float, object_threshold=0.30) -> bool:
             """物体と思われるものの規定の物体でないものかどうか調べる関数
             Args:
                 class_id (str): 物体のクラス名
@@ -41,7 +41,7 @@ class YoloxObjectDetectionLogic:
                 bool: 物体と思われるものの規定の物体でないものかどうか
             """
             #DEFAULT_OBJECTS = []
-            DEFAULT_OBJECTS = ['person','dog','cat','chair','laptop','tv','microwave','refrigerator','potted plant','cup','keyboard','couch','mouse','sink','dining table','skateboard']
+            DEFAULT_OBJECTS = ['dog','cat','chair','laptop','tv','microwave','refrigerator','potted plant','cup','keyboard','couch','book','mouse','sink','dining table','skateboard','bottle','cell phone']
             is_object: bool = probability > object_threshold
             is_default_object = class_id in DEFAULT_OBJECTS
             return is_object and not(is_default_object)
@@ -60,7 +60,7 @@ class YoloxObjectDetectionLogic:
             is_people_object = class_id in PEOPLE_OBJECTS 
             return is_object and (is_people_object)
 
-        def judge_take_out_object(bring_in_item, threshold=0.2) -> bool:
+        def judge_take_out_object(bring_in_item, threshold=0.15) -> bool:
             """持ち去り判定を行う関数
             Args:
                 bring_in_item (): 持ち去るかどうか決める対象のアイテム
@@ -68,6 +68,11 @@ class YoloxObjectDetectionLogic:
             """
             # 検知率(履歴リスト中のTrueの存在率)を計算
             found_rate = sum(bring_in_item.fhist) / len(bring_in_item.fhist)
+
+            #print(found_rate)
+            # if found_rate < threshold:
+            #     print('af')
+            #     print(found_rate)
 
             # 検知率が15%未満だったら
             return found_rate < threshold
@@ -83,7 +88,9 @@ class YoloxObjectDetectionLogic:
                         bring_in_item._size,
                         bring_in_item._mask, 
                         bring_in_item._found_at,
-                        bring_in_item._class_id
+                        bring_in_item._class_id,
+                        bring_in_item._object_id
+
                     )
         
         # ラベリング処理
@@ -128,6 +135,7 @@ class YoloxObjectDetectionLogic:
             height = ymax - y
             width = xmax - x
             class_id = bbox.class_id
+            object_id = ""
             
             
             # if (probability < 0.48) or (class_id in ['person','chair','laptop','tv','microwave','refrigerator','potted plant','cup','keyboard','couch','mouse']):
@@ -139,7 +147,7 @@ class YoloxObjectDetectionLogic:
                 bounding_box = BoundingBox(x, y, width, height) # BBOX(左上端座標, 幅, 高さ)
                 area = width*height # BBOXの面積
                 
-                bbox_item = BboxObject(bounding_box, area, mask_img, started_at,class_id)
+                bbox_item = BboxObject(bounding_box, area, mask_img, started_at,class_id,object_id)
                 bbox_item_list.append(bbox_item)
 
                 test_item = [x,y,xmax,ymax]
@@ -160,7 +168,7 @@ class YoloxObjectDetectionLogic:
                     bbox_people_list.append(bounding_box)
 
 
-        #if bring_in_list:
+        if bring_in_list:
             del_idx_list = []
             # 持ち込み確定リストと現フレームリストを全照合
             for i, bring_in_item in enumerate(bring_in_list):
@@ -232,6 +240,7 @@ class YoloxObjectDetectionLogic:
                     
                 if len(bring_in_item.fhist) >= FHIST_SIZE: # その持ち込みアイテムの検知履歴が十分に溜まっていたら
                     if judge_take_out_object(bring_in_item):
+
                         for person in people.pose_key_points_list:
                             
                             #color_imgのサイズ
@@ -282,7 +291,9 @@ class YoloxObjectDetectionLogic:
                             bring_in_item._size,
                             bring_in_item._mask, 
                             bring_in_item._found_at,
-                            bring_in_item._class_id
+                            bring_in_item._class_id,
+                            bring_in_item._object_id
+
                         )
                         frame_object_item_list.append(item)
                         for prev_item, frame_object in prev_frame_object_dict.items():
@@ -325,9 +336,9 @@ class YoloxObjectDetectionLogic:
 
 
                     found_rate = sum(wait_item.fhist) / len(wait_item.fhist) # 検知率(検知履歴リスト中のTrueの存在率)を計算
-                    if (found_rate < 0.2) or (found_rate > 0.7): # 検知率が20%未満 or 70%超過だったら
+                    if (found_rate < 0.1) or (found_rate > 0.5): # 検知率が20%未満 or 70%超過だったら
                         del_idx_list.append(i) # 幻だった or 持ち込みイベント発生(待機リストから削除予約)
-                    if found_rate > 0.7: # 持ち込みイベント発生の場合
+                    if found_rate > 0.5: # 持ち込みイベント発生の場合
 
                         if wait_item._class_id == take_out_obj_class_id and  samepeople_judge :
                             action = DetectedObjectActionEnum.OBJ_MOVE
@@ -337,7 +348,9 @@ class YoloxObjectDetectionLogic:
                                 wait_item._size, 
                                 wait_item._mask, 
                                 wait_item._found_at,
-                                wait_item._class_id
+                                wait_item._class_id,
+                                wait_item._object_id
+                                
                             )
                             frame_object_item_list.append(item)
                             bring_in_list.append(wait_item)
@@ -361,7 +374,8 @@ class YoloxObjectDetectionLogic:
                                 wait_item._size, 
                                 wait_item._mask, 
                                 wait_item._found_at,
-                                wait_item._class_id
+                                wait_item._class_id,
+                                wait_item._object_id
                             )
                             frame_object_item_list.append(item)
                             bring_in_list.append(wait_item)
@@ -429,12 +443,13 @@ class YoloxObjectDetectionLogic:
         # 持ち込み時は新しい方を選択
         new_detected_at = left.detected_at if left_is_before else right.detected_at
         new_class_id = left._class_id if left_is_before else right.detected_at
-        
-        return FrameObjectItem(action, new_bounding_box, size, mask_img[y:y + height, x:x + width],new_detected_at,new_class_id), mask_img
+        new_object_id = left._object_id if left_is_before else right.detected_at
+
+        return FrameObjectItem(action, new_bounding_box, size, mask_img[y:y + height, x:x + width],new_detected_at,new_class_id,new_object_id), mask_img
     
     @staticmethod
     def update_mask_image(mask_img: np.ndarray, item: FrameObjectItem) -> np.ndarray:
-        _, bounding_box, _, mask, _ ,_= item.items
+        _, bounding_box, _, mask, _ ,_,_= item.items
         x, y, width, height = bounding_box.items
         mask_img[y:y + height, x:x + width] = np.where(mask > 0, mask, mask_img[y:y + height, x:x + width])
         return mask_img

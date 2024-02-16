@@ -10,13 +10,14 @@ from shigure_core.nodes.common_model.bounding_box import BoundingBox
 class FrameObjectItem:
 
     def __init__(self, action: DetectedObjectActionEnum, bounding_box: BoundingBox, size: int,
-                 mask: np.ndarray, detected_at: Timestamp, class_id: str):
+                 mask: np.ndarray, detected_at: Timestamp, class_id: str,object_id: str):
         self._action = action
         self._bounding_box = bounding_box
         self._size = size
         self._mask = mask
         self._detected_at = detected_at
         self._class_id = class_id
+        self._object_id = object_id
 
     def is_match(self, other) -> Tuple[bool, int]:
         if self.action != other.action:
@@ -29,7 +30,8 @@ class FrameObjectItem:
 
     @property
     def items(self) -> Tuple[DetectedObjectActionEnum, BoundingBox, int, np.ndarray, Timestamp]:
-        return self._action, self._bounding_box, self._size, self._mask, self._detected_at,self._class_id
+        return self._action, self._bounding_box, self._size, self._mask, self._detected_at,self._class_id,self._object_id
+
 
     @property
     def action(self) -> DetectedObjectActionEnum:

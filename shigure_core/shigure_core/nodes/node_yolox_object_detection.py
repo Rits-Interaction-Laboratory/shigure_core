@@ -267,6 +267,7 @@ class YoloxObjectDetectionNode(ImagePreviewNode):
 
 				
 			tile_img = cv2.hconcat([yolox_img, result_img])
+			self.print_fps(tile_img)
 			cv2.namedWindow('yolox_object_detection', cv2.WINDOW_NORMAL)
 			cv2.imshow("yolox_object_detection", tile_img)
 			cv2.waitKey(1)
@@ -279,7 +280,7 @@ class YoloxObjectDetectionNode(ImagePreviewNode):
 				
 	def  create_msg(self, frame_object_list: List[FrameObject], detected_object_list: DetectedObjectList, frame: ColorImageFrame) -> DetectedObjectList:
 		for frame_object in frame_object_list:
-			action, bounding_box_src, size, mask_img, time, class_id= frame_object.item.items
+			action, bounding_box_src, size, mask_img, time, class_id, object_id = frame_object.item.items
 			x, y, width, height = bounding_box_src.items
 			
 			detected_object = DetectedObject()
@@ -292,7 +293,8 @@ class YoloxObjectDetectionNode(ImagePreviewNode):
 			bounding_box.width = float(width)
 			bounding_box.height = float(height)
 			detected_object.bounding_box = bounding_box
-			
+			detected_object.object_id = object_id
+
 			detected_object_list.object_list.append(detected_object)
 			
 			self.frame_object_list.remove(frame_object)
