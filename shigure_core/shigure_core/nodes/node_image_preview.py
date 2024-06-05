@@ -64,35 +64,27 @@ class ImagePreviewNode(Node):
         cv2.putText(img, 'FPS: {:.2f}'.format(self.fps),
                     (0, 40), cv2.FONT_HERSHEY_PLAIN, 1.5, (0, 255, 0))
 
-        return img
-    
+     
     def draw_outer_frame_line(self, src: np.ndarray, band_width=5, color=[255, 255, 255]):
         """
         外枠線を追加します.
-
         :param src: 基となる画像
         :param band_width: 枠線の太さ
         :param color: 色
         :return:
         """
-
         img = src
-
         height, width = img.shape[0], img.shape[1]
-
-
         # 1. bottom, 2. top, 3. left, 4. right line
         img[height - band_width:height, :, :] = color
         img[0: band_width, :, :] = color
         img[:, 0:band_width, :] = color
         img[:, width - band_width:width, :] = color
-
         return img
-    
+     
     def overlay_image(self, overlapping_img: np.ndarray, underlying_img: np.ndarray, shift, resize_scale, is_frame_line: bool=True):
         """
         2枚の画像を重ね合わせます.
-
         :param overlapping_img: 重ね合わせる画像
         :param underlying_img: 下地画像
         :param shift: 左上を原点としたときの移動量(x, y)
@@ -127,7 +119,7 @@ class ImagePreviewNode(Node):
         if underlying_width < underlying_x_max:
             overlapping_x_max = overlapping_x_max - (underlying_x_max - underlying_width)
             underlying_x_max = underlying_width
-        
+
         if underlying_y_min < 0:
             overlapping_y_min = overlapping_y_min - underlying_y_min
             underlying_y_min = 0
@@ -139,3 +131,8 @@ class ImagePreviewNode(Node):
         underlying_img[underlying_y_min:underlying_y_max, underlying_x_min:underlying_x_max] = overlapping_img[overlapping_y_min:overlapping_y_max, overlapping_x_min:overlapping_x_max]
 
         return underlying_img
+        
+        
+        
+        
+        

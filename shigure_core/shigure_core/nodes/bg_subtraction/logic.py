@@ -6,8 +6,8 @@ class BgSubtractionLogic:
     """背景差分取得ロジック."""
 
     @staticmethod
-    def execute(depth_frames: DepthFrames, current_frame: np.ndarray, depth_threshold: int = 100,
-                sd_threshold: int = 10) -> (bool, np.ndarray):
+    def execute(depth_frames: DepthFrames, current_frame: np.ndarray, depth_threshold: int = 25,
+                sd_threshold: int = 3) -> (bool, np.ndarray):
         """
         背景差分を取得します.
 

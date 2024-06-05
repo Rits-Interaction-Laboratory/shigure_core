@@ -50,7 +50,7 @@ class ObjectTrackingNode(ImagePreviewNode):
 
         if not self.is_debug_mode:
             self.time_synchronizer = message_filters.TimeSynchronizer(
-                [depth_subscriber, object_detection_subscriber, depth_camera_info_subscriber], 30000)
+                [depth_subscriber, object_detection_subscriber, depth_camera_info_subscriber], 1000)
             self.time_synchronizer.registerCallback(self.callback)
         else:
             color_subscriber = message_filters.Subscriber(

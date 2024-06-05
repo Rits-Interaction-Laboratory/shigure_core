@@ -6,6 +6,7 @@ from shigure_core_msgs.msg import PoseKeyPoints, PointData, TrackedObject, Point
 from shigure_core.enum.contact_action_enum import ContactActionEnum
 from shigure_core.enum.tracked_object_action_enum import TrackedObjectActionEnum
 from shigure_core.nodes.contact_detection.cube import Cube
+import pandas as pd
 
 
 class ContactDetectionLogic:
@@ -49,8 +50,20 @@ class ContactDetectionLogic:
             is_not_touch = action != ContactActionEnum.TOUCH
 
             collider: Cube = tracked_object.collider
-            x, y, z = int(collider.x), int(collider.y), int(collider.z)
-            width, height, depth = int(collider.width), int(collider.height), int(collider.depth)
+            
+            try:
+                x, y, z = int(collider.x), int(collider.y), int(collider.z)
+                width, height, depth = int(collider.width), int(collider.height), int(collider.depth)
+            
+            except Exception as e:
+                print(e)
+                
+                print({'x': collider.x, 'y': collider.y, 'z': collider.z, 'width': collider.width, 'height': collider.height,'depth': collider.depth})
+                
+                df = pd.DataFrame({'colliderx':[collider.x], 'collidery':[collider.y],'colliderz':[collider.z],'width':[collider.width],'height':[collider.height],'depth':[collider.depth]})
+                x, y, z = int(df['colliderx'].fillna(0)), int(df['collidery'].fillna(0)), int(df['colliderz'].fillna(0))
+                
+                width, height, depth = int(df['width'].fillna(0)), int(df['height'].fillna(0)), int(df['depth'].fillna(0))
 
             object_cube_list.append((tracked_object, Cube(x, y, z, width, height, depth)))
 
@@ -60,7 +73,7 @@ class ContactDetectionLogic:
         for object_item in object_cube_list:
             tracked_object_info, object_cube = object_item
             result = False
-            is_bring_in_or_take_out = tracked_object_info.action == TrackedObjectActionEnum.BRING_IN.value or tracked_object_info.action == TrackedObjectActionEnum.TAKE_OUT.value
+            is_bring_in_or_take_out = tracked_object_info.action == TrackedObjectActionEnum.BRING_IN.value or tracked_object_info.action == TrackedObjectActionEnum.TAKE_OUT.value or tracked_object_info.action == TrackedObjectActionEnum.OBJ_MOVE.value
             for hand in hand_cube_list:
                 _, hand_cube, _ = hand
                 result, volume = object_cube.is_collided(hand_cube)

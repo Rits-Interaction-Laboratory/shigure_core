@@ -1,0 +1,3 @@
+yolox_object_detection_node:
+  ros__parameters:
+    is_debug_mode: true
