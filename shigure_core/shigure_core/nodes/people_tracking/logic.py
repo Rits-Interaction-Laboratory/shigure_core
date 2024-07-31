@@ -13,16 +13,23 @@ class PeopleTrackingLogic:
 
     @staticmethod
     def execute(depth_img: np.ndarray, key_points_list: PoseKeyPointsList, tracking_info: TrackingInfo,
-                k: np.ndarray, threshold_distance: int = 1000) -> TrackingInfo:
+                k: np.ndarray, threshold_distance: int = 1000, threshold_person: float = 0.3) -> TrackingInfo:
         height, width = depth_img.shape[:2]
 
         current_people_list = []
 
         key_points: PoseKeyPoints
         for key_points in key_points_list.pose_key_points_list:
+            # 検出率スコアの平均を計算
+            average_score = PeopleTrackingLogic.calculate_average_score(key_points)
+            # 検出率が閾値より小さければtrackingをスキップ
+            if average_score < threshold_person:
+                continue
+
             # とりあえずNeckの座標で計算
             neck_point: PoseKeyPoint = key_points.pose_key_points[_NECK_INDEX]
 
+            # 首が検出されていなければtrackingをスキップ
             if neck_point.x == 0 and neck_point.y == 0:
                 continue
 
@@ -38,6 +45,12 @@ class PeopleTrackingLogic:
             current_people_list.append((m[0, 0], m[0, 1], depth, key_points))
 
         return PeopleTrackingLogic.tracking(current_people_list, tracking_info, threshold_distance)
+
+    @staticmethod
+    def calculate_average_score(key_points: PoseKeyPoints) -> float:
+        total_score = sum([key_point.score for key_point in key_points.pose_key_points])
+        num_keypoints = len(key_points.pose_key_points)
+        return total_score / num_keypoints if num_keypoints > 0 else 0
 
     @staticmethod
     def tracking(current_people_list: list, tracking_info: TrackingInfo, threshold_distance: int) -> TrackingInfo:
