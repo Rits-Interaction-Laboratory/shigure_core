@@ -63,6 +63,7 @@ class ImagePreviewNode(Node):
         cv2.putText(img, "frame = " + str(self.frame_count), (0, 20), cv2.FONT_HERSHEY_PLAIN, 1.5, (0, 255, 0))
         cv2.putText(img, 'FPS: {:.2f}'.format(self.fps),
                     (0, 40), cv2.FONT_HERSHEY_PLAIN, 1.5, (0, 255, 0))
+        return img
 
      
     def draw_outer_frame_line(self, src: np.ndarray, band_width=5, color=[255, 255, 255]):
