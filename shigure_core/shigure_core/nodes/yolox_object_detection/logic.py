@@ -60,7 +60,7 @@ class YoloxObjectDetectionLogic:
             is_people_object = class_id in PEOPLE_OBJECTS 
             return is_object and (is_people_object)
 
-        def judge_take_out_object(bring_in_item, threshold=0.2) -> bool:
+        def judge_take_out_object(bring_in_item, threshold=0.5) -> bool:
             """持ち去り判定を行う関数
             Args:
                 bring_in_item (): 持ち去るかどうか決める対象のアイテム
@@ -113,7 +113,7 @@ class YoloxObjectDetectionLogic:
         frame_object_list = list(prev_frame_object_dict.values())
 
         yolox_bboxes = yolox_bbox.bounding_boxes #yolox-rosから受け取った物体集合から物体一つずつ取り出す
-        FHIST_SIZE = 10 # 検知履歴を遡って参照する範囲
+        FHIST_SIZE = 30 # 検知履歴を遡って参照する範囲
         
         # 届いた現フレームのyolox-bbox群情報を整理して新しくリストにまとめる
         bbox_item_list = []
@@ -383,7 +383,7 @@ class YoloxObjectDetectionLogic:
                     
         # 初期状態リスト・持ち込み確定リスト・待機リストいずれにも存在しない現フレームアイテムは、待機リストに追加
         for bbox_item in bbox_item_list:
-            if not(bbox_item.is_exist_bring or bbox_item.is_exist_wait):
+            if not(bbox_item.is_exist_bring or bbox_item.is_exist_wait or bbox_item.is_exist_start):
                 #print(f'wait_item_append : {bbox_item._class_id}')
                 wait_item_list.append(bbox_item)
                 #wait = [[i._class_id, i._bounding_box._x, i._bounding_box._y, i._found_count, i._not_found_count] for i in wait_item_list]
