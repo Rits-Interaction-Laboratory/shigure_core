@@ -106,9 +106,9 @@ class YoloxObjectDetectionNode(ImagePreviewNode):
 				self.object_list.append(cv2.resize(black_img.copy(), (width // 2, height // 2)))
 			#print('brack')
 		
-		# if len(self._color_img_buffer) > 25:  
-		# 	self._color_img_buffer = self._color_img_buffer[1:] #self._color_img_bufferのリストを先頭以外上書き
-		# 	self._color_img_frames.get(-25).new_image = color_img  #color_img_framesの先頭の画像を新しい画像に置き換える
+		if len(self._color_img_buffer) > 25:  
+			self._color_img_buffer = self._color_img_buffer[1:] #self._color_img_bufferのリストを先頭以外上書き
+			self._color_img_frames.get(-25).new_image = color_img  #color_img_framesの先頭の画像を新しい画像に置き換える
 		self._color_img_buffer.append(color_img) 
 		
 		timestamp = Timestamp(color_img_src.header.stamp.sec, color_img_src.header.stamp.nanosec)

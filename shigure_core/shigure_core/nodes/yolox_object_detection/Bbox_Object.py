@@ -26,7 +26,7 @@ class BboxObject:
     	bbox_y = abs(self._bounding_box._y - other._bounding_box._y)
     	bbox_width = abs(self._bounding_box._width - other._bounding_box._width)
     	bbox_height = abs(self._bounding_box._height - other._bounding_box._height)
-    	if (self._class_id==other._class_id)and(bbox_x < 10) and (bbox_y < 10)and(bbox_width < 10): #& bbox_width < 30 & bbox_height < 30:
+    	if (self._class_id==other._class_id)and(bbox_x < 30) and (bbox_y < 30)and(bbox_width < 30): #& bbox_width < 30 & bbox_height < 30:
     		self._found_at = other._found_at
     		return True
     	else:
