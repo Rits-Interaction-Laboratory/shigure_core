@@ -41,7 +41,7 @@ class YoloxObjectDetectionLogic:
                 bool: 物体と思われるものの規定の物体でないものかどうか
             """
             #DEFAULT_OBJECTS = []
-            DEFAULT_OBJECTS = ['dog','cat','chair','laptop','tv','microwave','refrigerator','potted plant','cup','keyboard','couch','book','mouse','sink','dining table','skateboard','bottle','cell phone']
+            DEFAULT_OBJECTS = ['dog','cat','chair','laptop','tv','microwave','refrigerator','potted plant','cup','keyboard','couch','book','mouse','sink','dining table','skateboard','bottle','cell phone','knife','bowl']
             is_object: bool = probability > object_threshold
             is_default_object = class_id in DEFAULT_OBJECTS
             return is_object and not(is_default_object)

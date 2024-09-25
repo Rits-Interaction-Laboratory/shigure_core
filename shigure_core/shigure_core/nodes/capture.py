@@ -441,6 +441,7 @@ while(True):
                 p0 = cv2.goodFeaturesToTrack(obj, mask = None, **feature_params)
                 lk_reset = False
             else :
+                print(p0)
                 p0 = good_new.reshape(-1,1,2)
 
             # オプティカル・フローを計算
