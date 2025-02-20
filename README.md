@@ -86,3 +86,16 @@ DBへの接続 <br>
 ```sh
 mysql -h 127.0.0.1 -P 3306 -u shigure -p
 ```
+### ６. 追跡ノードの起動方法
+
+ビルド
+```sh
+colcon build
+. <ROS2 workspace>/install/setup.bash
+```
+
+実行(全ノードを実行)
+```sh
+ros2 run shigure_core caputure_flow
+```
+
