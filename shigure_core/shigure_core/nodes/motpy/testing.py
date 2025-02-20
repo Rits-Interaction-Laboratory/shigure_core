@@ -1,7 +1,7 @@
 import math
 import random
 
-from motpy.core import Detection
+from .core import Detection
 
 CANVAS_SIZE = 1000
 

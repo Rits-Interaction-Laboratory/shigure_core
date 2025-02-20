@@ -6,7 +6,7 @@ from typing import (Any, Callable, Dict, List, Optional, Sequence, Tuple, Type,
 
 import numpy as np
 import scipy
-from filterpy.kalman import KalmanFilter
+from .kalman_filter import KalmanFilter
 
 import inspect
 strongsort_path = inspect.getfile(KalmanFilter)
@@ -14,11 +14,12 @@ strongsort_path = inspect.getfile(KalmanFilter)
 
 from loguru import logger
 logger.info(strongsort_path)
-from motpy.core import Box, Detection, Track, Vector, setup_logger
-from motpy.metrics import angular_similarity, calculate_iou
-from motpy.model import Model, ModelPreset
+from .core import Box, Detection, Track, Vector, setup_logger
+from .metrics import angular_similarity, calculate_iou
+from .model import Model, ModelPreset
 import itertools
 logger = setup_logger(__name__)
+import pdb
 
 
 def get_kalman_object_tracker(model: Model,box: Optional[Box] = None,score: Optional[float] = None, x0: Optional[Vector] = None) -> KalmanFilter:
@@ -42,6 +43,7 @@ def get_kalman_object_tracker(model: Model,box: Optional[Box] = None,score: Opti
     # print(x0)
     tracker.P = model.build_P(box)
     tracker.F = model.build_F(box,x0)
+    # pdb.set_trace()
     tracker.Q = model.build_Q(box)
     tracker.H = model.build_H(box)
     tracker.R = model.build_R(box,x0,score)
@@ -80,7 +82,7 @@ def exponential_moving_average_fn(gamma: float) -> Callable:
 
 class SingleObjectTracker:
     def __init__(self,
-                 max_staleness: float = 12.0,
+                 max_staleness: float = 400.0,
                  smooth_score_gamma: float = 0.8,
                  smooth_feature_gamma: float = 0.9,
                  score0: Optional[float] = None,
@@ -119,6 +121,8 @@ class SingleObjectTracker:
         """ find most frequent prediction of class_id in recent K class_ids """
         if class_id is None:
             return None
+        
+        # print(f"class_id: {class_id}, type: {type(class_id)}")
 
         if class_id in self.class_id_counts:
             self.class_id_counts[class_id] += 1
@@ -131,18 +135,24 @@ class SingleObjectTracker:
         raise NotImplementedError()
 
     def update(self, detection: Detection) -> None:
-        self._update_box(detection)
+        if isinstance(detection, list):
+            self._update_box(detection)
 
-        self.steps_positive += 1
+            pass
+        else:
 
-        self.class_id = self.update_class_id(detection.class_id)
-        self.score = self.update_score_fn(old=self.score, new=detection.score)
-        self.feature = self.update_feature_fn(old=self.feature, new=detection.feature)
+            self._update_box(detection)
+
+            self.steps_positive += 1
+
+            self.class_id = self.update_class_id(detection.class_id)
+            self.score = self.update_score_fn(old=self.score, new=detection.score)
+            self.feature = self.update_feature_fn(old=self.feature, new=detection.feature)
 
 
 
-        # reduce the staleness of a tracker, faster than growth rate
-        self.unstale(rate=3)
+            # reduce the staleness of a tracker, faster than growth rate
+            self.unstale(rate=3)
 
     def stale(self, rate: float = 1.0) -> float:
         self.staleness += rate
@@ -153,10 +163,18 @@ class SingleObjectTracker:
         return self.staleness
 
     def is_stale(self) -> bool:
+        # print("stale")
+        # print(self.max_staleness)
+        # print(self.staleness)
         return self.staleness >= self.max_staleness
 
     def __repr__(self) -> str:
         return f'(box: {str(self.box())}, score: {self.score}, class_id: {self.class_id}, staleness: {self.staleness:.2f})'
+    
+    def add_feature(self, add_flow: list )-> None:
+        # print("ad_ss")
+        self._add_feature(add_flow)
+
 
 
 class KalmanTracker(SingleObjectTracker):
@@ -184,8 +202,18 @@ class KalmanTracker(SingleObjectTracker):
         #print(self._tracker)
 
     def _update_box(self, detection: Detection) -> None:
-        z = self.model.box_to_z(detection.box)
-        self._tracker.update(z)
+
+        if isinstance(detection, list):
+            self._tracker.update(detection)
+    # スキップ
+            pass
+        else:
+            z = self.model.box_to_z(detection.box)
+            print(z)
+        # model.build_H(box)
+        # new_H = self.model.build_H(detection.box)
+            self._tracker.update(z)
+
 
     def box(self) -> Box:
         return self.model.x_to_box(self._tracker.x)
@@ -197,6 +225,9 @@ class KalmanTracker(SingleObjectTracker):
         except Exception as e:
             logger.warning(f'invalid tracker - exception: {e}')
             return True
+    
+    def _add_feature(self, add_flow: List) -> None:
+        self._tracker.add_dmins(add_flow)
 
 
 class SimpleTracker(SingleObjectTracker):
@@ -324,7 +355,7 @@ def match_by_cost_matrix(trackers: Sequence[SingleObjectTracker],
             matches.append((r, c))
 
         # check other high IOU detections
-        if multi_match_min_iou < 1.:
+        if multi_match_min_iou < 0.2:
             for c2 in range(iou_mat.shape[1]):
                # logger.info(iou_mat[r, c2])
                 if c2 != c and iou_mat[r, c2] > multi_match_min_iou:
@@ -383,8 +414,12 @@ class MultiObjectTracker:
         """
 
         self.trackers: List[SingleObjectTracker] = []
+        self.d_trac: List[SingleObjectTracker] = []
         self.frame = 0
         self.t_id = 0
+
+        self.track_count ={}
+        self.id_b = 0
 
         # kwargs to be passed to each single object tracker
         self.tracker_kwargs: Dict = tracker_kwargs if tracker_kwargs is not None else {}
@@ -421,7 +456,7 @@ class MultiObjectTracker:
 
     def active_tracks(self,
                       max_staleness_to_positive_ratio: float = 3.0,
-                      max_staleness: float = 999,
+                      max_staleness: float = 50,
                       min_steps_alive: int = -1) -> List[Track]:
         """ returns all active tracks after optional filtering by tracker steps count and staleness """
 
@@ -431,7 +466,7 @@ class MultiObjectTracker:
             cond1 = tracker.staleness / tracker.steps_positive < max_staleness_to_positive_ratio  # early stage
             cond2 = tracker.staleness < max_staleness
             # cond3 = tracker.steps_alive >= min_steps_alive
-            if cond1 and cond2 :#and cond3:
+            if  cond1 and cond2 :#and cond3:cond1 and
                 tracks.append(Track(id=tracker.id, box=tracker.box(), score=tracker.score, class_id=tracker.class_id))
             # tracks.append(Track(id=tracker.id, box=tracker.box(), score=tracker.score, class_id=tracker.class_id))
 
@@ -441,11 +476,20 @@ class MultiObjectTracker:
 
     def cleanup_trackers(self) -> None:
         count_before = len(self.trackers)
+        self.d_trac = [t for t in self.trackers if (t.is_stale() or t.is_invalid()) ]
+        self.d_count = [ind for ind, t in enumerate(self.trackers) if (t.is_stale() or t.is_invalid()) ]
         self.trackers = [t for t in self.trackers if not (t.is_stale() or t.is_invalid())]
-        count_after = len(self.trackers)
-        logger.debug('deleted %s/%s trackers' % (count_before - count_after, count_before))
 
-    def step(self, detections: Sequence[Detection],f_matchs) -> List[Track]:
+        count_after = len(self.trackers)
+        print(len(self.d_trac))
+
+
+        # logger.debug('deleted %s/%s trackers' % (count_before - count_after, count_before))
+        print('deleted %s/%s trackers' % (count_before - count_after, count_before))
+        count_before - count_after
+        return self.d_trac , self.d_count
+
+    def step(self, detections: Sequence[Detection],f_matchs) -> List[Track] and List[Track]:
         """ the method matches the new detections with existing trackers,
         creates new trackers if necessary and performs the cleanup.
         Returns the active tracks after active filtering applied """
@@ -457,51 +501,10 @@ class MultiObjectTracker:
         #print(detections )
         detections = [det for det in detections if det is not None or det.feature is not None]
 
-        for det in detections:
-            print("dwee")
-            if det.box[0] is None:
-                print("ssd")
-                for t in self.trackers:
-                    x = det.box[4][0][0] - t.box()[4]
-                    y = det.box[4][0][1] - t.box()[5]
-                    # x1 =det.box[4][1][0] - t.box()[6]
-                    # y1 = det.box[4][1][1] - t.box()[7]
+       
 
-                    # x2 =det.box[4][2][0] - t.box()[8]
-                    # y2 = det.box[4][2][1] - t.box()[9]
-
-                    # x3 =det.box[4][3][0] - t.box()[10]
-                    # y3 = det.box[4][3][1] - t.box()[11]
-
-                    det.box[0] = x #(x+x1+x2+x3)/4
-                    det.box[1] = y #(y+y1+y2+y3)/4
-
-
-                    det.box[2] = t.box()[2] 
-                    det.box[3] = t.box()[3]
-
-                    # det.box[4][0][0] = det.box[4][0][0] - x
-                    # det.box[4][0][1] = det.box[4][0][1] -y
-                    # det.box[4][1][0] = det.box[4][1][0] - x
-                    # det.box[4][1][1] = det.box[4][1][1] - y
-
-                    # det.box[4][2][0] =det.box[4][2][0] - x
-                    # det.box[4][2][1] =det.box[4][2][0] - y
-
-                    # x3 =det.box[4][3][0] - t.box()[10]
-                    # y3 = det.box[4][3][1] - t.box()[11]
-                    # det.box[3] = t.box()[3]
-                    # det.box[2] = t.box()[2] 
-                    # det.box[3] = t.box()[3]
-                    # det.box[2] = t.box()[2] 
-                    # det.box[3] = t.box()[3]
-
-
-                
-
-
-            # print(det.box)
-            print(det.class_id)
+        # #     # print(det.box)
+        # #     print(det.class_id)
 
 
 
@@ -532,7 +535,7 @@ class MultiObjectTracker:
             t.predict()
             if t.class_id == "stuffed toy":
                 self.t_id = bcount
-            print(t.box()[0])
+            # print(t.box()[0])
             bcount += 1
 
         print('eeeeeeeeee')
@@ -612,59 +615,233 @@ class MultiObjectTracker:
         # assigned trackers: correct
         print("match")
         print(matches)
+        re_matches = matches
+        
         list_t = []
+
+        f_list = []
         f_id = f_matchs.values()
-        for match ,key in zip(matches, f_id):
+        print(f_id)
+        count = 0
+        # for match ,key in zip(matches, f_id):
             
-            track_idx, det_idx = match[0], match[1]
+        #     track_idx, det_idx = match[0], match[1]
 
-            # print("ffff")
-            # # print(int(key)-1)
-            # print(track_idx)
-            # print(det_idx)
+        #     # print("ffff")
+        #     # # print(int(key)-1)
+        #     # print(track_idx)
+        #     # print(det_idx)
 
-            if 'or' in key:
-                key = key.split()[0]
-                match[0] = int(key)
+        #     if 'or' in key:
+        #         key = key.split()[0]
 
+        #     #     match[0] = int(key)
+
+        #     # else:
+        #     #     match[0] = int(key)
+
+        #     # match[1]= count
+
+
+
+
+            
+        #     f_list.append(int(key)) 
+
+
+
+
+        #     track_idx2 = int(key)
+
+        #     # match[0] = int(key)
+
+        #     # print("ffff")
+        #     # # print(int(key)-1)
+        #     # print(track_idx2)
+        #     # print(det_idx)
+        #     # if track_idx < track_idx2:
+        #     #     track_idx2 = track_idx
+
+        #     if count >= len(self.trackers):
+        #         count = count-1
+                
+
+
+
+
+
+        #     list_t.append(track_idx)
+        #     # print(count)
+        #     # print(track_idx2)
+
+
+
+        #     self.trackers[track_idx].update(detection=detections[det_idx ])
+        #     self.detections_matched_ids[det_idx] = self.trackers[track_idx].id
+        
+
+
+        matches = []
+
+        numbers = []
+        for item in f_id:
+            if ' or ' in item:
+                # ' or 'で分割してリストに追加
+                numbers.append([int(num.strip()) for num in item.split(' or ')])
+            elif 'None' in item:
+                numbers.append('None')
             else:
-                match[0] = int(key)
+                # それ以外は単一の整数を追加
+                numbers.append(int(item.strip()))
 
+        print("number")
+        print(numbers)
 
+        lost_fe_id = []
 
-
-            track_idx2 = int(key)
-
-            # match[0] = int(key)
-
-            # print("ffff")
-            # # print(int(key)-1)
-            # print(track_idx2)
-            # print(det_idx)
-            if track_idx < track_idx2:
-                track_idx2 = track_idx
-
-
-            list_t.append(track_idx)
-
-
-            self.trackers[track_idx].update(detection=detections[det_idx])
-            self.detections_matched_ids[det_idx] = self.trackers[track_idx].id
-
+        print("self.track_count",self.track_count)
         
+
+
+        # if len(self.trackers) >= len(numbers):
+
+        for num ,key in enumerate(numbers):
+            # if 'or' in key:
+            #     numbers = [int(mm.strip()) for mm in key.split('or')]
+            #     key= numbers[0]
+
+            if isinstance(key, list):
+                for or_c, uu in  enumerate(key):
+                    # print("ffffo")
+                    # print(or_c)
+                    track_key = self.track_count[int(uu)]
+                    if or_c > 0:
+                        matches.append((int(uu), num))
+
+
+                    elif detections[num].class_id == self.trackers[int(track_key)].class_id:
+                        print("id", int(uu))
+                        matches.append((int(uu), num))
+                        
+
+                        self.trackers[int(track_key)].update(detection=detections[num])
+                        self.detections_matched_ids[num] = self.trackers[int(track_key)].id
+            else:
+                
+                # if numbers.count(key) > 1:
+                #     matches.append((int(key), num))
+                # else:
+                if key == 'None' :
+                    print("None point")
+                    detection=detections[num]
+                    r_m2 = re_matches
+
+                    print("rematch",re_matches)
+
+
+                    if detections[num].class_id == 'chair':
+
+                        if  re_matches != []:
+
+                            iou_box = re_matches[re_matches[:,1]== num, 0]
+                            column_1 =r_m2[:,0]
+
+                                            
+                        else:
+                            iou_box =[]
+
+                            column_1 =[] 
+
+
+
+                        
+
+
+
+                        if len(iou_box) == 1 and not iou_box[0] in numbers:
+                            # 値の出現回数を数える
+                            count = np.count_nonzero(column_1 == iou_box[0])
+
+                            if count == 1:
+                                
+
+                                print("id", int(iou_box[0]))
+                                # lost_fe_id.append(iou_box[0])
+
+                                # track_key =  self.get_key_by_value(self.track_count, iou_box[0])
+
+                                if  detections[num].class_id == self.trackers[int(iou_box[0])].class_id:
+                                    matches.append((int(iou_box[0]), num))
+                                    numbers[num] = int(iou_box[0])
+                                    lost_fe_id.append(iou_box[0])
+
+                                    self.trackers[int(iou_box[0])].update(detection=detections[num])
+                                    self.detections_matched_ids[num] = self.trackers[int(iou_box[0])].id
+
+                        
+                    
+
+                else:
+                    matches.append((int(key), num))
+                    print("key",int(key))
+                    print("len(self.trackers)",len(self.trackers))
+                    
+                    if self.track_count !={}:
+                        if int(key)in self.track_count:
+                            track_key = self.track_count[int(key)]
+
+
+                            if 0 <= int(track_key) < len(self.trackers) and track_key != 'None' and detections[num].class_id == self.trackers[int(track_key)].class_id:
+                                print("id", int(key))
+                                print(self.trackers[int(track_key)].class_id)
+                                self.trackers[int(track_key)].update(detection=detections[num])
+                                self.detections_matched_ids[num] = self.trackers[int(track_key)].id
+
+
+            # f_list.append(int(key))
+
+            
         
+        matches = np.array(matches)
+    
+        print("matches",matches)
+
+        # if count > 0:
+        #     matches = [[i, int(num)] for i, num in enumerate(numbers) if num != 'None']
+
+        #     matches = np.array(matches)
+ 
+        # # print(type(matches))
+
 
 
         print(matches)
 
-        
 
-        # not assigned detections: create new trackers POF
-        assigned_det_idxs = set(matches[:, 1]) if len(matches) > 0 else []
         
+        flag = True
+        # not assigned detections: create new trackers POF
+        
+        assigned_det_idxs = set(matches[:, 1]) if len(matches) > 0 and len(self.trackers) !=0 else []
+        print( assigned_det_idxs)
+        print(len(detections))
+        count +=1
+
 
         for det_idx in set(range(len(detections))).difference(assigned_det_idxs):
+            print("更新")
             det = detections[det_idx]
+
+            # for t in self.trackers:
+            
+            #     if abs(t.box()[0]-det.box[0]) < 10 and abs(t.box()[1]-det.box[1]) < 10 and t.class_id == det.class_id:
+            #         flag = False
+            
+            # if not flag :
+            #     print("ffffffhhhh")
+                
+            #     continue
+
 #            logger.info(det.score)
             # tracker = self.tracker_clss(box0=det.box,
             #                             score0=det.score,
@@ -675,15 +852,51 @@ class MultiObjectTracker:
             #     if not self.t_id in list_t and self.frame != 0:
             #         self.detections_matched_ids[det_idx] = self.t_id
             #         self.trackers[int(self.t_id)].update(detection=detections[det_idx])
+            # elif det.class_id == "book" and self.frame != 0:
+
+            #     for f in f_list:
+
+            #         if not  f in list_t :
+
+            #             self.detections_matched_ids[det_idx] = f
+            #             print(f)
+
+            #             self.trackers[f].update(detection=detections[det_idx])
+            #         else:
+            #             tracker = self.tracker_clss(box0=det.box,
+            #                 score0=det.score,
+            #                 class_id0=det.class_id,
+            #                 **self.tracker_kwargs)
+            #             self.detections_matched_ids[det_idx] = tracker.id
+            #             self.trackers.append(tracker)
+
+
+
+
+
 
             # else :
+            print("create")
+            print(det)
             tracker = self.tracker_clss(box0=det.box,
                         score0=det.score,
                         class_id0=det.class_id,
                         **self.tracker_kwargs)
             self.detections_matched_ids[det_idx] = tracker.id
             self.trackers.append(tracker)
+            if self.track_count =={}:
+                trac_id = 0
+            else:
+                trac_id = len(self.track_count)
+
+            self.track_count[self.id_b] = trac_id
+            self.id_b +=1
+
         self.frame +=1 
+        
+        # print("test",self.track_count)
+
+        
 
 #        logger.info(self.trackers)
         # unassigned trackers
@@ -691,8 +904,19 @@ class MultiObjectTracker:
         for track_idx in set(range(len(self.trackers))).difference(assigned_track_idxs):
             self.trackers[track_idx].stale()
 
+        self.d_count = []
+
         # cleanup dead trackers
-        self.cleanup_trackers()
+        # delete_trac, self.d_count = self.cleanup_trackers()
+        del_id = []
+        del_ind  = []
+
+
+        if self.d_count != []:
+
+            self.track_count, del_id, del_ind = self.adjust_values(self.track_count,self.d_count)
+            print("del_id",del_id )
+
 
         # log step timing
         elapsed = (time.time() - t0) * 1000.
@@ -700,6 +924,107 @@ class MultiObjectTracker:
 
         if self.active_tracks(**self.active_tracks_kwargs) == [] :
             print("tracker_select")
-            return self.trackers
+            return self.trackers , del_id, del_ind, lost_fe_id, numbers
+        
+        if len(self.trackers) != len(self.track_count):
+            pdb.set_trace()
 
-        return self.active_tracks(**self.active_tracks_kwargs)
+        return self.active_tracks(**self.active_tracks_kwargs), del_id, del_ind, lost_fe_id, numbers
+
+    def delete_index(self,track_idx,feat_list ):
+        none_indices = []
+        print("kekka")
+        for i, point in enumerate(feat_list[0]) :
+            # box[4][i] が None または 'None' の場合、何も変更せずそのままリストを保持
+            if point == 'None' or point is None:
+                none_indices.append(i)
+        
+
+        if none_indices != []:
+            print("何だ")
+            for idn in track_idx:
+                none_indices = [[],[],none_indices]
+                self.trackers[int(idn)].update(none_indices)
+    
+    def add_flow(self,add_flow):
+        print("add_dim")
+        print(add_flow)
+        for k,v  in add_flow.items():
+
+            track_key = self.track_count[int(k)]
+
+
+            self.trackers[int(track_key)].add_feature(v)
+
+    def adjust_values(self,input_dict, remove_value):
+        """
+        指定されたキーの値を削除し、その値より後の値を1減らす関数。
+
+        Args:
+            input_dict (dict): 入力の辞書。
+            remove_key (any): 削除したいキー。
+
+        Returns:
+            dict: 調整後の辞書。
+        """
+
+        keys_to_remove = [key for key, value in input_dict.items() if value in remove_value]
+
+        remove_index = [value for key, value in input_dict.items() if value in remove_value]
+
+
+
+        if keys_to_remove ==[]:
+
+            print(f"Key {remove_value} not found in the dictionary.")
+            return input_dict, keys_to_remove,remove_index 
+        
+
+        # # 削除する値を取得
+        # removed_value = input_dict[remove_key]
+
+        # 値を調整
+        adjusted_dict = {}
+
+        # 指定されたキーを削除
+        for key_r in keys_to_remove:
+
+
+            for key, value in input_dict.items():
+                if key > key_r:
+                    adjusted_dict[key] = value - 1  # 削除された値より後の値を1減らす
+                    input_dict[key] = value - 1
+
+                else:
+                    adjusted_dict[key] = value  # それ以外はそのまま
+                    input_dict[key] = value
+                
+            del adjusted_dict[key_r]
+            del self.track_count[key_r]
+        
+
+
+        return adjusted_dict ,keys_to_remove,remove_index 
+    
+    def get_key_by_value(self, input_dict, target_value):
+        """
+        指定した値を持つキーを取得する関数。
+
+        Args:
+            input_dict (dict): 入力の辞書。
+            target_value (int): 探したい値。
+
+        Returns:
+            int or None: 対応するキー（見つからない場合は None）。
+        """
+        for key, value in input_dict.items():
+            if value == target_value:
+                return key
+        return None
+    
+
+
+
+            
+            
+

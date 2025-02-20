@@ -1,10 +1,11 @@
 from enum import Enum
 
 import numpy as np
-from filterpy.common import Q_discrete_white_noise
+# import cupy as cp
+from .discretization import Q_discrete_white_noise,Q_continuous_white_noise
 from scipy.linalg import block_diag
 
-from motpy.core import Box, Vector
+from .core import Box, Vector
 from loguru import logger
 import collections
 """ The list of model presets below is not complete, more reasonable
@@ -38,6 +39,7 @@ def _base_dim_block2(dt: float, order: int = 1):
     return block[:order,:order]
 
 def _zero_pad(arr, length: int):
+    # arr = arr.get() if isinstance(arr, np.ndarray) else arr
     ret = np.zeros((length,))
     ret[:arr.shape[0]] = arr
     return ret
@@ -88,6 +90,13 @@ class Model:
         self.flow_idxs2 = [10,11]
         self.flow_idxs3 = [12,13]
         self.flow_idxs4 = [14,15]
+        # self.flow_idxs4 = [14,15]
+        # self.flow_idxs4 = [14,15]
+        # self.flow_idxs4 = [14,15]
+        # self.flow_idxs4 = [14,15]
+        # self.flow_idxs4 = [14,15]
+        # self.flow_idxs4 = [14,15]
+        # self.flow_idxs4 = [14,15]
 
 
         # number of variables in model state
@@ -137,17 +146,19 @@ class Model:
     def build_F(self, box,x0):
         """ returns constructed F matrix with specified positional
             e.g. (x,y,z) and size e.g. (w,h) dimensions """
-        block_pos = _base_dim_block(self.dt, self.order_pos)
-        block_size = _base_dim_block(self.dt, self.order_size)
-        flow_block = _base_dim_block2(self.dt, self.order_size)
-        print(flow_block )
-        diag_components = ([block_pos] * self.dim_pos)*2 + [flow_block]*2
-        print(self.flow_size)
-        diag_components = ([block_pos] * self.dim_pos)*2 + [flow_block]*self.flow_size*2
-        print(block_diag(*diag_components))
-        return block_diag(*diag_components)
+        # block_pos = _base_dim_block(self.dt, self.order_pos)
+        # block_size = _base_dim_block(self.dt, self.order_size)
+        # flow_block = _base_dim_block2(self.dt, self.order_size)
+        # print(flow_block )
+        # diag_components = ([block_pos] * self.dim_pos)*2 + [flow_block]*2
+        # print(self.flow_size)
+        # diag_components = ([block_pos] * self.dim_pos)*2 + [flow_block]*self.flow_size*2
+        # print(block_diag(*diag_components))
+        # return block_diag(*diag_components)
         dt = self.dt
-        # print((8+len(box[4])*2))
+        print("lensbox4")
+        print((8+len(box[4])*2))
+        print(len(box[4]))
         F = np.zeros((8+len(box[4])*2,8+len(box[4])*2 ))
         # print(x0)
         # self.w = box[2]-box[0]
@@ -167,28 +178,28 @@ class Model:
 
         self.dw =  box[2]-x0[4]
         self.dh = box[3]-x0[6]
-        u= x0[8]
-        v = x0[9]
-        u1 = x0[10]
-        v1 = x0[11]
-        u2 = x0[12]
-        v2 = x0[13]
-        u3 = x0[14]
-        v3 = x0[15]
+        # u= x0[8]
+        # v = x0[9]
+        # u1 = x0[10]
+        # v1 = x0[11]
+        # u2 = x0[12]
+        # v2 = x0[13]
+        # u3 = x0[14]
+        # v3 = x0[15]
 
 
 
         F[0, 0] = 1
-        F[0, 1] = 0.3
+        F[0, 1] = 0.01
         F[1, 1] = 1
         F[2, 2] = 1
-        F[2, 3] = 0.3
+        F[2, 3] = 0.01
         F[3, 3] = 1
         F[4, 4] = 1
-        F[4, 5] = 0.3
+        F[4, 5] = 0.001
         F[5, 5] = 1
         F[6, 6] = 1
-        F[6, 7] = 0.3
+        F[6, 7] = 0.001
         F[7, 7] = 1
 
 
@@ -199,11 +210,11 @@ class Model:
             if (8+i) % 2 == 0:
                 u= x0[8+i]
                 
-                F[8+i, 5] = -(u * dt) / (self.w ** 2)
+                F[8+i, 5] = (u) / (self.w)
                 # F[8+i, 4] = -(u * self.dw * dt) / (self.w ** 2)
             else:
                 v = x0[8+i]
-                F[8+i, 7] = -(v* dt) / (self.h ** 2)
+                F[8+i, 7] = (v) / (self.h)
                 # F[8+i, 6] = -(v * self.dh * dt )/ (self.h ** 2)
 
 
@@ -254,8 +265,8 @@ class Model:
         q_pos = var_pos if self.order_pos == 0 else Q_discrete_white_noise(
             dim=self.order_pos + 1, dt=self.dt, var=var_pos)
 
-        q_size = var_size if self.order_size == 0 else Q_discrete_white_noise(
-            dim=self.order_size + 1, dt=self.dt, var=var_size)
+        q_size = var_size if self.order_size == 0 else Q_continuous_white_noise(
+            dim=self.order_size + 1, dt=self.dt, spectral_density=var_size)
 
         print("dffffffff")
         print(q_pos)
@@ -263,8 +274,10 @@ class Model:
         f_q = [[0,   0  ],
         [0,   0]]
 
-        # diag_components = [q_pos] * self.dim_pos + [q_size] * self.dim_size + [q_pos]
-        diag_components = [q_pos] * self.dim_pos + [q_size] * self.dim_size + [f_q]*(len(box[4]))
+
+        # diag_components1 = [q_pos] * self.dim_pos + [q_size] * self.dim_size + [q_pos]
+        # print(diag_components1)
+        diag_components = [q_pos] * self.dim_pos + [f_q] * self.dim_size + [f_q]*(len(box[4]))
         #print(block_diag(*diag_components))
 
 
@@ -273,18 +286,21 @@ class Model:
         return block_diag(*diag_components)
 
         # std_pos = [
-        #     self._std_weight_position * mean[0],
-        #     self._std_weight_position * mean[1],
-        #     1 * mean[2],
-        #     self._std_weight_position * mean[3],
+        #     self._std_weight_position * box[3],
+        #     self._std_weight_position * box[3],
+        #     1e-2,
+        #     self._std_weight_position * box[3],
         # ]
         # std_vel = [
-        #     self._std_weight_velocity * mean[0],
-        #     self._std_weight_velocity * mean[1],
-        #     0.1 * mean[2],
-        #     self._std_weight_velocity * mean[3],
+        #     self._std_weight_velocity * box[3],
+        #     self._std_weight_velocity * box[3],
+        #     1e-5,
+        #     self._std_weight_velocity * box[3],
         # ]
 
+        # diag_components = [std_pos] * self.dim_pos + [std_vel] * self.dim_size + [f_q]*(len(box[4]))
+        # return block_diag(*diag_components)
+        
         # motion_cov = np.diag(np.square(np.r_[std_pos, std_vel]))
         # print(motion_cov)
 
@@ -293,11 +309,11 @@ class Model:
     def build_R(self, box,mean, confidence=0.0):
         """ measurement noise, expected order is positon first, then size """
         block_pos = np.eye(self.dim_pos) * self.r_var_pos
-        block_size = np.eye(self.dim_size) * self.r_var_size
+        block_size = np.eye(self.dim_size) * self.r_var_pos#self.r_var_size
         flow_pos = np.eye((len(box[4])*2))* self.r_var_pos
 
         #logger.info(block_diag(block_pos, block_size))
-        print(block_diag(block_pos, block_size, flow_pos))
+        # print(block_diag(block_pos, block_size, flow_pos))
         return block_diag(block_pos, block_size, flow_pos)
 
         #logger.info("s")
@@ -327,11 +343,18 @@ class Model:
             [_base_block(self.order_pos)] * self.dim_pos +\
             [_base_block(self.order_size)] * self.dim_size +\
             [flow_block] * (len(box[4])*2)
-        print( block_diag(*diag_components))
+        # print( block_diag(*diag_components))
         return block_diag(*diag_components)
         # return np.eye(self.ndim, 2 * self.ndim)
 
     def build_P(self, box):
+        print("covov")
+        # print(box)
+        # print(len(box[4]))
+        
+
+
+        # print("ssssggkhkhjkhji")
         # std = [
         #     2 * self._std_weight_position * measurement[0],  # the center point x
         #     2 * self._std_weight_position * measurement[1],  # the center point y
@@ -346,29 +369,83 @@ class Model:
 
         # #logger.info(self.P)
         # return self.P
-        print(np.eye(self.state_length+(len(box[4])*2)) * self.p_cov_p0)
-        print(self.state_length+(len(box[4])*2))
-        return np.eye(self.state_length+(len(box[4])*2)) * self.p_cov_p0
+        matrix = np.eye(self.state_length+(len(box[4])*2))
+        matrix[0:4, 0:4] *= 100
+        matrix[4:8, 4:8] *= 10
+        matrix[8:, 8:] *= 10
+        # matrix[2:, :] = np.where(matrix[2:, :] == 1000, 1, matrix[2:, :])
+        # # # # print(np.eye(self.state_length+(len(box[4])*2)) * self.p_cov_p0)
+        # print(self.state_length+(len(box[4])*2))
+        # print(matrix)
+        # return np.eye(self.state_length+(len(box[4])*2)) * self.p_cov_p0
+        return matrix
 
     def box_to_z(self, box: Box) -> Vector:
         #print(self.dim_box)
-        #print(len(box[4]))
+        print(len(box[4]))
         self.flow_size = len(box[4])
         assert self.dim_box+2 == len(box)+1
         #print((len(box[4])+2))
         #print(np.array(box))
-        box[4] = np.array(box[4])
+        # box[4] = np.array(box[4])
         # print(box)
         # box = [box[0],box[1],box[0]+box[2],box[1]+box[3]]
         # box = np.array(box).reshape(3, (int((self.dim_box)/ 2)))
+        none_indices = []
         n_box = np.array(box[0:4]).reshape(2, (int((self.dim_box)/ 2)))
-        box =  np.vstack((n_box, box[4]))
+        if box[4] == []:
+            self.box_result = []
+            
+            box = n_box
+            box = box[0:2]
+
+            center = (np.sum(box, axis=0) / 2.0)[:self.dim_pos]
+            length = (box[1, :] - box[0, :])[:self.dim_size]
+
+            x = np.r_[center, length]
+            return x , self.box_result, none_indices
+        # print(box[4])
+
+        for i, point in enumerate(box[4]) :
+            # box[4][i] が None または 'None' の場合、何も変更せずそのままリストを保持
+            if point == 'None' or point is None:
+                none_indices.append(i)
+        
+
+        none_indices = sorted(none_indices,reverse=True)
+        
+        box[4] = [[(0, 0)] if point == 'None' else [point] for point in box[4]]
+        box[4] = [[(0, 0)] if point is None else point for point in box[4]]
+
+  
+
+
+
+
+
+
+        # box[4] を平坦化して2次元タプルのリストに変換
+        box_4_flat = [point[0] if isinstance(point, list) else point for sublist in box[4] for point in sublist]
+
+
+        # print(n_box)  # 例: (10, 5)
+        # print(box[4])
+
+        print("box_4_flat",box_4_flat)
+
+
+
+
+        box =  np.vstack((n_box, box_4_flat))
         # print(box)
         # print( self.box_result)
 
             # self.box_result = self.box_result
 
         # flow = [box[2][0]- box[0][0], box[2][1]- box[0][1] ]
+
+        
+        
 
 
         self.box_result = (box[2:] - box[0])
@@ -380,6 +457,8 @@ class Model:
 
         center = (np.sum(box, axis=0) / 2.0)[:self.dim_pos]
         length = (box[1, :] - box[0, :])[:self.dim_size]
+
+        new = 5
 
 
         # self.box_result = box_result.flatten().tolist()
@@ -400,21 +479,26 @@ class Model:
         x = np.r_[center, length]
         # x = np.vstack((x, box_result))
         # print(x)
-        return x , self.box_result
+        return x , self.box_result, none_indices
 
 
     def box_to_x(self, box: Box) -> Vector:
         """ box is expected to be in [xmin, ymin, zmin, ..., xmax, ymax, zmax, ...] format
         for 2d-1ord+2d-0ord case returns np.array([cx, 0, 0, cy, 0, 0, w, h]) """
-        print((box))
+        # print((box))
         x = np.zeros((self.state_length+(len(box[4])*2),))
         # print(self.state_length+(len(box[4])*2))
         # print(self.z_in_x_idxs)
         indices_to_remove = [1, 3, 5, 7]
         # x = np.delete(self.box_to_z(box), indices_to_remove)
-        x[self.z_in_x_idxs], flow = self.box_to_z(box)
+        resul = self.box_to_z(box)
+        # print(resul)
+        x[self.z_in_x_idxs], flow,new = resul#self.box_to_z(box)
+
         # print(len(x[4:]))
-        x[8:] = flow
+        if flow != []:
+
+            x[8:] = flow
 
 
         # print("z_X")
@@ -437,20 +521,23 @@ class Model:
 
     def x_to_box(self, x):
         size = max(self.dim_pos, self.dim_size)
+        # print("ddf")
         # print(x)
         # print(self.size_idxs)
+        # x = x.get()
+
         center = _zero_pad(x[self.pos_idxs], size)
         length = _zero_pad(x[self.size_idxs], size)
-        flow = _zero_pad(x[self.flow_idxs], size)
-        flow2 = _zero_pad(x[self.flow_idxs2], size)
-        flow3 = _zero_pad(x[self.flow_idxs3], size)
-        flow4 = _zero_pad(x[self.flow_idxs4], size)
+        # flow = _zero_pad(x[self.flow_idxs], size)
+        # flow2 = _zero_pad(x[self.flow_idxs2], size)
+        # flow3 = _zero_pad(x[self.flow_idxs3], size)
+        # flow4 = _zero_pad(x[self.flow_idxs4], size)
         # print(flow)
         # print(center)
         # print("wwwe")
         # print(np.concatenate((center - (length) / 2, center + (length) / 2, (center - (length) / 2) + flow,(center - (length) / 2) + flow,(center - (length) / 2) + flow,(center - (length) / 2) + flow)))
-        # return np.concatenate((center - (length) / 2, center + (length) / 2, (center - (length) / 2) + flow))
-        return np.concatenate((center - (length) / 2, center + (length) / 2,  flow, flow2,flow3,flow4))
+        return np.concatenate((center - (length) / 2, center + (length) / 2, (center - (length) / 2)))
+        # return np.concatenate((center - (length) / 2, center + (length) / 2,  flow, flow2,flow3,flow4))
         # return np.concatenate((center - (length) / 2, center + (length) / 2, (center - (length) / 2) + flow,(center - (length) / 2) + flow,(center - (length) / 2) + flow,(center - (length) / 2) + flow))
 
 

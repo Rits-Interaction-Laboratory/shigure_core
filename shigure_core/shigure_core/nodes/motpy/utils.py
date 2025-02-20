@@ -1,6 +1,6 @@
 import importlib.util
 
-from motpy import Track
+from .core import Track
 
 
 def ensure_packages_installed(packages, stop_if_some_missing: bool = True):

@@ -8,7 +8,13 @@ import copy
 import string
 import sys
 import cv2
+
+import inspect
+print(inspect.getfile(cv2))
 import numpy as np
+# import cupy as np
+# print(np.__version__)
+
 import random
 import time
 import numpy as np
@@ -16,23 +22,25 @@ import rclpy
 from typing import List
 
 from rcl_interfaces.msg import ParameterDescriptor, ParameterType
-from rclpy.qos import QoSProfile, ReliabilityPolicy
+from rclpy.qos import QoSProfile, ReliabilityPolicy,HistoryPolicy
 from sensor_msgs.msg import Image, CompressedImage, CameraInfo
 import message_filters
 
 from collections import Counter
 from collections import defaultdict
 
+import threading
+
 import sys
-#print(sys.path)
-sys.path.append("/home/azuma/ros2_ws/src/shigure_core/shigure_core/shigure_core/nodes")
+# print(sys.path)
+# sys.path.append("/home/azuma/ros2_ws/src/shigure_core/shigure_core/shigure_core/nodes")
 
-from motpy import Detection, MultiObjectTracker 
+from shigure_core.nodes.motpy import Detection, MultiObjectTracker
 
-from motpy.testing_viz import draw_track
+from shigure_core.nodes.motpy.testing_viz import draw_track
 
 from shigure_core_msgs.msg import DetectedObjectList, DetectedObject, TrackedObjectList, TrackedObject, PoseKeyPointsList, Cube
-from bboxes_ex_msgs.msg import BoundingBoxes
+from bboxes_ex_msgs.msg import BoundingBoxes ,Segments, Segment
 from shigure_core.nodes.common_model.bounding_box import BoundingBox
 
 from shigure_core.enum.detected_object_action_enum import DetectedObjectActionEnum
@@ -49,58 +57,108 @@ from shigure_core.nodes.yolox_object_tracking.tracking_info import TrackingInfo
 
 from shigure_core.nodes.yolox_object_detection.Bbox_Object import BboxObject
 
+import pdb
+
+from ultralytics import YOLO
+
+import os
+
+from datetime import datetime
+
+from scipy.spatial.distance import euclidean
+from ultralytics import YOLO
+
+from pathlib import Path
 
 class CaptureNode(ImagePreviewNode):
     def __init__(self):
         super().__init__("yolox_object_traking_node")
         # QoS Settings
         shigure_qos = QoSProfile(depth=10, reliability=ReliabilityPolicy.BEST_EFFORT)
+        #shigure_qos2 = QoSProfile(depth=10, reliability=ReliabilityPolicy.RELIABLE, history =HistoryPolicy.KEEP_ALL)
+        
+        #動画用の設定
+        # self.video_path = 'qualification_hakkiri_1.mp4'
+        self.video_path = './src/shigure_core/demo_movie/siro_kaiten_1.mp4'
+        # self.video_path = 'qualification_back_stop_1.mp4'
+        print("読み込み")
+
+        
+        print(self.video_path)
+        self.cap = cv2.VideoCapture(self.video_path)
+
+        if not self.cap.isOpened():
+            print("動画ファイルを開けませんでした。")
+        else:
+            print("開けた")
+        
+        # 出力動画の設定
+
+        # self.output_video_path = "output_front_stop_1_RANSAC.mp4"
+        # self.output_video_path = "output2_qualification_back_stop_1.mp4"
+        # self.output_video_path = "output2_o6.mp4"
+        self.output_video_path = "testo.mp4"
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')  # 動画のコーデック（例: mp4v）
+        fps = self.cap.get(cv2.CAP_PROP_FPS)  # 元の動画のFPS
+        width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))  # フレームの幅
+        height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))  # フレームの高さ
+        self.out = cv2.VideoWriter(self.output_video_path, fourcc, fps, (width, height))
+
+
+
 
         # publisher, subscriber
         self.detection_publisher = self.create_publisher(
-        DetectedObjectList, 
-        '/shigure/object_detection', 
+        DetectedObjectList,
+        '/shigure/object_detection',
         10
         )
         yolox_bbox_subscriber = message_filters.Subscriber(
-            self, 
+            self,
             BoundingBoxes,
             '/bounding_boxes',
             qos_profile = shigure_qos
         )
         people_subscriber = message_filters.Subscriber(
-            self, 
-             PoseKeyPointsList, 
-            '/shigure/people_detection', 
+            self,
+             PoseKeyPointsList,
+            '/shigure/people_detection',
             qos_profile=shigure_qos
         )
         color_subscriber = message_filters.Subscriber(
-            self, 
+            self,
             CompressedImage,
-            '/rs/color/compressed', 
+            '/rs/color/compressed',
             qos_profile = shigure_qos
         )
         depth_camera_info_subscriber = message_filters.Subscriber(
-            self, 
+            self,
             CameraInfo,
-            '/rs/color/cameraInfo', 
+            '/rs/color/cameraInfo',
             qos_profile=shigure_qos
         )
+        segment_subscriber = message_filters.Subscriber(
+            self,
+            Segments,
+            '/Segments',
+            qos_profile=shigure_qos
+        )
+
+        
 
 
 
 
         self.track_list = []
         self.lk_count :int = 0
-        self.revs: np.ndarray = np.ndarray
+        # self.revs: np.ndarray = np.ndarray
         self.lk_reset = True
+
+        #ROS subscriber 
         # self.time_synchronizer = message_filters.TimeSynchronizer(
-        #     [yolox_bbox_subscriber,people_subscriber, color_subscriber, depth_camera_info_subscriber], 1000)	
-        self.time_synchronizer = message_filters.TimeSynchronizer(
-            [yolox_bbox_subscriber,color_subscriber,depth_camera_info_subscriber], 1000)	
-        self.time_synchronizer.registerCallback(self.callback)	
-        self.yolox_object_detection_logic = YoloxObjectDetectionLogic()
-        
+        #     [yolox_bbox_subscriber,color_subscriber,depth_camera_info_subscriber,segment_subscriber], 1000)
+       
+
         self.frame_object_list: List[FrameObject] = []
         #self.start_item_list:List[BboxObject]= []
         self.bring_in_list:List[BboxObject] = []
@@ -111,17 +169,14 @@ class CaptureNode(ImagePreviewNode):
 
         self.take_out_obj_class_id  = string
         self.take_out_people_id = string
-        
+
         self._judge_params = JudgeParams(200, 5000, 5)
         self._count = 0
         self.check =0
-        self.object_id_num:int =0 
+        self.object_id_num:int =0
         self.trackable_objects = {}
-        
-        self._colors = []
-        for i in range(255):
-            self._colors.append(tuple([random.randint(128, 192) for _ in range(3)]))
-        
+
+
         #tracking box
         self.curent_object_dict = {}
         self.feature_box_dict = {}
@@ -129,16 +184,14 @@ class CaptureNode(ImagePreviewNode):
         self.tracked_objects = {}
         self.max_missing_frames = 10
 
-
-
-
+        self.clipped_images: dict  = {}  # クリップ画像を保存する辞書
 
      #   self.bbox_item_list = []
 
 
 
         self.previous_object_dict = {}
-        
+
         self._tracking_info = TrackingInfo()
 
         self.prvs_box = []
@@ -149,43 +202,44 @@ class CaptureNode(ImagePreviewNode):
         self.frame_count = 0
         self.add_feature_every_n_frames = 5
 
-    
+
+
+        #SIFT setting
+        self.FLANN_INDEX_KDTREE = 1
+        self.index_params = dict(algorithm = self.FLANN_INDEX_KDTREE, trees = 8)
+        self.search_params = dict(checks = 50)
+        self.flann = cv2.FlannBasedMatcher(self.index_params, self.search_params)#マッチ検出器の定義
+        self.sift = cv2.SIFT_create(nfeatures=0,contrastThreshold=0.01,nOctaveLayers=7,edgeThreshold=20,sigma= 1.4) #SIFT特徴点検出器の定義
+        # self.sift = cv2.ORB_create() #SIFT特徴点検出器の定義
+
+        cv2.setNumThreads(10)
 
 
 
+        self.comand = "image"
+
+        self.seg_mask= np.zeros((720, 1280))
         self.object_index = 0
 
         #motpy
-        self.model_spec = {'order_pos': 1, 'dim_pos': 2,                                            
-                             'order_size': 1, 'dim_size': 2,                                         
-                             'q_var_pos': 1000, 'r_var_pos': 0.1}
-        self.matching_fn_kwargs={                                                                   
-         'min_iou': 0.1,                                                                            
+        self.model_spec = {'order_pos': 1, 'dim_pos': 2,
+                             'order_size': 1, 'dim_size': 2,
+                             'q_var_pos': 100, 'r_var_pos': 0.1}
+        self.matching_fn_kwargs={
+         'min_iou': 0.1,
          'multi_match_min_iou': 0.50}
-        
-        self.dt = 0.3     
+
+        self.dt = 0.125
         self.track_id_dict = {}
 
         self.flow_p =[]
 
+        # self.fe_idelist = {} #特徴点の識別子
+
+        self.first_time = 0
+
 
         self.mottracker = MultiObjectTracker(dt=self.dt, model_spec=self.model_spec,matching_fn_kwargs=self.matching_fn_kwargs)
-
-
-
-        ## for facedetection by OpenCV Haar-like feature based face detector
-        #
-        # haarcascade_frontalface_default.xml from https://github.com/opencv/opencv/tree/master/data/haarcascades
-        face_cascade = cv2.CascadeClassifier('/home/azuma/ros2_ws/src/dir/data/haarcascades/haarcascade_frontalface_default.xml')
-        # haarcascade_eye.xml from https://github.com/opencv/opencv/tree/master/data/haarcascades
-        eye_cascade = cv2.CascadeClassifier('/home/azuma/ros2_ws/src/dir/data/haarcascades/haarcascade_eye.xml')
-        eye_tree = cv2.CascadeClassifier('/home/azuma/ros2_ws/src/dir/data/haarcascades/haarcascade_eye_tree_eyeglasses.xml')
-        # haarcascade_upperbody.xml from https://github.com/opencv/opencv/tree/master/data/haarcascades
-        body_cascade = cv2.CascadeClassifier('/home/azuma/ros2_ws/src/dir/data/haarcascades/haarcascade_upperbody.xml')
-
-
-        profileface = cv2.CascadeClassifier('/home/azuma/ros2_ws/src/dir/data/haarcascades/haarcascade_profileface.xml')
-
 
 
         self._COLORS = np.array(
@@ -272,70 +326,217 @@ class CaptureNode(ImagePreviewNode):
                 0.50, 0.5, 0
             ]
         ).astype(np.float32).reshape(-1, 3)
+        # self.model = YOLO("yolov8n-seg.pt")
+        #self.inactive_counter = {}
+        # 全体画像の保存
+        current_time = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        self.output_folder = f"matched_images_{current_time}"
 
 
-    #def callback(self, yolox_bbox_src: BoundingBoxes,people: PoseKeyPointsList, color_img_src: CompressedImage, camera_info: CameraInfo):
-    def callback(self, yolox_bbox_src: BoundingBoxes,color_img_src: CompressedImage, camera_info: CameraInfo):	
+        current_time2 = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        self.output_folder2 = f"matched_images_{current_time}_second"
+        
+
+        if not os.path.exists(self.output_folder):
+            os.makedirs(self.output_folder)
+
+        if not os.path.exists(self.output_folder2):
+            os.makedirs(self.output_folder2)
+
+        self.prv_des ={}
+
+        self.prev_matchid =[]
+
+        self.yolo11_model = YOLO("yolo11x-seg.pt")
+    
+
+    def process_video(self):
+        try:
+
+            while self.cap.isOpened():
+                # 動画からフレームを取得
+                ret, frame = self.cap.read()
+
+
+                if not ret:
+                    print("動画の最後に到達しました。")
+                    break
+
+                # try:
+
+                    # フレームの処理（ここでカスタム処理を記述）
+                processed_frame = self.callback(frame)
+                # except Exception as e:
+
+     
+
+                # 処理結果を表示（必要に応じて保存なども可能）
+                self.out.write(processed_frame)
+
+
+                key = cv2.waitKey(1) & 0xFF
+
+                # ESCキーで終了
+                if  key ==ord('q'):  # 27 は ESC キー
+                    print("処理を中断しました。途中までの動画を保存します...")
+
+                    break
+        except KeyboardInterrupt:
+            print("\nCtrl+C が押されました。処理を中断し、途中までの動画を保存します...")
+        finally:
+
+            # 終了処理
+            self.cap.release()
+            self.out.release()
+            cv2.destroyAllWindows()
+            print(f"処理後の動画を保存しました: {self.output_video_path}")
+
+    #rosノードとするときにのコールバック
+    #def callback(self, yolox_bbox_src: BoundingBoxes,color_img_src: CompressedImage, camera_info: CameraInfo, segment_src:Segments):
+    def callback(self, color_img_src):
         self.get_logger().info('Buffering start', once=True)
         self.frame_count_up()
-        color_img: np.ndarray = self.bridge.compressed_imgmsg_to_cv2(color_img_src)
-        height, width = color_img.shape[:2]	
 
+        # print(color_img_src.shape[:2])
 
+        color_img = color_img_src
+
+        # color_img: np.ndarray = self.bridge.compressed_imgmsg_to_cv2(color_img_src)
+        height, width = color_img.shape[:2]
+
+        self.img_size = (height,width)
+        
+
+        results = self.yolo11_model(color_img)
+
+        # result_img = results[0].plot()
+        self.detect = color_img.copy()
+
+        masks = results[0].masks.cpu().numpy().data #マスク領域抽出
+
+        self.masks_shaped = []
+            
+        for mask in masks:
+            self.masks_shaped.append(cv2.resize(mask,(int(self.detect.shape[1]),int(self.detect.shape[0]))))
+
+        for mask in self.masks_shaped:
+            the_mask = mask.copy()
+            the_mask = np.stack([the_mask] * 3,axis=-1)
+            color = (255,0,0)
+            self.detect[the_mask[:, :, 0] > 0.5] = self.detect[the_mask[:, :, 0] > 0.5] * 0.5 + np.array(color) * 0.5
+
+    
+        #動画デバック用YOLO11モデル、ROSデバックのときはいらない
+        result = results[0]
+        boxes = result.boxes.xyxy.cpu().numpy()
+        scores = result.boxes.conf.cpu().numpy()
+        class_ids = result.boxes.cls.cpu().numpy()
+        class_names = self.yolo11_model.names
+        img_header = ""
+
+        masks = result.masks
+
+        def create_msg(bboxes, scores, cls, cls_names, img_header, mask_data):
+            segments = Segments()
+            
+            i = 0
+            brack_img = np.zeros((720,1280))
+            for bbox in bboxes:
+                one_box = Segment()
+                # if < 0
+                if bbox[0] < 0:
+                    bbox[0] = 0
+                if bbox[1] < 0:
+                    bbox[1] = 0
+                if bbox[2] < 0:
+                    bbox[2] = 0
+                if bbox[3] < 0:
+                    bbox[3] = 0
+                one_box.xmin = int(bbox[0])
+                one_box.ymin = int(bbox[1])
+                one_box.xmax = int(bbox[2])
+                one_box.ymax = int(bbox[3])
+
+                mask = mask_data[i].xy[0]
+    
+                mask =  np.array(mask, dtype=np.int32)
+
+                one_box.x_masks = mask[:, 1].astype(np.int32).tolist()  # x座標
+                one_box.y_masks = mask[:, 0].astype(np.int32).tolist()  # y座標
+
+                one_box.probability = float(scores[i])
+                one_box.class_id = str(cls_names[int(cls[i])])
+                segments.segments.append(one_box)
+
+                i = i+1
+
+            return segments
+
+        
+        #検出BOX情報
+        
+        segment_src = create_msg(boxes, scores, class_ids, class_names, img_header,masks)
+
+        # print("boxes",len(results))
+
+        #ROS2用メッセージのアイコン画像設定
         if not hasattr(self, 'object_list'):
             self.object_list = []
             black_img = np.zeros_like(color_img)
             for i in range(4):
                 self.object_list.append(cv2.resize(black_img.copy(), (width // 2, height // 2)))
-    
-        self._color_img_buffer.append(color_img) 
+
+        self._color_img_buffer.append(color_img)
+        if len(self._color_img_buffer)> 1:
+            self._color_img_buffer.pop(-1)
         
-        timestamp = Timestamp(color_img_src.header.stamp.sec, color_img_src.header.stamp.nanosec)
-        frame = ColorImageFrame(timestamp, self._color_img_buffer[0], color_img) #bufferの先頭の画像と新しい画像
-        self._color_img_frames.add(frame) #ColorImageFrameslistの更新して、listに追加
+        #動画デバック用タイムスタンプ
+        timestamp = Timestamp(0,0)
+
+        ##ROS2用##
+        # timestamp = Timestamp(color_img_src.header.stamp.sec, color_img_src.header.stamp.nanosec)
+
+
+        # frame = ColorImageFrame(timestamp, self._color_img_buffer[0], color_img) #bufferの先頭の画像と新しい画像
+        # # self._color_img_frames.add(frame) #ColorImageFrameslistの更新して、listに追加
+
+        #これは検出ノードの名残です
 
         # frame_object_dict,bring_in_list,wait_item_list,people_item_list,take_out_people_id,take_out_obj_class_id = self.yolox_object_detection_logic.execute(yolox_bbox_src, timestamp,people,color_img,self.frame_object_list,self._judge_params,self.take_out_people_id ,self.take_out_obj_class_id ,self.bring_in_list,self.wait_item_list)
-        
+
         # #if self._count == 0:
         #     #self.start_item_list = start_item_list
         # self.bring_in_list = bring_in_list
         # self.wait_item_list = wait_item_list
         # self.people_item_list = people_item_list
         # self.take_out_people_id = take_out_people_id
-        # self.take_out_obj_class_id = take_out_obj_class_id		
+        # self.take_out_obj_class_id = take_out_obj_class_id
         # #count = 1
         # #self._count = count
         # self.frame_object_list = list(chain.from_iterable(frame_object_dict.values())) #frame_object_dictをすべて取り出し
-        
-        
-        sec, nano_sec = frame.timestamp.timestamp
-        detected_object_list = DetectedObjectList()
-        detected_object_list.header.stamp.sec = sec
-        detected_object_list.header.stamp.nanosec = nano_sec
-        detected_object_list.header.frame_id = camera_info.header.frame_id
 
-        
-        # if self.frame_object_list:		
+        # sec, nano_sec = frame.timestamp.timestamp
+        # detected_object_list = DetectedObjectList()
+        # detected_object_list.header.stamp.sec = sec
+        # detected_object_list.header.stamp.nanosec = nano_sec
+        # detected_object_list.header.frame_id = camera_info.header.frame_id
+        ##ROS2用##
+
+
+        # if self.frame_object_list:
         #     detected_object_list = self.create_msg(self.frame_object_list, detected_object_list, frame)
 
         # self.detection_publisher.publish(detected_object_list)
         #result = color_img.copy()
 
 
-
-
         self.get_logger().info('Buffering end', once=True)
 
-        # オプティカルフローのコード
 
 
-        # lkの特徴点の更新間隔
 
-        if( len(sys.argv) == 1 ):
-            cam = 0
-        else :
-            cam = int(sys.argv[1])
-        
+        # lk勾配法の特徴点の更新間隔
+
         # if self.lk_count > 2:
         #     self.lk_reset = True
         #     self.lk_count =0
@@ -343,41 +544,25 @@ class CaptureNode(ImagePreviewNode):
         # elif self.lk_count == 0 :
         #     self.lk_reset = True
 
-        # else: 
+        # else:
         #     self.lk_reset = False
-        
+
 
         #self.lk_count = self.lk_count + 1
-
-
         
-            
-        #print("camera device num: %d"%cam)
-
-        # cap = cv2.VideoCapture(color_img)
-        # cap.set(cv2.CAP_PROP_FPS,30)
-
-        # print("FPS:%f"%cap.get(cv2.CAP_PROP_FPS))ttttttttttttttttttt
-        # print("Image Height:%d"%int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)))
-        # print("Image Width:%d"%int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)))
-        # print("FOURCC:%d"%int(cap.get(cv2.CAP_PROP_FOURCC)))
-
+        #実行用関数設定
         proc = "lktracking"
         # proc = "color"
+        # proc = "sift"
         ndi_send = None
 
         # ret,img = cap.read()
         ret = True
 
         img = color_img
-        self.flag = True
-        self.tflag = True
-        self.t2flag = True
-
-        self.newflag = False
-        self.id_flag = True
-
-        point_relia = False
+        
+        #特徴点が少なくなったときのフラグ
+        self.point_relia = False
         uncertain_flag = False
 
 
@@ -388,53 +573,36 @@ class CaptureNode(ImagePreviewNode):
 
         #self.prvs = cv2.cvtColor(img,cv2.COLOR_BGR2GRAY)
 
-        #
-        ## for HSV color space transform
-        #
-        if self._count == 0:
-            self.hsv = np.zeros_like(img)
-            self.hsv[...,1] = 255
-            colors_hsv = [[0,0,0]]
-            for i in range(1, 256):
-                colors_hsv.append(np.array([random.randint(0,180), random.randint(120,255), 255]))
-            colors_hsv = np.array(colors_hsv).astype(np.uint8)
 
-        
+
         profile_face = True
 
         #
         ## for LK tracking
         #
         #ShiTomasiコーナー検出器のためのパラメータ
-        lk_fnum = 500
-        lk_fnum2 = 500
+        lk_fnum = 1000
+        lk_fnum2 = 3000
         feature_params = dict( maxCorners = lk_fnum,
                             qualityLevel = 0.001,
-                            minDistance = 7,
-                            blockSize = 7 )
+                            minDistance = 3,
+                            blockSize = 8 )
         feature_params2 = dict( maxCorners = lk_fnum2,
                     qualityLevel = 0.001,
-                    minDistance = 7,
+                    minDistance = 2,
                     blockSize = 7 )
         # Lucas-Kanade法によるオプティカル・フローのためのパラメータ
-        lk_params = dict( winSize  = (15,15),
-                        maxLevel = 2,
-                        criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03))
-        # random color map
-        lk_color = np.random.randint(0,255,(lk_fnum,3))
+        lk_params = dict( winSize  = (31,31),
+                        maxLevel = 6,
+                        criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 30, 0.01))
 
-        #
-        ## for Bluring preprocess of input image
-        #
-        blur_proc = "gaussian"
-        gaussian_scale = 1
-        median_scale = 5
-        bilateral_scale = 20
+
 
         #
         ## for histogram equalization
         #
-        clahe = None
+        self.new_id = 0
+        self.brack_img = self.seg_mask.copy()
 
 
 
@@ -442,31 +610,28 @@ class CaptureNode(ImagePreviewNode):
         ## main loop
         #
 
-        # t_prev = time.perf_counter()
+    
 
+        #デバック用コマンド切り替え
+        self.key = cv2.waitKey(1) & 0xFF
 
-        # t_now = time.perf_counter()
-        # duration = t_now-t_prev
-        # t_prev = t_now
+        
+        if self.key == ord('a'):
+            self.comand = "flow"
+        elif self.key == ord('s') :
+            self.comand = "sift"
+        elif self.key == ord('r') :
+            self.comand = "image"
+        elif self.key == ord('n') :
+            self.comand = "new_point"
+        elif self.key == ord('m') :
+            self.comand = "old_point"
+        elif self.key == ord('l') :
+            self.comand == "line"
+        elif self.key == ord('t') :
+            self.comand == "add_point"
+        
 
-        # image capture
-        # ret,img = cap.read()
-
-
-        # resize for processing rate
-        #img = cv2.resize(img,((int)(width/2),(int)(height/2)))
-
-
-        #the newest key entry accepted, others flushed
-        # key = -1
-        # while True:
-        #     next_key = cv2.waitKey(1)
-        #     if next_key != -1 : 
-        #         key = next_key
-        #     else:
-        #         break
-
-        # key = key&0xFF 
 
         # if(ret==True):
         #     if key == ord('q') :
@@ -477,372 +642,150 @@ class CaptureNode(ImagePreviewNode):
         #     elif key == ord('c') : # Color
         #         proc = "color"
 
-        #     elif key == ord('t') : # Lukas-Kanade feature tracking
-        #         proc = "lktracking"
-        #         # lk_reset = True
-
-        #     # blurring preprocessing 
-        #     if blur_proc == "gaussian" :
-        #         img = cv2.GaussianBlur(img.astype(np.float32),(gaussian_scale,gaussian_scale),0).astype(np.uint8)
-        #         #img = cv2.GaussianBlur(img.astype(np.float32),(0,0),gaussian_scale).astype(np.uint8)
-        #     elif blur_proc == "median" :
-        #         img = cv2.medianBlur(img,median_scale)
-        #     elif blur_proc == "bilateral" :
-        #         img = cv2.bilateralFilter(img.astype(np.float32),bilateral_scale,75,75).astype(np.uint8)
-
 
         # image processing
         if proc == "color" :
             result = img
-            next = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-            mot = MOT()
-
-            if( self.lk_reset == True ):
-                if self._count == 0:
-                    self.prvs = next
-                    
-                    self._count = self._count + 1
-                
-                # if len( self.track_list)> 10:
-                #     self.track_list = self.track_list[5:]
-
-
-
-
-                p0 = cv2.goodFeaturesToTrack(next, mask = None, **feature_params)
-                print(p0)
-      
-
-
-                self.lk_reset = False
-
-            else :
-
-                p0 = self.good_new.reshape(-1,1,2)
-                #print(p0)
             
-
-            # オプティカル・フローを計算
-
-            p1, st, err = cv2.calcOpticalFlowPyrLK(self.prvs, next, p0, None, **lk_params)
+        elif proc == "lktracking" : #追跡処理
         
-            # 良い特徴点を選択
-            self.good_new = p1[st==1]
-            self.good_old = p0[st==1]
+            print("フレーム",self.frame_count)
 
-            # print(len(self.good_new))
-            # print(len())
-
-
-            feature_list = []
-            track = np.zeros_like(img)
-            track2 = np.zeros_like(img)
+            self.fe_idelist = {} #特徴点の識別子
+            # tracemalloc.start()
             
-
-            yolox_bboxes = yolox_bbox_src.bounding_boxes #yolox-rosから受け取った物体集合から物体一つずつ取り出す
-            yolox_bboxes = filter_boxes(yolox_bboxes)
-            bbox_count = 0
-            bbox_item_list =[]
-            #print(len(yolox_bboxes))
-            box_count_t = 0
-
-            for id, bbox in enumerate(yolox_bboxes):
-                probability = bbox.probability
-                x = bbox.xmin
-                y = bbox.ymin
-                xmax = bbox.xmax
-                ymax = bbox.ymax
-                height = ymax - y
-                width = xmax - x
-                class_id = bbox.class_id
-                object_id = ""
-
-                if is_unknown_object(class_id, probability) and height < 500:
-                    box_count_t += 1
-                    #print("1frame")
-                    bbox_count += 1
-                    brack_img = np.zeros(color_img.shape[:2])
-                    brack_img[y:y + height, x:x + width] = 255
-                    mask_img:np.ndarray = brack_img[y:y + height, x:x + width]
-    
-                    # BBOX(左上端座標, 幅, 高さ)
-                    bounding_box = BoundingBox(x, y, width, height) 
-                    area = width*height # BBOXの面積
-
-                    object_id = bbox_count
-
-                    test_item = [x,y, width, height]
-                    
-                    box_flow = []
-                    
-
-
-                    for i,(new,old) in enumerate(zip(self.good_new,self.good_old)):
-                        total_overlap_count = 0
-                        track_id = []
-                        
-
-                        a,b = new.ravel()
-                        new_point = a,b #+211 
-                        c,d = old.ravel()
-
-                        old_point = c,d #+211
-                        colar =(0,255,0)
-                        # cv2.line(track, (int(a),int(b)),(int(c),int(d)), colar, 2)
-                        # result = cv2.circle(result,(int(a),int(b)),5,colar,-1)
-
-
-                        reactangle = [x,y, width, height]
-
-
-                        if is_point_inside_bounding_box(new_point, reactangle):
-                            box_flow.append(new_point)
-                            # print(new_point)
-                            self.b_old = old_point
-
-                            cv2.line(track, (int(a),int(b)),(int(c),int(d)), colar, 2)
-                            result = cv2.circle(result,(int(a),int(b)),5,colar,-1)
-
-
-
-
-                            # track_id.append(key) 
-                            # bbox_item = [x,y, width, height, probability, box_flow]
-                            
-                
-                            # cv2.line(track, (int(a),int(b)),(int(c),int(d)), colar, 2)
-                            # result = cv2.circle(result,(int(a),int(b)),5,colar,-1)
-                            if len(box_flow) > 3:
-                                break
-                            # break
-
-
-                    
-                    if len(box_flow) < 4:
-                        print("no")
-                        p_new = cv2.goodFeaturesToTrack(next, mask = None, **feature_params2)
-                        for id, bbox in enumerate(yolox_bboxes):
-                            probability = bbox.probability
-                            x = bbox.xmin
-                            y = bbox.ymin
-                            xmax = bbox.xmax
-                            ymax = bbox.ymax
-                            height = ymax - y
-                            width = xmax - x
-                            class_id = bbox.class_id
-                            object_id = ""
-
-                            if is_unknown_object(class_id, probability) and height < 500:
-
-                                box_count_t += 1
-                                #print("1frame")
-                                bbox_count += 1
-                                brack_img = np.zeros(color_img.shape[:2])
-                                brack_img[y:y + height, x:x + width] = 255
-                                mask_img:np.ndarray = brack_img[y:y + height, x:x + width]
-                
-                                # BBOX(左上端座標, 幅, 高さ)
-                                bounding_box = BoundingBox(x, y, width, height) 
-                                area = width*height # BBOXの面積
-
-                                object_id = bbox_count
-
-                                test_item = [x,y, width, height]
-                                
-                                box_flow = []
-                    
-
-
-                                for new_p in p_new:
-                                    total_overlap_count = 0
-                                    track_id = []
-                                    
-
-                                    a,b = new_p.ravel()
-                                    new_point = a,b #+211 
-
-                                    colar =(0,255,0)
-                                    # cv2.line(track, (int(a),int(b)),(int(c),int(d)), colar, 2)
-                                    # result = cv2.circle(result,(int(a),int(b)),5,colar,-1)
-
-
-                                    reactangle = [x,y, width, height]
-
-
-                                    if is_point_inside_bounding_box(new_point, reactangle):
-
-                                        box_flow.append(new_point)
-                                        self.good_new= np.append(self.good_new, new_point)
-                                        if len(box_flow) > 3:
-                                            break
-
-
-                    # bbox_item = [x,y, width, height, probability, self.good_new]
-                        
-                    bbox_item = [x,y, width, height, probability, box_flow]
-                    bbox_item_list.append(bbox_item)
-                    self.flow_p = box_flow
-
-                    #Track用box辞書
-                    #self.curent_object_dict[object_id] = bbox_item
-            
-            # print(bbox_item_list)
-
-
-            if box_count_t == 0 :
-                flow2 = []
-                print("nonebox")
-
-                for i,(new,old) in enumerate(zip(self.good_new,self.good_old)):
-                    a,b = new.ravel()
-                    new_point = a,b #+211 
-                    c,d = old.ravel()
-
-                    old_point = c,d #+211
-                    if old_point in self.flow_p:
-                        flow2.append(new_point)
-                
-                if len(flow2)==0:
-                    bbox_item =[]
-                else:
-
-                    bbox_item = [None,None, None, None, None,flow2]
-                    bbox_item_list.append(bbox_item)
-            
-            print(bbox_item_list)
-
-
-
-            motdetections = mot.bboxes2out_detections(bbox_item_list)
-            self.mottracker.step(motdetections)   
-            mottracks = self.mottracker.active_tracks(min_steps_alive=3)
-            #print(len(mottracks))
-
-            for track_result in mottracks:
-                if track_result.id not in self.track_id_dict: 
-                    new_id = len(self.track_id_dict)
-                    self.track_id_dict[track_result.id]= new_id
-            result = mot.draw_debug(result,mottracks,self.track_id_dict)
-
-            # for r_tc in  mottracks:
-            #     print("dffjjjjj")
-            #     print(r_tc.box )
-            #     bbox = r_tc.box 
-            #     c ,d = self.b_old
-            #     colar =(0,0,255)
-            #     #print(int(bbox[5]))
-
-            #     cv2.line(track, (int(bbox[4]),int(bbox[5])),(int(c),int(d)), colar, 2)
-            #     result = cv2.circle(result,(int(bbox[4]),int(bbox[5])),5,colar,-1)
-
-
-
-            self.track_list.append(track)
-            if( len(self.track_list)> 10 ):
-                self.track_list.pop(0)
-
-            for t in self.track_list :
-                result = np.where(t!=0,t,result)
-
-            self.prvs = next
-
-                 
-
-
-
-        # elif proc == "gray" : 
-        #     result = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        # elif proc == "denseflow" :
-                            
-        #     self.next = cv2.cvtColor(img,cv2.COLOR_BGR2GRAY)
-        #     self.flow = cv2.calcOpticalFlowFarneback(self.prvs,self.next, None, 0.5, 3, 15, 3, 5, 1.2, 0)
-
-
-
-        #     mag, ang = cv2.cartToPolar(self.flow[...,0], self.flow[...,1])
-        #     # colored denseflow
-        #     self.hsv[...,0] = ang*180/np.pi/2
-        #     self.hsv[...,2] = cv2.normalize(mag,None,0,255,cv2.NORM_MINMAX)
-        #     rgb = cv2.cvtColor(self.hsv,cv2.COLOR_HSV2BGR)
-        #     result = cv2.addWeighted(img,0.5,rgb,0.5,0)
-        #     flowx = mag*np.cos(ang)
-        #     flowy = mag*np.sin(ang)
-        #     #result = (np.minimum(np.abs(flowx)*100,255)).astype(np.uint8)
-        #     for i in range(0,result.shape[0],15):
-        #         for j in range(0,result.shape[1],15):
-        #             # try:
-        #                 cv2.line(result,(j,i),(int(j+flowx[i,j]*3),int(i+flowy[i,j]*3)),
-        #                         (255,255,255),1)
-        #                 print(int(j+flowx[i,j]*3))
-        #             # except Exception as e:
-        #             #     pass
-        #                 # print(e)
-        #     self.prvs = self.next
-
-
-        elif proc == "lktracking" :
             mot = MOT()
-            roi_list = []
+            
+            #グレースケール画像
             next = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-            result = img.copy()
+            # result = img.copy()
             #self.frame_count += 1
             #print(self.frame_count)
 
             bbox_item_list = []
-            mot_item_list = []
+            self.mot_item_list = {}
 
             self.id  = []
             self.match = {}
-            #cv2.rectangle(result, (0, 311), (900, 711), (255,204,102), thickness=3)
-            
-            
-            # if len(wait_item_list) >0 :
-            #     self.get_logger().info('Start', once=True)
-                
-            #     w_item =  wait_item_list[-1]
-            #     bounding_box_src = w_item._bounding_box
-            #     x, y, width1, height1 = bounding_box_src.items
-            #     rectangle: tuple[float, float, float, float] = [x,y ,width1,height1]
-            #     if len(wait_item_list) >1 :
-            #         w_item2 =  wait_item_list[-2]
-            #         bounding_box_src2 = w_item2._bounding_box
-            #         x2, y2, width2, height2 = bounding_box_src2.items
-            #         rectangle2: tuple[float, float, float, float] = [x2,y2 ,width2,height2]
+            box_id =[]
 
+            self.testmask = img.copy()
+            # self.detect = img.copy()
 
-            #     #self.roi = (x, y,width1+x, height1+y)
-
-            #     # obj= next[self.roi[1]+300:self.roi[3]+300, self.roi[0]+300:self.roi[2]+300]
-            #     #オプティカルフローの特徴点抽出領域を限定
-            #     #obj= next[211:711, 0:900]
-                
-
-
-
-        
-            if( self.lk_reset == True ):
+            self.flow = img.copy()
+            self.matchkline = img.copy()
+ 
+            if( self.lk_reset == True ):#最初のフレーム特徴抽出
                 if self._count == 0:
                     self.prvs = next
-                    
+
+                    self.matchkline2 = self.matchkline
+
+
                     self._count = self._count + 1
-                
+
                 # if len( self.track_list)> 10:
                 #     self.track_list = self.track_list[5:]
+                yolo_segments = segment_src.segments
+                # yolo_segments = filter_boxes(yolo_segments)
+                self.bbox_count = 0
+
+                mask = np.zeros_like(next)
+
+
+                for id, bbox in enumerate(yolo_segments):
+                    probability = bbox.probability
+                    x = bbox.xmin
+                    y = bbox.ymin
+                    xmax = bbox.xmax
+                    ymax = bbox.ymax
+                    height = ymax - y
+                    width = xmax - x
+                    class_id = bbox.class_id
+                    x_masks = bbox.x_masks
+                    y_masks = bbox.y_masks
+
+                    mask_pairs = list(zip(y_masks, x_masks))
+
+                    m_points = np.array(mask_pairs, dtype=np.int32)
+
+                    box_info= [x,y,xmax,ymax]
 
 
 
 
-                p0 = cv2.goodFeaturesToTrack(next, mask = None, **feature_params)
-                #print(p0)
+
+
+
+
+
+                    object_id = ""
+                    
+                    #検出物体のソート処理
+                    if is_unknown_object(class_id, probability,box_info,img_size=self.img_size) and height < 700:
+                        print("1frame")
+
+
+                        mask = cv2.drawContours(mask, [m_points], -1, 255, thickness=cv2.FILLED)
+
+                        brack_img = self.seg_mask.copy()
+
+                        mask_img = cv2.fillPoly(brack_img, [m_points], 255)  # 255は白の値
+
+                        # BBOX(左上端座標, 幅, 高さ)
+                        bounding_box = BoundingBox(x, y, width, height)
+                        area = width*height # BBOXの面積
+
+                        object_id = self.bbox_count
+
+                        test_item = [x,y, width, height]
+
+                        box_id.append(id)
+
+
+
+                        bbox_item = BboxObject(bounding_box, area, mask_img, timestamp,class_id,object_id)
+                        bbox_item_list.append(bbox_item)
+
+
+                        bbox_item2 = [x,y, width, height, probability,class_id]
+                        self.mot_item_list[id]=bbox_item2
+
+                        self.match[object_id] = str(object_id)
+
+
+
+                        #Track用box辞書
+                        self.curent_object_dict[object_id] = bbox_item
+                        self.bbox_count += 1
+
+                        #print(object_id)
+
+
+                        #test_item = [x,y,xmax,ymax]
+
+
+                self.first_mask = mask #cv2.cvtColor(mask, cv2.COLOR_BGR2GRAY)
+
+
+                distance = 20  # 削る距離（ピクセル単位）
+                kernel = np.ones((distance, distance), np.uint8)  # 距離に基づくカーネル
+
+                self.first_mask= cv2.erode(self.first_mask, kernel, iterations=1)
+
+                self.keypoints, self.descriptors = self.sift.detectAndCompute(img, mask = self.first_mask)
+                # cv2.imwrite("test_mask.png", self.first_mask)
+                p0 = np.array([kp.pt for kp in self.keypoints], dtype=np.float32).reshape(-1, 1, 2)
+                # print(p0)
+
 
 
                 self.lk_reset = False
 
             else :
-
                 p0 = self.good_new.reshape(-1,1,2)
                 #print(p0)
-            
+
 
             # オプティカル・フローを計算
 
@@ -850,870 +793,2542 @@ class CaptureNode(ImagePreviewNode):
 
             #print(p1)
 
+            print(len(p1))
 
-            if len(self.curent_object_dict) == 0 :
+
+            if self.frame_count == 1 :
+                self.result = img.copy()
                 # 良い特徴点を選択
                 self.good_new = p1[st==1]
                 self.good_old = p0[st==1]
-
-                yolox_bboxes = yolox_bbox_src.bounding_boxes #yolox-rosから受け取った物体集合から物体一つずつ取り出す
-                yolox_bboxes = filter_boxes(yolox_bboxes)
-                bbox_count = 0
-
-                for id, bbox in enumerate(yolox_bboxes):
-                    probability = bbox.probability
-                    x = bbox.xmin
-                    y = bbox.ymin
-                    xmax = bbox.xmax
-                    ymax = bbox.ymax
-                    height = ymax - y
-                    width = xmax - x
-                    class_id = bbox.class_id
-                    object_id = ""
-
-                    if is_unknown_object(class_id, probability) and height < 500:
-                        #print("1frame")
-                        
-                        brack_img = np.zeros(color_img.shape[:2])
-                        brack_img[y:y + height, x:x + width] = 255
-                        mask_img:np.ndarray = brack_img[y:y + height, x:x + width]
-     
-                        # BBOX(左上端座標, 幅, 高さ)
-                        bounding_box = BoundingBox(x, y, width, height) 
-                        area = width*height # BBOXの面積
-
-                        object_id = bbox_count
-
-                        test_item = [x,y, width, height]
-
-
-                        
-                        bbox_item = BboxObject(bounding_box, area, mask_img, timestamp,class_id,object_id)
-                        bbox_item_list.append(bbox_item)
-
-
-                        bbox_item2 = [x,y, width, height, probability,class_id]
-                        mot_item_list.append(bbox_item2)
-
-                        self.match[object_id] = str(object_id) 
-
-                        
-
-                        #Track用box辞書
-                        self.curent_object_dict[object_id] = bbox_item
-                        bbox_count += 1
-
-                        #print(object_id)
-
-
-                        #test_item = [x,y,xmax,ymax]
-                        
-
-               
-                feature_list = []
                 track = np.zeros_like(img)
-                box_flow = []
-                box_flow2 = []
 
-                for i,(new,old) in enumerate(zip(self.good_new,self.good_old)):
-                    total_overlap_count = 0
-                    track_id = []
-
-                    a,b = new.ravel()
-                    new_point = a,b #+211 
-                    c,d = old.ravel()
-
-                    old_point = c,d #+211
-                    colar =(0,255,0)
-       
-              
+                def lktracking():#オプティカルフローを使った特徴点記録
 
 
-                    for key, b_item in self.curent_object_dict.items() :
-                        #print(b_item)
-                        bounding_box_src = b_item._bounding_box
-                        x, y, width, height = bounding_box_src.items
-                        reactangle = [x,y, width, height]
+                    # # 良い特徴点を選択
+                    # self.good_new = p1[st==1]
+                    # self.good_old = p0[st==1]
+
+                    # yolox_bboxes = yolox_bbox_src.bounding_boxes #yolox-rosから受け取った物体集合から物体一つずつ取り出す
+                    # yolox_bboxes = filter_boxes(yolox_bboxes)
+                    # self.bbox_count = 0
+
+                    yolo_segments = segment_src.segments
 
 
-                        if is_point_inside_bounding_box(new_point, reactangle):
-                            track_id.append(key)
-                            if key == 1 :
-                                if len(box_flow) < 5:
-                                    box_flow.append(new_point)
+                    feature_list = []
+                    box_flow = []
+                    box_flow2 = []
+                    points_in_mask = []
+                    fe_ide = []
+
+                    self.addd = img.copy()
+
+                    
+
+                    for i,(new,old) in enumerate(zip(self.good_new,self.good_old)):
+                        total_overlap_count = 0
+                        track_id = []
+
+                        a,b = new.ravel()
+                        new_point = a,b #+211
+                        c,d = old.ravel()
+
+                        old_point = c,d #+211
+                        colar =(0,255,0)
+
+
+
+
+                        for key, b_item in self.curent_object_dict.items() :
+                            #print(b_item)
+                            bounding_box_src = b_item._bounding_box
+                            x, y, width, height = bounding_box_src.items
+                            reactangle = [x,y, width, height]
+
+
+                            brack_img = b_item._mask
+
+
+                            # if is_point_inside_bounding_box(new_point, reactangle):
+                            #特徴点抽出処理
+                            if brack_img[int(b), int(a)] == 255:
+
+                                track_id.append(key)
+
+                                # if len(box_flow) < 20:
+                                #     box_flow.append(new_point)
+
                                 # box_flow.append(new_point)
-                            elif key == 2 :
-                                box_flow2.append(new_point)
-                        
-
-
-                                
 
                         
-                            
-                    
-
-                    if len(track_id) > 0 :       
-                        cv2.line(track, (int(a),int(b)),(int(c),int(d)), colar, 2)
-                        result = cv2.circle(result,(int(a),int(b)),5,colar,-1)
-
-
-                    feature_list.append([new_point,old_point,track_id])
-
-
-                # print("feature_list")
-                # print(feature_list)
-                
-                # print(self.curent_object_dict)
-                for mot_item in mot_item_list:
-                    mot_item.insert(5, box_flow)
-                    # mot_item.append(box_flow)
-                    
-                
-
-                feature = {"feature": feature_list}
-
-                bbox = {"bbox": self.curent_object_dict}
 
 
 
-                self.feature_box_dict.setdefault(self.frame_count, [feature])
-                self.feature_box_dict[self.frame_count].append(bbox)
 
 
-                # mot
+
+                        if len(track_id) > 0 :
+                            # cv2.line(track, (int(a),int(b)),(int(c),int(d)), colar, 2)
+                            # result = cv2.circle(result,(int(a),int(b)),5,colar,-1)
+                            feature_list.append([new_point,old_point,track_id])
 
 
-                motdetections = mot.bboxes2out_detections(mot_item_list)
+                            if track_id[0] in self.fe_idelist:#カルマンフィルタの計算負荷軽減のため、特徴点を20個選択
+
+                                if len(self.fe_idelist[track_id[0]]) < 20:
+                                    self.fe_idelist[track_id[0]].append([new_point])
+
+                            else:
+                                self.fe_idelist.setdefault(track_id[0], [[new_point]])
+
+
+                        else:#物体領域外の特徴
+                            fe_ide.append(i)
+
+
+                    # print("feature_list")
+                    # print(feature_list)
+
+
+                    feature = {"feature": feature_list}
+
+                    bbox = {"bbox": self.curent_object_dict}
+
+                    self.feature_box_dict.setdefault(self.frame_count, [feature])
+
+
+                    self.feature_box_dict[self.frame_count].append(bbox)
+
+                    self.inactive_counter =[0] * len(self.feature_box_dict[self.frame_count][0]["feature"])  # 各特徴点のカウンターをリストで初期化
+
+
+                    print(len(self.fe_idelist))
+                    print(len(self.mot_item_list))
+                    # cv2.imwrite("rrrrrr.png",self.addd)
+
+
+                    for bo_id, mot_item in enumerate(self.mot_item_list.values()):
+                        if bo_id in self.fe_idelist:
+
+                            box_flow = self.fe_idelist[int(bo_id)]
+                            mot_item.insert(5, box_flow)
+                        else:
+                            box_flow = []
+                            mot_item.insert(5, box_flow)
+
+
+                    #物体領域外の特徴点を削除
+                    for del_fe in sorted(fe_ide,reverse=True):
+                        self.good_new= np.delete(self.good_new, del_fe, axis=0)
+                        self.good_old= np.delete(self.good_old, del_fe, axis=0)
+
+
+
+
+
+                    # mot
+
+                def sift1(): #SIFTを使った特徴点記録
+                    yolo_segments = segment_src.segments
+                 
+                    self.mask =self.first_mask
+
+                    result = img
+
+                    boxes = []
+                    self.countf= 0
+
+                    self.match_sift ={}
+
+                    self.matched_images = []
+
+                    self.matched_images2 = []
+
+                    alive_frame = []
+
+                    #検出Boxごとの特徴を記録
+                    for id, bbox in enumerate(yolo_segments ):
+                        probability = bbox.probability
+                        x = bbox.xmin
+                        y = bbox.ymin
+                        xmax = bbox.xmax
+                        ymax = bbox.ymax
+                        height = ymax - y
+                        width = xmax - x
+                        class_id = bbox.class_id
+                        # object_id = ""
+                        points_des = []
+                        box_point = []
+                        box_des = []
+                        box_info= [x,y,xmax,ymax]
+
+                        if is_unknown_object(class_id, probability,box_info,img_size=self.img_size) and height < 700 and id in box_id:
+                            boxes.append([x, y, xmax, ymax])
+                            clipped_image = img[y:ymax, x:xmax]
+
+
+                            for i, val in enumerate(zip(self.keypoints,self.descriptors)):
+                                kp, des = val
+                                # 特徴点がボックス内にあるか確認
+                                if x <= kp.pt[0] <= xmax and y <= kp.pt[1] <= ymax:
+                                    colar =get_id_color(self.countf)
+
+                                    kx, ky = int(kp.pt[0]), int(kp.pt[1]) 
+                                    # result = cv2.circle(result,(int(kp.pt[0]),int(kp.pt[1])),5,colar,3)
+
+                                    if self.descriptors is not None:#特徴点をBoxの相対座標で記録
+                                        new_kp = cv2.KeyPoint(kx - x, ky - y, kp.size)
+                                        box_point.append(new_kp)
+                                        box_des.append(self.descriptors[i])
+                                        alive_frame.append(1)
+
+
+
+
+
+
+                            # self.clipped_images[self.countf] = {
+                            #     "keypoints": keypoints_in_box,
+                            #     "descriptors": np.array(descriptors_in_box) if descriptors_in_box else None,
+                            #     "box": (x, y, width, height),
+                            # }
+                            # print("nani",len(points_des))
+
+                            if not (box_point ==[] or box_des ==[]):
+
+                                points_des =(box_point,box_des,class_id,box_info,alive_frame)
+
+                                self.clipped_images.setdefault(self.countf, points_des)
+
+                                self.match_sift[id] = self.countf
+
+
+
+                            self.countf +=1
+                    print("self.sift_match",self.match_sift )
+
+            
+
+
+                #SIFTとオプティカルフローのスレット別処理
+                thread1 = threading.Thread(target= lktracking)
+                thread2 = threading.Thread(target= sift1)
+                thread1.start()
+                thread2.start()
+
+
+                thread1.join()
+                thread2.join()
+
+
+
+
+
+
+                print(self.mot_item_list)
+                #カルマンフィルタの入力用のデータ作成
+                motdetections = mot.bboxes2out_detections(self.mot_item_list)
                 #print(motdetections)
-                self.mottracker.step(motdetections, self.match)   
-                mottracks = self.mottracker.active_tracks(min_steps_alive=3)
+
+                #カルマンフィルタの処理
+                self.mottracker.step(motdetections, self.match)
+                mottracks = self.mottracker.active_tracks(min_steps_alive=1)
                 #print(len(mottracks))
 
+
+
+
+
+
+                #カルマンフィルタの結果
                 for track_result in mottracks:
-                    if track_result.id not in self.track_id_dict: 
+                    if track_result.id not in self.track_id_dict:
                         new_id = len(self.track_id_dict)
                         self.track_id_dict[track_result.id]= new_id
-                result = mot.draw_debug(result,mottracks,self.track_id_dict)
+                result = mot.draw_debug(self.result,mottracks,self.track_id_dict)
+
+                # print(fe_ide)
+                # print(self.good_new.shape[0])
+
+                # for del_fe in sorted(fe_ide,reverse=True):
+                #     self.good_new= np.delete(self.good_new, del_fe, axis=0)
+                #     self.good_old= np.delete(self.good_old, del_fe, axis=0)
+
+
+
+
 
 
 
 
                 #print(self.feature_box_dict)
 
-            else:
-                #print(len(p1))
+            else:#2フレーム以降の処理
+        
                 print("開始")
-
+                # print(img.shape)
+                # result = img.copy()
 
 
                 # 良い特徴点を選択
-                
+
                 # print(len(self.good_new) )
                 # print(len(self.feature_box_dict[self.frame_count -1][0]["feature"]))
 
                 self.good_new = p1#[st==1]
                 self.good_old = p0#[st==1]
-    
+
                 track_list = []
                 feature_list = []
 
 
 
-                #print(len(self.good_new))
+                # print(len(self.good_new))
 
                 #print(self.feature_box_dict[self.frame_count -1][0]["feature"])
-                #print(len(self.feature_box_dict[self.frame_count -1][0]["feature"]))
-                
+                # print(len(self.feature_box_dict[self.frame_count -1][0]["feature"]))
+                yolo_segments = segment_src.segments
+                track = np.zeros_like(img)
 
-                if len(self.good_new) != len(self.feature_box_dict[self.frame_count -1][0]["feature"]):
-                    print("特徴の数が違う")
-                    print(len(self.good_new))
-                    #print(len(self.good_old))
-                    print(len(self.feature_box_dict[self.frame_count -1][0]["feature"]))
 
-                #print(self.good_new)
-               # print(self.feature_box_dict[self.frame_count -1][0]["feature"])
+                #オプティカルフローによる特徴点登録処理
+                def lktracking2():
+                    self.result = img.copy()
+                    if len(self.good_new) != len(self.feature_box_dict[self.frame_count -1][0]["feature"]):
+                        print("特徴の数が違う")
+                        print(len(self.good_new))
+                        #print(len(self.good_old))
+                        print(len(self.feature_box_dict[self.frame_count -1][0]["feature"]))
+
+
+
+                    #前のフレームと情報が間違っていないかの確認
+                    for i,(new,old,feature) in enumerate(zip(self.good_new,self.good_old, self.feature_box_dict[self.frame_count -1][0]["feature"])):
+
+                        total_overlap_count = 0
+
+
+
+                        #print(new)
+
+                        a,b = new.ravel()
+                        point = a,b #+211
+
+                        #print(a)
+                        c,d = old.ravel()
+
+                        point2 = c,d #+211
+                        colar =(0,255,0)
+
                     
 
-                #print(p1[st==0])
+                        if int(feature[0][0]) == int(c) and int(feature[0][1]) == int(d) :
+                            track_list = feature[2]
+                        else:
+                            print("not kaman match")
 
 
-                    
+                            print(int(feature[0][0]))
+                            print(int(c))
+                            print(int(feature[0][1]))
+                            print(int(d))
 
+                        # if int(feature[0][0]) != int(c):
 
-                for i,(new,old,feature) in enumerate(zip(self.good_new,self.good_old, self.feature_box_dict[self.frame_count -1][0]["feature"])):
+                        #     print("違う特徴")
+                        #     print(int(feature[0][0]))
+                        #     print(int(c))
 
-                    total_overlap_count = 0
-
-
-
-                    #print(new)
-
-                    a,b = new.ravel()
-                    point = a,b #+211 
-
-                    #print(a)
-                    c,d = old.ravel()
-
-                    point2 = c,d #+211
-                    colar =(0,255,0)
-
-
-                    track_list = feature[2]
-                    #print(track_list)
-
-                    # if int(feature[0][0]) != int(c):
-
-                    #     print("違う特徴")
-                    #     print(int(feature[0][0]))
-                    #     print(int(c))
-                        
-                    if point in p1[st==0]:
-                        print("含まれる")
-                        # feature_list.append([point,point2,track_list])
-                    else:
+                        # if point in p1[st==0]:
+                        #     print("含まれる")
+                        #     # feature_list.append([point,point2,track_list])
+                        # else:
 
                         feature_list.append([point,point2,track_list])
 
-              
+
+
+                    self.feature_box_dict.setdefault(self.frame_count, [{"feature": feature_list}])
+
+
+
+                    self.ID_point_count_dict = {}#物体領域内の特徴数を記録する辞書
+                    # track = np.zeros_like(img)
+                    #print(yolox_bboxes)
+
+                    lost_box = {}
+
+
+                    print(color_img.shape[:2])
+                    mask_img = np.zeros(img.shape[:2])
+
+
+                    self.mask_box= {}
+
+                    print("detect_count",len(yolo_segments))
+
+
+                    for num, bbox in enumerate(yolo_segments):#yolox_bboxes
+                        probability = bbox.probability
+                        x = bbox.xmin
+                        y = bbox.ymin
+                        xmax = bbox.xmax
+                        ymax = bbox.ymax
+                        height = ymax - y
+                        width = xmax - x
+                        class_id = bbox.class_id
+                        #object_id = ""
+                        object_id = num
+
+                        x_masks = bbox.x_masks
+                        y_masks = bbox.y_masks
+                        area = width*height # BBOXの面積
+
+
+                        point_counts = {}
+                        total_counts = {}
+
+                        reactangle = [x,y, width, height]
+
+                        count = 0
+
+                        box_flow =[]
+                        points_in_mask = []
+
+                        box_info= [x,y,xmax,ymax]
+
+
+
+
+
+
+                        if is_unknown_object(class_id, probability,box_info,img_size=self.img_size) and height < 700 :
+                            # count +=1
+                            print(class_id)
+                            #print(height)
+                            mask_pairs = list(zip(y_masks,x_masks))
+
+
+                            brack_img =  self.seg_mask.copy()
+
+
+                            bounding_box = BoundingBox(x, y, width, height) # BBOX(左上端座標, 幅, 高さ)
+
+                            #print(self.feature_box_dict[self.frame_count][0]["feature"])
+                            m_points = np.array(mask_pairs, dtype=np.int32)
+
+
+                            # 輪郭を描いてその範囲を白塗り
+                            cv2.fillPoly(brack_img, [m_points], 255)  # 255は白の値
+
+                            # distance = 10  # 削る距離（ピクセル単位）
+                            # kernel = np.ones((distance, distance), np.uint8)  # 距離に基づくカーネル
+
+
+                            # brack_img= cv2.erode(brack_img, kernel, iterations=1)
+
+                            # cv2.fillPoly(self.brack_img, [m_points], 255)
+
+                            self.mask_box[num] = brack_img
+
+
+
+                            # cv2.imshow("demo",self.brack_img)
+
+                            #検出領域内の特徴点を数える
+                            for values in self.feature_box_dict[self.frame_count][0]["feature"] :
+                                #print(values)
+
+                                new_point, old_point, trackid = values
+
+                                #print(trackid)
+                                a,b = new_point
+                                c,d = old_point
+
+
+                                contour = m_points.reshape((-1, 1, 2)).astype(np.int32)
+
+
+
+                                if 0 <= a < color_img.shape[1] and 0 <= b < color_img.shape[0]:  # 範囲チェック
+
+                                    if brack_img[int(b), int(a)] == 255:
+                                        # print("マスク内")
+                                        
+                                        # for id in trackid:
+                                        #マスク領域内なら、１カウント
+                                        if trackid[0] in  total_counts:
+                                            total_counts[trackid[0]] += 1
+                                            #print(id)
+
+                                        else:
+
+                                            total_counts.setdefault(trackid[0], 0)
+                                            total_counts[trackid[0]] += 1
+
+
+    
+
+                            # print("各detectboxごとのTack_featureの数")
+                            print(total_counts)
+                            if  total_counts == {}:
+                                self.point_relia = True
+                           
+                            self.ID_point_count_dict.setdefault(num, []).append(total_counts)
+
+                            total = sum(total_counts.values())
+
+
+                            bounding_box = BoundingBox(x, y, width, height) # BBOX(左上端座標, 幅, 高さ)
+
+
+                            bbox_item = BboxObject(bounding_box, area, brack_img, timestamp,class_id,object_id)
+
+                            bbox_item2 = [x,y, width, height, probability,class_id]
+                            
+                            self.mot_item_list[num]=bbox_item2
+
+                            bbox_item_list.append(bbox_item)
+
+                    # brack_img = np.zeros(img.shape[:2])
+                    print("aho")
+                    print(len(self.feature_box_dict[self.frame_count][0]["feature"]))
+                    print(len(self.good_new))
+                    # cv2.imshow("demo5",self.addd)
+
+                    # cv2.imwrite("test_5.png", self.ad2)
+                    # cv2.imwrite("test_5.png", self.addd)
+                    # cv2.imshow("demo6",self.ad2)
+                    # cv2.imshow("demo",self.brack_img)
+
+                    
+
+                    # 削除対象のインデックスを記録するリスト
+                    indices_to_remove = []
+
+
+
+                    fe_ide = []
+
+
+
+
+                    print("各detectboxごとのTack_featureの数")
+                    print(self.ID_point_count_dict)
+                    print(self.mot_item_list)
+
+
+                    # 空の辞書を持つキーを取り出す
+                    empty_keys = [key for key, value in self.ID_point_count_dict.items() if value == [{}]]
+
+
+
+                    self.match = {}
+
+                    print("結果")
+                    self.new_key = empty_keys
+
+
+
+                    #物体領域内の特徴点数でID割当て
+                    # Step 1: Calculate the total for each inner_key
+                    totals = {}
+                    for outer_key, inner_list in self.ID_point_count_dict.items():
+
+                        for inner_dict in inner_list:
+
+                            for inner_key, inner_value in inner_dict.items():
+                                if inner_key not in totals:
+                                    totals[inner_key] = 0
+                                totals[inner_key] += inner_value
+
+
+                    # Step 2: Collect all potential assignments with their ratios
+                    potential_assignments = {}
+
+                    for outer_key, inner_list in self.ID_point_count_dict.items():
+
+                        if inner_list == [{}] :
+                            potential_assignments[outer_key] = []
+                            potential_assignments[outer_key].append("None")
+
+                        for inner_dict in inner_list:
+                            for inner_key, inner_value in inner_dict.items():
+                                if outer_key not in potential_assignments:
+                                    potential_assignments[outer_key] = []
+
+                                #特徴点を追加するかの判定
+                                if (totals[inner_key] < 50 and  max(inner_dict.values()) == inner_value) :
+                                    self.new_key.append(outer_key)
+                                    self.point_relia = True
+
+                                if totals.get(inner_key, 0) < 1:
+                                    continue
+
+
+                                ratio = inner_value / totals[inner_key]
+
+                                potential_assignments[outer_key].append((ratio, inner_key, inner_value))
+
+  
+
+                    # Step 3: Select the best assignments based on ratios
+                    assignments = {}
+                    # print(potential_assignments.items())
+
+                    for outer_key, values in potential_assignments.items():
+                        assignments[outer_key] = []
+                        if values == ["None"]:
+                            assignments[outer_key].append((0, "None", "None", 0))
+                        else:
+                            for ratio, inner_key, inner_value in values:
+                                total_inner_values = sum(inner_dict[inner_key] for inner_dict in self.ID_point_count_dict[outer_key])
+                                ratio2 = inner_value / total_inner_values
+                                assignments[outer_key].append((ratio, inner_key, inner_value, ratio2))
+
+
+
+
+                    # Function to find the best assignment
+
+                    def find_best_assignment(values):
+                        # print(values)
+                        ratio, inner_key, inner_value, ratio2 = values
+                        candidates = [inner_key]
+
+                        # candidates = [inner_key for ratio, inner_key, inner_value, ratio2 in values ]#if ratio >= 0.1 and ratio2 >= 0.1
+                        # print(candidates)
+
+                        if len(candidates) > 1:
+
+
+                            return " or ".join(map(str, candidates))
+                        if candidates:
+                            return str(candidates[0])
+                        else:
+                            candidates = [inner_key for ratio, inner_key, inner_value, ratio2 in values ]
+                            if candidates:
+                                return str(candidates[0])
+                            else:
+
+                                return None
+
+
+                    # 1. 各キーに対して最大値を選択
+                    max_assignments = {
+                        key: max(values, key=lambda x: x[2])
+                        for key, values in assignments.items()
+                    }
+
+                    # 2. 同じ2番目の要素を持つタプルを比較
+                    # 2番目の要素でグループ化
+                    grouped = {}
+                    for key, value in max_assignments.items():
+                        second_elem = value[1]
+                        if second_elem not in grouped:
+                            grouped[second_elem] = []
+                        grouped[second_elem].append((key, value))
+
+                    # 3. 変更の適用
+                    for group in grouped.values():
+                        if len(group) > 1:
+                            # 3番目の要素を比較して最大のキーを決定
+                            max_key = max(group, key=lambda x: x[1][2])[0]  # 3番目の要素で比較
+                            # 他のキーの要素を変更
+                            for key, value in group:
+                                if key != max_key:
+                                    max_assignments[key] = (0, 'None', 'None', 0)
+                                else:
+                                    # 最大のものを保持
+                                    max_assignments[key] = value
+
+                    # 最終的な結果に最大のタプルと[(0, 'None', 'None', 0)]を持つキーを保持
+                    final_assignments = {key: value for key, value in max_assignments.items()}
+
+        
+
+                    for outer_key, values in final_assignments.items():
+                        assigned_inner_key = find_best_assignment(values)
+                        # print( assigned_inner_key)
+                        if assigned_inner_key is not None:
+                            self.match[outer_key] = assigned_inner_key
+
+                    #print(self.match)
+
+                    self.match = resolve_conflicts(self.match)
+
+
+
+
+
+                    #print(self.match)
+
+                    self.id = list(self.match.values())
+                    #print( self.id)
+
+
+                    counta = 0
+
+                    # # 割り当てられていないキーを探し出して結果の辞書に追加
+                    # for key in self.ID_point_count_dict.keys():
+                    #     if key not in self.match:
+                    #         print("ssssssssssssssssssssd")
+                    #         point_relia = True
+                    #         counta += 1
+                    #         #print( counta)
+                    #         #print(self.curent_object_dict)
+                    #         n_id =len(self.curent_object_dict)+ counta
+                    #         self.match[key] = str(n_id)
+                    #         self.new_key.append(key)
+                    #         print(key)
+                    #          # ここでは値をNoneに設定
+
+
+                    # print(self.match)
+
+                    # self.match = dict(sorted(self.match.items(), key=lambda item: item[1]))
+
+
+                    print(self.match)
+
+                    #self.mot_item_list をId順に並べる　
+
+                    print("数")
+
+                    print(len(self.feature_box_dict[self.frame_count][0]["feature"]))
+                    mean = []
+
+                    distance = 10  # 削る距離（ピクセル単位）
+                    kernel = np.ones((distance, distance), np.uint8)  # 距離に基づくカーネル
+
+
+                    self.brack_img= cv2.erode(self.brack_img, kernel, iterations=1)
+
+
+
+
+                    # カルマンフィルタの入力用の特徴点と対応がつかない特徴点のメンテナンス
+                    for idx,values in enumerate(self.feature_box_dict[self.frame_count][0]["feature"]):
+                    
+                        new_point, old_point, trackid = values
+
+
+
+                        #print(trackid)
+                        a,b = new_point
+                        c,d = old_point
+
+
+             
+
+                        box_flow2 = []
+
+                        if 0 <= int(a) < self.brack_img.shape[1] and 0 <= int(b) < self.brack_img.shape[0]:  # 範囲チェック
+
+
+                            if self.brack_img[int(b), int(a)] == 255:
+
+                                # distances = abs(cv2.pointPolygonTest(contour, (a,b), True))
+
+
+                                if len(trackid) > 0:
+
+                                    if trackid[0] in self.fe_idelist:
+                                        if len(self.fe_idelist[trackid[0]]) < 20:
+                                            self.fe_idelist[trackid[0]].append([new_point])
+
+                                    else:
+                                        self.fe_idelist.setdefault(trackid[0], [[new_point]])
+
+                                    txt_bk_color = get_id_color(int(trackid[0]))
+                                    self.flow = cv2.circle(self.flow,(int(a),int(b)),5,txt_bk_color,2)
+                                    # cv2.line(track, (int(a),int(b)),(int(c),int(d)), txt_bk_color, 2)
+
+
+
+                                if len(self.inactive_counter) < idx+1:
+                                    self.inactive_counter.append(0)
+                                else:
+                                    self.inactive_counter[idx] = 0
+
+                                # print(self.feature_box_dict[self.frame_count][0]["feature"][idx])
+
+
+
+                            elif len(trackid) > 0:
+                                # print(len(self.inactive_counter))
+                                # print(idx)
+
+                                if len(self.inactive_counter) < idx+1:
+                                    self.inactive_counter.append(0)
+
+                                self.inactive_counter[idx] += 1
+
+
+
+
+
+                                # # 20フレーム連続してマスク外にいる場合は辞書から削除 今は1フレーム
+                                if self.inactive_counter[idx] > 1  :
+                                    self.inactive_counter[idx] =0
+
+                                    if trackid[0] in self.fe_idelist:
+                                        if len(self.fe_idelist[trackid[0]]) < 20:
+                                            # print(trackid[0])
+                                            self.fe_idelist[trackid[0]].append("None")
+
+
+                                        
+                                            mean.append(trackid[0])
+
+
+                                            indices_to_remove.append(idx)
+
+
+                                    else:
+                                        self.fe_idelist.setdefault(trackid[0], ["None"])
+                                        mean.append(trackid[0])
+
+
+                                        indices_to_remove.append(idx)
+
+                                else:
+                                    if trackid[0] in self.fe_idelist:
+                                        if len(self.fe_idelist[trackid[0]]) < 20:
+                                            self.fe_idelist[trackid[0]].append([new_point])
+                                    else:
+                                        self.fe_idelist.setdefault(trackid[0], [[new_point]])
+
+
+                                # txt_bk_color = get_id_color(int(trackid[0]))
+                                # self.flow = cv2.circle(self.flow,(int(a),int(b)),5,txt_bk_color,-1)
+
+
+          
+
+                        elif len(trackid) > 0:
             
-                self.feature_box_dict.setdefault(self.frame_count, [{"feature": feature_list}])
 
-                #print(self.feature_box_dict[2])
+                            if len(self.inactive_counter) < idx+1:
+                                self.inactive_counter.append(0)
 
+                            self.inactive_counter[idx] = 0
 
-                yolox_bboxes = yolox_bbox_src.bounding_boxes #yolox-rosから受け取った物体集合から物体一つずつ取り出す  
-                yolox_bboxes = filter_boxes(yolox_bboxes)      
+                            if trackid[0] in self.fe_idelist:
 
-                self.ID_point_count_dict = {}       
-                track = np.zeros_like(img) 
-                #print(yolox_bboxes)
+                                if len(self.fe_idelist[trackid[0]]) < 20:
+                                    self.fe_idelist[trackid[0]].append("None")
+                            else:
+                                self.fe_idelist.setdefault(trackid[0], ["None"])
 
-                lost_box = {}
+                            mean.append(trackid[0])
 
-
-
-                ##IOUを使ったlost検出　却下
-                # #TrackingされているBox情報の補完
-                # for key, p_item in self.curent_object_dict.items() :
-                #     #print( p_item)
-
-                #     detected = False
-                #     bounding_box_src = p_item._bounding_box
+                            # print(trackid[0])
 
 
-                #     x, y, width, height = bounding_box_src.items
-                #     xmax = width + x
-                #     ymax = height + y
-                #     p_point =[x,y, xmax, ymax]
+                            indices_to_remove.append(idx)
 
 
-                #     p_reactangle = [x,y,width, height]
 
-                #     for bbox in (yolox_bboxes):
-                #         probability = bbox.probability
-                #         x = bbox.xmin
-                #         y = bbox.ymin
-                #         xmax = bbox.xmax
-                #         ymax = bbox.ymax
-                #         height = ymax - y
-                #     # print(height)
-                #         class_id = bbox.class_id
-                #         object_id = ""
-                #         width = xmax - x
-                #         d_point = [x,y, xmax, ymax]
 
-                #         if is_unknown_object(class_id, probability) and height < 700 :
+                    # print(indices_to_remove)
+                    indices_to_remove = list(set(indices_to_remove))
+                    indices_to_remove = sorted(indices_to_remove, reverse=True)
+                    print(indices_to_remove)
+
+                    #マスク外だった特徴点を辞書から削除
+                    for idx in indices_to_remove:
+                        del self.feature_box_dict[self.frame_count][0]["feature"][idx]  # 特徴点を削除
+                        del self.inactive_counter[idx]  # カウンターも削除
+                        self.good_new= np.delete(self.good_new, idx, axis=0)
+                        self.good_old= np.delete(self.good_old, idx, axis=0)
+
+                    print("aho2")
+                    print(len(self.feature_box_dict[self.frame_count][0]["feature"]))
+                    print(len(self.good_new))
+
+
+
+                #SIFTを使った特徴点登録
+                def sift2():
+
+                    self.result = img.copy()
+                    result_images = []
+
+                    #グレー画像
+                    next = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+                    img2 =  img.copy() #入力画像
+
+                    good = [] #良い特徴点マッチのリスト
+
+                    self.assigned_template_ids = {}
+
+                    gray_img2 = cv2.cvtColor(img2, cv2.COLOR_BGR2GRAY)
+                    self.mask = np.zeros_like(gray_img2)
+
+
+
+                    boxes = []
+
+                    matched_ids = {}
+
+
+                    fm_count= 0
+
+                    #yolo11のセグメント情報からマスク画像を作成
+                    for id, bbox in enumerate(yolo_segments):
+                        probability = bbox.probability
+                        x = bbox.xmin
+                        y = bbox.ymin
+                        xmax = bbox.xmax
+                        ymax = bbox.ymax
+                        height = ymax - y
+                        width = xmax - x
+                        class_id = bbox.class_id
+                        x_masks = bbox.x_masks
+                        y_masks = bbox.y_masks
+
+                        box_info= [x,y,xmax,ymax]
+                        mask_pairs = list(zip(y_masks, x_masks))
+
+                        object_id = ""
+
+                        if is_unknown_object(class_id, probability,box_info,img_size=self.img_size) and height < 700:
+                            m_points = np.array(mask_pairs, dtype=np.int32)
+
+                            self.mask = cv2.drawContours(self.mask, [m_points], -1, 255, thickness=cv2.FILLED)
+
+
+
+
+                    #マスク画像を使ったSIFT抽出
+                    kp2, des2 = self.sift.detectAndCompute(gray_img2,mask= self.mask)  #入力画像の特徴点算出
+
+
+
+
+
+                    print("kp2の数",len(kp2))
+
+                    # for kp in kp2:
+                    #     cv2.circle(self.result, (int(kp.pt[0]),int(kp.pt[1])), 5, (255,0,0), -1)
+
+
+
+                    
+
+                    self.overlap_dict =[]
+
+
+
+
+                    for n_id, bbox in enumerate(yolo_segments):
+                        probability = bbox.probability
+                        x = bbox.xmin
+                        y = bbox.ymin
+                        xmax = bbox.xmax
+                        ymax = bbox.ymax
+                        height = ymax - y
+                        width = xmax - x
+                        class_id = bbox.class_id
+                        roi = img2[y:ymax, x:xmax]
+
+                        x_masks = bbox.x_masks
+                        y_masks = bbox.y_masks
+
+                        box_point = []
+
+                        box_des = []
+                        reactangle =[x,y,xmax,ymax]
+
+                        
+
+                        if is_unknown_object(class_id, probability,reactangle,img_size=self.img_size) and height < 700:
+                            print("nuer",n_id)
+
+                            print("class",class_id)
+
+                            mask_pairs = list(zip(y_masks, x_masks))
+                            m_points = np.array(mask_pairs, dtype=np.int32)
+                        
+                            brack_img = self.seg_mask.copy()
+                            brack_img = cv2.drawContours(brack_img, [m_points], -1, 255, thickness=cv2.FILLED)
+                      
+                            #物体領域をモルフロジー変換で収縮処理する
+                            if class_id == "person":
+
+                                distance = 10  # 削る距離（ピクセル単位）
+                                kernel = np.ones((distance, distance), np.uint8)  # 距離に基づくカーネル
+
+
+                                brack_img= cv2.erode(brack_img, kernel, iterations=1)
+                            else:
+
+                                distance = 5  # 削る距離（ピクセル単位）
+                                kernel = np.ones((distance, distance), np.uint8)  # 距離に基づくカーネル
+
+
+                                brack_img= cv2.erode(brack_img, kernel, iterations=1)
+
+
 
                             
 
-                #             if iou(p_point,d_point ):
-                #                 detected = True
+                            #物体の２重検出を除く処理
+                            for j_num, r_item in enumerate(yolo_segments):
 
-                #                 break
+                                xr = r_item.xmin
+                                yr = r_item.ymin
+                                xmaxr = r_item.xmax
+                                ymaxr = r_item.ymax
+                                heightr = ymaxr - yr
+                                # print(height)
+                                widthr = xmaxr - xr
 
-                #     if not detected :
-                #         lost_box[key] = p_reactangle
 
 
+                                reactangler = [xr,yr, xmaxr , ymaxr]
+
+
+                                if is_unknown_object(class_id, probability,reactangler,img_size=self.img_size) and height < 700 :
+                                    if n_id != j_num and iou(reactangle, reactangler):
+                                        if not j_num  in self.overlap_dict:
+                                            self.overlap_dict.append(j_num)  # 重なっているボックスのインデックスを保存
+                                        if  not n_id  in self.overlap_dict:
+                                            self.overlap_dict.append(n_id)
+
+
+
+
+                            updated_keypoints = []
+
+                            #入力画像の特徴点のサイズ(kp.size)がマスク内のものを抽出する
+                            for i, val in enumerate(zip(kp2,des2)):
+                                kp, des = val
+                                # cv2.imshow("c",brack_img)
+
+                                kx, ky = int(kp.pt[0]), int(kp.pt[1])  # 特徴点の座標
+                                radius = int(kp.size/2)
+
+                                 # 特徴点の周囲領域をクロップ
+                                x_min = int(max(0, kx - kp.size))
+                                x_max = int(min(brack_img.shape[1], int(kx + kp.size)))
+                                y_min = int(max(0, ky - kp.size))
+                                y_max = int(min(brack_img.shape[0], int(ky + kp.size)))
+
+                                region = brack_img[y_min:y_max, x_min:x_max]
+
+                                
+
+                                # if brack_img[int(kp.pt[1]),int( kp.pt[0])] == 255 and brack_img[int(kp.pt[1])-1,int( kp.pt[0])] == 255 and brack_img[int(kp.pt[1]),int( kp.pt[0])-1] == 255 and brack_img[int(kp.pt[1])+1,int( kp.pt[0])]and brack_img[int(kp.pt[1]),int( kp.pt[0])+1] == 255 and brack_img[int(kp.pt[1]+1),int( kp.pt[0])+1] == 255 and brack_img[int(kp.pt[1]-1),int( kp.pt[0])-1] == 255: #x <= kp.pt[0] <= xmax and y <= kp.pt[1] <= ymax:
+                                # cv2.circle(self.result, (int(kp.pt[0]),int(kp.pt[1])), int(kp.size / 2), (255,125,0), 1)
+                                    # print("特徴あった")
+
+                                if np.all(region ==255):  # 周辺が完全にマスク内
+
+                                    # cv2.circle(self.matchkline, (int(kp.pt[0]),int(kp.pt[1])), int(kp.size / 2), (255,125,0), 2)
+                                    new_kp = cv2.KeyPoint(kx - x, ky - y, kp.size)
+                           
+
+                                    # nm_x = int(kp.pt[0]-x)
+                                    # nm_y = int(kp.pt[1]-y) 
+
+                                    # kp2[i]= (nm_x,nm_y)
+
+
+                                    box_point.append(new_kp)
+                                    box_des.append(des2[i])
+
+
+                            if not (box_point ==[] or box_des ==[]):
+
+                                points_des =(box_point,box_des,class_id,reactangle)
+
+
+                                self.assigned_template_ids.setdefault(n_id, points_des)
+
+                            else:
+                                
+                                print("特徴点が見つからない")
+
+                                points_des =(box_point,box_des,class_id,reactangle)
+
+
+                                self.assigned_template_ids.setdefault(n_id, points_des)
+
+        
+                                # pdb.set_trace()
+
+
+
+
+
+
+
+
+                    gray_img2 = cv2.cvtColor(img2, cv2.COLOR_BGR2GRAY)
+
+                    # kp2, des2 = self.sift.detectAndCompute(gray_img2,brack_img)  #入力画像の特徴点算出
+
+                    
+                    self.match_sift = {}
+
+
+                    self.siftcount = {}
+                    self.c_siftcount = {}
+
+                    self.savepoint ={}
+
+                    self.matched_images = []
+                    self.matched_images2 = []
+                    
+                    distance_threshold =300
+
+                    c_threshold= 100
+
+                    self.good_dict = {}
+
+
+
+
+
+
+                    
+
+
+                    #siftのマッチング処理
+                    for kt,feature  in self.assigned_template_ids.items():
+                        print("確認")
+
+                        kp2, des2, a_class_id,det_box = feature
+                        des2 = np.asarray(des2, dtype=np.float32)
+
+                        self.best_match_template_id = ""
+                        self.second_best_match_template_id = ""
+
+
+                        self.best_match_count = 0
+                        self.second_best_match_count = 0
+
+                        self.best_match_ratio= 0.0
+                        # self.savepoint =[]
+                        self.f_count = {}
+
+                        c_fcount ={}
+
+                        h_flag = False
+                        # self.region_matched_img =cv2.hconcat(self.matchkline2,self.matchkline)
+
+
+                        se_flag = False
+
+                        self.region_matched_img =None
+
+                        good_src ={}
+
+                        no_matchid = {}
+
+                        self.rrry= True
+
+                        self.matchkline = img.copy()
+
+                        
+
+
+                      
+
+                        
+
+                        
+                        for template_id, val in self.clipped_images.items():
+                            # print(len(self.clipped_images))
+                            # colar = template_colors[template_id % len(template_colors)]
+                            # print(len(val))
+                            print("確認２")
+
+                            self.good = []
+                            kp1 , self.des1, c_class_id,track_box, notmatch_frame = val
+
+                            # print("box_n", track_box)
+
+                            self.filtered_matches =[]
+
+
+
+
+
+                            #ユークリッド距離による候補の選定
+                            def is_within_distance(box1, box2,class_v, threshold,threshold2):
+                                """
+                                ボックスの中心間距離が閾値以内か確認する関数
+                                """
+                                center1 = np.array([(box1[0] + box1[2]) / 2, (box1[1] + box1[3]) / 2])  # 追跡ボックスの中心
+                                center2 = np.array([(box2[0] + box2[2]) / 2, (box2[1] + box2[3]) / 2])  # 検出ボックスの中心
+                                distance = np.linalg.norm(center1 - center2)  # ユークリッド距離
+
+
+                                if class_v =="chair":
+
+                                    return distance <= threshold2
+
+                                if not distance <= threshold:
+                                    print("ユークリッド距離ミス", distance)
+                                return distance <= threshold
+
+
+                            if is_within_distance(track_box, det_box,a_class_id, distance_threshold,c_threshold):
+                                print("siftマッチング")
+
+
+
+                                if not  template_id in self.prev_matchid and a_class_id !="chair":
+
+
+                                    # self.kp1, self.des1 = self.sift.detectAndCompute(self.img1,None) #テンプレート画像の特徴点算出
+                        
+
+                                    self.des1 = np.asarray(self.des1, dtype=np.float32)
+
+                                    # print("des1",self.des1)
+
+
+                                    # bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
+
+                                    
+
+
+
+                                    # matches = bf.match(self.des1,des2)
+
+                                    if des2 is not None and len(des2) >= 2:
+
+                                        matches = self.flann.knnMatch(self.des1,des2,k=2) #特徴点マッチを行う
+
+                                        for m,n in matches:
+                                            if m.distance < 0.70*n.distance:
+                                                self.good.append(m)
+
+                                        match_ratio = len(self.good) / len(kp1) if len(kp1) > 0 else 0
+                                        print("マッチの個数",len(matches))
+
+                               
+
+
+
+                                        threshold = 5  # 距離の閾値（ピクセル単位）
+                                        fe_y = []
+                                        old_f =[]
+                                        max_distance3 = 52
+
+                                        #マッチングした特徴点が近くにあるなら１つの特徴点に統合、過去のマッチングした特徴点の相対位置と離れすぎているもの除く
+                                        for match in  self.good:
+                                            boxt =self.mot_item_list[kt]
+                                            new_kp = cv2.KeyPoint(int(kp2[match.trainIdx].pt[0]) + boxt[0], int(kp2[match.trainIdx].pt[1]) + boxt[1], kp.size)
+                                            old_kp = cv2.KeyPoint(int(kp1[match.queryIdx].pt[0]) + boxt[0], int(kp1[match.queryIdx].pt[1]) + boxt[1], kp.size)
+                                            train_point = new_kp.pt 
+
+                                            is_duplicate = False
+                                            for filtered_match in self.filtered_matches:
+                                                existing_point = kp2[filtered_match.trainIdx].pt
+                                                if euclidean(train_point, existing_point) < threshold:
+                                                    is_duplicate = True
+                                                    break
+                                            
+                                            if not is_duplicate:
+                                                pot1 = np.array(kp1[match.queryIdx].pt)  # 画像1の対応点
+                                                pot2 = np.array(kp2[match.trainIdx].pt)
+                                                distance = np.linalg.norm(pot1 - pot2)
+                                                if distance < max_distance3:
+                                                    self.filtered_matches.append(match)
+
+                                            fe_y.append(new_kp)
+                                            old_f.append(old_kp)
+
+
+
+
+
+                                    
+                                    else:
+                                    
+                                       
+                                        print("Not enough features in des2 to perform knnMatch.")
+
+
+                                    
+                                    # print("マッチの個数",len(matches))
+                            
+
+
+                                    # for m,n in matches:
+                                    #     if m.distance < 0.70*n.distance:
+                                    #         self.good.append(m)
+
+                                    # match_ratio = len(self.good) / len(kp1) if len(kp1) > 0 else 0
+
+                                    
+
+                                    # f_count[template_id] = len(self.good)
+                                    #track_idごとの対応点情報
+                                    # good_src[template_id] = self.good
+
+                                    new_matches = [
+                                        cv2.DMatch(idx, idx, match.distance)
+                                        for idx, match in enumerate( self.filtered_matches)
+                                    ]
+
+                                    
+
+
+                                    MIN_MATCH_COUNT = 5 #最低限マッチしてほしい数
+                                    count_cost = len(self.filtered_matches) #+int(match_ratio*100)
+                                
+
+                                    if len(self.filtered_matches)>MIN_MATCH_COUNT and a_class_id == c_class_id:
+                                        h_flag = True
+
+                                        
+
+                                    
+                                        # self.f_count[template_id] = count_cost
+                                
+
+                                        # c_fcount[template_id] = str(count_cost)+str("/")+str(len(kp1))
+                                        print("kp1",len(kp1))
+                                        print("eds1",self.des1.shape)
+                                        print("m.queryIdx",m.queryIdx)
+
+                                        src_pts = np.float32([ kp1[m.queryIdx].pt for m in self.filtered_matches ]).reshape(-1,1,2)
+                                        dst_pts = np.float32([ kp2[m.trainIdx].pt for m in self.filtered_matches ]).reshape(-1,1,2)
+                                        
+                                        
+                                    
+                                       
+
+                                        M, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC,3.0)
+                                        self.matchesMask = mask.ravel().tolist()
+
+
+
+                                        det_pts2 = [ self.filtered_matches[i] for i in range(len(self.filtered_matches))  if self.matchesMask[i] == 1]
+
+                                        # if len(det_pts2) > 12 :
+                                        #     self.f_count[template_id] = len(det_pts2)
+
+
+                                        count_cost = len(det_pts2)
+
+                                        good_src[template_id] = det_pts2
+
+                                        c_fcount[template_id] = str(count_cost)+str("/")+str(self.des1.shape[0])
+                                        
+
+
+                                        # インライヤーの数を計算
+                                        inliers = mask.ravel().tolist()
+                                        num_inliers = sum(inliers)
+                                        num_matches = len(self.filtered_matches)
+
+
+                                        # 確からしさの確率を計算
+                                        confidence = num_inliers / num_matches
+
+
+                                        # count_cost = count_cost*confidence
+
+                                        # f_count[template_id] = count_cost
+
+
+                                        # c_fcount[template_id] = str(count_cost)+str("/")+str(confidence)
+
+                                        if len(self.f_count)>0:
+
+                                            dis = count_cost - self.best_match_count
+
+                                            print("dis",dis)
+                                            #特徴点数をカウント
+
+                                            if len(det_pts2) > 3 :
+                                                c_fcount[template_id] = str(count_cost)+str("/")+str(self.des1.shape[0])
+                                                self.f_count[template_id] = len(det_pts2)
+                                            
+                                        
+                                        
+                                        else:
+                                     
+                                            c_fcount[template_id] = str(count_cost)+str("/")+str(self.des1.shape[0])
+                                            if len(det_pts2) > 3 :
+                                                self.f_count[template_id] = len(det_pts2)
+
+
+
+
+                                        if count_cost > self.best_match_count :
+                                            self.second_best_match_template_id = self.second_best_match_template_id
+                                            self.second_best_match_count =  self.best_match_count
+                                            self.best_match_count = count_cost
+                                            self.best_match_template_id = template_id
+
+                                            # if len(self.f_count)>0:
+
+                                            #     dis = self.best_match_count - self.second_best_match_count
+
+                                            #     print("dis",dis)
+
+                                            #     if len(det_pts2) > 10 and dis > 22:
+                                            #         c_fcount[template_id] = str(count_cost)+str("/")+str(self.des1.shape[0])
+                                            #         self.f_count[template_id] = len(det_pts2)
+                                               
+                                            #     else:
+                                            #         self.f_count = {}
+                                            #         self.rrry = False
+                                            #         del self.mot_item_list[kt]
+                                            #         break
+                                            # else:
+                                            #     c_fcount[template_id] = str(count_cost)+str("/")+str(self.des1.shape[0])
+                                            #     if len(det_pts2) > 10 :
+                                            #         self.f_count[template_id] = len(det_pts2)
+
+
+
+                                            # src_pts = np.float32([ kp1[m.queryIdx].pt for m in self.good ]).reshape(-1,1,2)
+                                            # dst_pts = np.float32([ kp2[m.trainIdx].pt for m in self.good ]).reshape(-1,1,2)
+
+                                            self.savepoint[kt] = dst_pts
+
+                                            # M, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC,5.0)
+                                            # self.matchesMask = mask.ravel().tolist()
+
+                                            # kp2[m.trainIdx].pt = ()
+                                            # absolute_keypoints = [(x + region_origin[0], y + region_origin[1]) for x, y in relative_keypoints]
+                                            #マスク描画
+                                            mask = self.masks_shaped[kt]
+                                            the_mask = mask.copy()
+                                            the_mask = np.stack([the_mask] * 3,axis=-1)
+                                            color = (255,0,0)
+                                            self.matchkline[the_mask[:, :, 0] > 0.5] =  self.matchkline[the_mask[:, :, 0] > 0.5] * 0.5 + np.array(color) * 0.5
+
+                                        
+
+                                            # マッチング結果を線で描画
+                                            for idx1,idx2 in zip(src_pts,dst_pts):
+                                                # print("nanid",idx1.flatten())
+                                                
+  
+
+                                                pt1 = tuple(map(int, np.array([det_box[0], det_box[1]]).flatten()+idx2.flatten()))  # 旧フレームの特徴点
+                                                pt2 = tuple(map(int,  np.array([track_box[0], track_box[1]]).flatten()+idx1.flatten()))   # 新フレームの特徴点
+
+                                                cv2.circle(self.result, pt1, 2,(0, 255, 0), 2) 
+                                                # cv2.line(track, pt1, pt2, (0, 0, 255), 2)  # 赤色のフロー線
+
+                                            
+
+
+                                            # 対応する特徴点を線で可視化
+                                            self.region_matched_img = cv2.drawMatches( 
+                                                self.matchkline2, old_f, self.matchkline,fe_y,  new_matches, None,matchColor=(0, 0, 255),singlePointColor=(0, 255, 0)
+                                            )
+
+
+
+
+                                            
+
+                                            h_flag = True
+
+
+                                        elif count_cost > self.second_best_match_count :
+                                            self.second_best_match_count = count_cost 
+                                            self.second_best_match_template_id = template_id
+
+                                            # 対応する特徴点を線で可視化
+                                            region_matched_img2 = cv2.drawMatches( 
+                                                self.matchkline2, kp1, self.matchkline, kp2, self.filtered_matches, None,matchColor=(0, 255, 0),singlePointColor=(0,0,255)
+                                            )
+
+                                            se_flag = True
+                                    
+
+
+
+
+                                #椅子のSIFTマッチ処理(特徴が取れにくいので、別設定)
+                                else: 
+                                    # kp1 , self.des1 = self.prv_des[template_id]
+
+                                    self.des1 = np.asarray(self.des1, dtype=np.float32)
+
+                                    # print("des1",self.des1)
+
+
+                                    # bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
+
+
+
+
+
+                                    # matches = bf.match(self.des1,des2)
+
+                                    if des2 is not None and len(des2) >= 2:
+
+                                        matches = self.flann.knnMatch(self.des1,des2,k=2) #特徴点マッチを行う
+                                        for m,n in matches:
+                                            if m.distance < 0.75*n.distance:
+                                                self.good.append(m)
+
+                                        match_ratio = len(self.good) / len(kp1) if len(kp1) > 0 else 0
+
+
+                                        threshold = 5  # 距離の閾値（ピクセル単位）
+
+                                    else:
+
+                                        # for m,n in matches:
+                                        #     if m.distance < 0.75*n.distance:
+                                        #         self.good.append(m)
+
+                                        # match_ratio = len(self.good) / len(kp1) if len(kp1) > 0 else 0
+
+                                        print("Not enough features in des2 to perform knnMatch.")
+
+
+
+                                    # match_ratio = len(self.good) / len(kp1) if len(kp1) > 0 else 0
+
+                                    # good_src[template_id] = self.good
+
+                                    # f_count[template_id] = len(self.good)
+
+                                    # count_cost = len(self.good) #+int(match_ratio*100)
+
+
+
+
+                                    MIN_MATCH_COUNT = 4 #最低限マッチしてほしい数
+
+                                    if len(self.good)>MIN_MATCH_COUNT and a_class_id == c_class_id:
+
+                                        h_flag = True
+                                        # f_count[template_id] = count_cost #len(self.good)
+
+
+                                        src_pts = np.float32([ kp1[m.queryIdx].pt for m in self.good ]).reshape(-1,1,2)
+                                        dst_pts = np.float32([ kp2[m.trainIdx].pt for m in self.good ]).reshape(-1,1,2)
+
+                                    
+
+                                        M, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC,10.0)
+                                        self.matchesMask = mask.ravel().tolist()
+
+                                        num_inliers = sum(self.matchesMask)
+
+                                        num_matches = len(self.good)
+
+                                        det_pts2 = [ self.good[i] for i in range(len(self.good))  if self.matchesMask[i] == 1]
+
+                                        good_src[template_id] = det_pts2
+
+
+
+
+
+                                        count_cost = len(det_pts2)
+
+                                        # 確からしさの確率を計算
+                                        confidence = num_inliers / num_matches
+                                        # print(f"確からしさの確率: {confidence:.2f} ({num_inliers}/{num_matches})")
+                                        # count_cost = count_cost * confidence
+
+                                        if count_cost > 5:
+
+                                            self.f_count[template_id] = len(det_pts2)#len(self.good)
+
+                                        
+
+                                        c_fcount[template_id] = str(len(self.good))+str("/")+str(len(kp1))
+
+
+                                        # c_fcount[template_id] = str(count_cost)+str("/")+str(confidence)
+
+
+
+
+                                        if count_cost > self.best_match_count :
+                                            self.second_best_match_template_id = self.second_best_match_template_id
+                                            self.second_best_match_count =  self.best_match_count
+                                            self.best_match_count = count_cost
+                                            self.best_match_template_id = template_id
+
+
+                                            # src_pts = np.float32([ kp1[m.queryIdx].pt for m in self.good ]).reshape(-1,1,2)
+                                            # dst_pts = np.float32([ kp2[m.trainIdx].pt for m in self.good ]).reshape(-1,1,2)
+
+                                            self.savepoint[kt] = dst_pts
+
+                                            # M, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC,5.0)
+                                            # self.matchesMask = mask.ravel().tolist()
+
+                                            # mask = self.masks_shaped[kt]
+                                            # the_mask = mask.copy()
+                                            # the_mask = np.stack([the_mask] * 3,axis=-1)
+                                            # color = (255,0,0)
+                                            # self.matchkline[the_mask[:, :, 0] > 0.5] =  self.matchkline[the_mask[:, :, 0] > 0.5] * 0.5 + np.array(color) * 0.5
+
+
+
+
+
+                                            # 対応する特徴点を線で可視化
+                                            self.region_matched_img = cv2.drawMatches( 
+                                                self.matchkline2, kp1, self.matchkline, kp2, det_pts2, None,matchColor=(0, 255, 0),singlePointColor=(0, 0, 255)
+                                            )
+                                     
+
+                                            
+
+                                            
+
+
+                                        elif count_cost > self.second_best_match_count :
+                                            self.second_best_match_count = count_cost
+                                            self.second_best_match_template_id = template_id
+                                            se_flag = True
+
+                                            # 対応する特徴点を線で可視化
+                                            region_matched_img2 = cv2.drawMatches( 
+                                                self.matchkline2, kp1, self.matchkline, kp2, det_pts2, None,matchColor=(0, 255, 0),singlePointColor=(0, 0, 255)
+                                            )
+                            else:
+                                print("ユークリッド距離判定外")
+
+                        
+                        dis =  self.best_match_count -self.second_best_match_count
+
+                        print("dis",dis)
+
+                        # if not  abs(dis) > 25:
+                    
+                        #     self.rrry = False
+                        #     del self.mot_item_list[kt]
+                            
+     
+
+                        
+
+                                
+                        self.good_dict[kt] = good_src
+                                
+
+                            
+
+                            # 画像左上にどの領域のマッチング結果かを表示
+
+
+                            # テキストの表示位置 (右上)
+
+                        if h_flag and self.region_matched_img is not None :
+                            print("kaku",len(self.good))
+                       
+                            y_start = 50  # 開始y座標
                 
-               
+                            x_right = self.region_matched_img.shape[1] - 15  # 右端からの位置
+                            text = f"{kt}"
 
-                for num, bbox in enumerate(yolox_bboxes):
-                    probability = bbox.probability
-                    x = bbox.xmin
-                    y = bbox.ymin
-                    xmax = bbox.xmax
-                    ymax = bbox.ymax
+                            font_scale = 2
+                            thickness = 3
+
+                            font = cv2.FONT_HERSHEY_SIMPLEX
+
+                            text_size = cv2.getTextSize(text, font, font_scale, thickness)[0]
+                            x_text = x_right - text_size[0]  # テキストの右端を画像右端に合わせる
+    
+                            text_color = (255, 255, 255)  # 青色
+                            cv2.putText(
+                                self.region_matched_img, text, (x_text, y_start), cv2.FONT_HERSHEY_SIMPLEX, 
+                                font_scale, text_color, thickness, lineType=cv2.LINE_AA
+                            )
+                            
+
+                            if se_flag :
+                                x_right = region_matched_img2.shape[1] - 15
+
+                                text = f" SECOOND Region {kt}:)"
+                    
+
+                                cv2.putText(
+                                    region_matched_img2, text, (x_text, y_start), cv2.FONT_HERSHEY_SIMPLEX, 
+                                    font_scale, text_color, thickness, lineType=cv2.LINE_AA
+                                )
+                                self.matched_images2.append(region_matched_img2)
+
+                            
+
+
+
+                                
+                            
+
+                            self.matched_images.append(self.region_matched_img)
+
+
+
+                                # src_pts = np.float32([ kp1[m.queryIdx].pt for m in self.good ]).reshape(-1,1,2)
+                                # dst_pts = np.float32([ kp2[m.trainIdx].pt for m in self.good ]).reshape(-1,1,2)
+
+                                # M, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC,5.0)
+                                # self.matchesMask = mask.ravel().tolist()
+
+
+
+                                # マッチングの対応点を全体画像に描画
+
+
+
+
+                                # for i, m in enumerate(self.savepoint):
+                                #     if self.matchesMask[i]:  # マッチした点だけ描画
+
+                                #         # pt1 = tuple(np.int32(src_pts[i][0]))  # テンプレート画像の点
+                                #         pt2 = tuple(np.int32(self.dst_pts[i][0]))  # 1フレーム目の全体画像の対応する点
+
+
+                                #         # pt1_adjusted = (pt1[0] + x_offset, pt1[1] + y_offset)
+                                #         # print("id",self.best_match_template_id )
+                                #         colar =get_id_color(self.best_match_template_id)
+                                #         # pt1_adjusted2 = (pt11[0] + x_offset, pt11[1] + y_offset)
+
+                                #         # cv2.circle(result, pt1_adjusted, 5, colar, 2)
+
+                                #         # cv2.circle(result, pt1_adjusted, 5, colar,-1)  # 対応点を青で描画
+
+                                #         # 対応する特徴点を線で結び、点も描画
+                                #         # cv2.line(result, pt1_adjusted, pt2, colar, 1, cv2.LINE_AA)
+                                #         cv2.circle(self.result, pt2, 5, colar, -1)  # 対応点を青で描画
+
+
+                        # self.match_sift[kt] = self.best_match_template_id
+
+                        if  self.rrry:
+
+                            self.siftcount.setdefault(kt, []).append(self.f_count)
+                            self.c_siftcount.setdefault(kt, []).append(c_fcount)
+
+
+
+
+                        # if self.best_match_template_id != "" and not self.best_match_template_id in self.match_sift.values():
+                        #     # self.clipped_images[self.best_match_template_id] = self.assigned_template_ids[kt]
+                        #     # print("",)
+                        #     self.match_sift[kt] = self.best_match_template_id
+                        #     self.siftcount.setdefault(kt, []).append(f_count)
+
+                        # elif self.second_best_match_template_id != "" and not self.best_match_template_id in self.match_sift.values():
+                        #     # self.clipped_images[self.second_best_match_template_id] = self.assigned_template_ids[kt]
+                        #     self.match_sift[kt] = self.second_best_match_template_id
+
+                        #     self.siftcount.setdefault(kt, []).append(f_count)
+
+                        # else:
+
+                        #     # self.clipped_images[self.countf] = self.assigned_template_ids[kt]
+
+                        #     self.siftcount.setdefault(kt, []).append(f_count)
+
+                        #     self.match_sift[kt] = self.countf
+                        #     self.countf += 1
+
+
+                    # print("self.match_sift",self.match_sift )
+
+                    print("old_sif_mt",self.siftcount)
+
+
+
+                    # # フォント設定
+                    font = cv2.FONT_HERSHEY_SIMPLEX
+                    font_scale = 0.6
+                    color = (255, 255, 255)  # 黒色
+                    thickness = 2
+
+                    # テキストの表示位置 (右上)
+                    margin = 15
+                    y_start = margin  # 開始y座標
+                    line_spacing = 25  # 行間
+                    x_right = img.shape[1] - margin  # 右端からの位置
+
+
+                    # # 辞書の内容を描画
+                    for key, value_list in self.c_siftcount.items():
+                        for value_dict in value_list:
+                            # テキスト内容
+                            text = f"Key {key}: " + ", ".join([f"{k}:{v}" for k, v in value_dict.items()])
+
+                            # テキストサイズを計算 (右端揃え用)
+                            text_size = cv2.getTextSize(text, font, font_scale, thickness)[0]
+                            x_text = x_right - text_size[0]  # テキストの右端を画像右端に合わせる
+
+                            # 画像上に描画
+                            cv2.putText(self.result, text, (x_text, y_start), font, font_scale, color, thickness)
+                            y_start += line_spacing  # 次の行に移動
+
+                    
+
+
+
+                    assigned_keys = {}  # 内側キー -> 割当済み (値, 外側キー)
+                    self.sift_match2 = {}
+
+                    # # 空のリストや辞書がないデータだけをフィルタリング
+                    # self.siftcount = {k: v for k, v in self.siftcount.items() if v and isinstance(v[0], dict) and v[0]}
+
+                    # sorted_keys = sorted(self.siftcount.keys(), key=lambda k: max(self.siftcount[k][0].values()), reverse=True)
+
+
+
+
+
+
+
+                thread2 = threading.Thread(target= sift2)
+                thread1 = threading.Thread(target= lktracking2)
+
+                thread1.start()
+                thread1.join()
+
+                thread2.start()
+                thread2.join()
+
+
+                # print("self.assigned_template_ids",self.assigned_template_ids)
+
+
+
+                #siftとopt_flowの特徴点の割当結果を組み合わせる
+                def merge_dicts(d1, d2):
+                    merged = {}
+
+                    # d1 と d2 の順序を維持する
+                    for key in d1:
+                        if key in d2:
+                            combined = {}
+
+                            # 空でない辞書をスキップ
+                            d1_filtered = [d for d in d1[key] if d]  # 空でない辞書のみ残す
+                            d2_filtered = [d for d in d2[key] if d]  # 空でない辞書のみ残す
+
+                            # キーと値をマージ
+                            d1_dict = {k: v for d in d1_filtered for k, v in d.items()}
+                            d2_dict = {k: v for d in d2_filtered for k, v in d.items()}
+
+                            # キーを統合して値を足す
+                            all_subkeys = set(d1_dict.keys()).union(d2_dict.keys())
+                            for subkey in all_subkeys:
+                                combined[subkey] = (d2_dict.get(subkey, 0))#int(0.5*d1_dict.get(subkey, 0)) d1_dict.get(subkey, 0) + 1.1*d1_dict.get(subkey, 0) +
+
+                            merged[key] = [combined]
+                        # else:
+                            # merged[key] = int(0.7*d1[key])  # d1 のみが存在する場合
+
+                    # d2 に存在して、d1 にないキーも追加
+                    for key in d2:
+                        if key not in d1:
+                            merged[key] = d2[key]  # d2 のみが存在する場合
+
+                    return merged
+
+
+                # self.siftcount = merge_dicts(self.ID_point_count_dict, self.siftcount)
+
+                # self.siftcount = dict(sorted(self.siftcount.items()))
+
+                print("new_mt",self.siftcount)
+
+
+
+
+
+
+
+
+
+
+
+                assigned_keys = {}  # 内側キー -> 割当済み (値, 外側キー)
+                self.sift_match = {}
+                self.sift_maxcont = {}
+
+                # 空のリストや辞書がないデータだけをフィルタリング
+                # self.siftcount = {k: v for k, v in self.siftcount.items() if v and isinstance(v[0], dict) and v[0]}
+
+                # sorted_keys = sorted(self.siftcount.keys(), key=lambda k: max(self.siftcount[k][0].values()), reverse=True)
+
+
+                self.sift_match = {key: 'None' for key in self.siftcount.keys()}  # すべてのキーに初期値として None を設定
+                self.sift_maxcont = {key: 0 for key in self.siftcount.keys()}
+
+                # 割り当て処理
+                for outer_key in self.siftcount.keys():
+                    # データが空の場合はスキップ（None は既に設定済み）
+                    if not self.siftcount[outer_key] or not self.siftcount[outer_key][0]:
+                        # self.sift_match[outer_key] ='None'
+                        continue
+
+                    inner_dict = self.siftcount[outer_key][0]
+                    sorted_inner = sorted(inner_dict.items(), key=lambda x: x[1], reverse=True)
+
+                    for inner_key, value in sorted_inner:
+                        # 内側キーがまだ割り当てられていない場合
+                        if inner_key not in assigned_keys:
+                            assigned_keys[inner_key] = (value, outer_key)
+                            self.sift_match[outer_key] = str(inner_key)
+                            self.sift_maxcont[inner_key] = value
+
+                            break
+                        else:
+                            # 内側キーが既に割り当て済みの場合
+                            existing_value, existing_outer = assigned_keys[inner_key]
+                            if value > existing_value:
+                                # 割り当て直し：新しい外側キーに割り当て
+                                assigned_keys[inner_key] = (value, outer_key)
+                                self.sift_match[outer_key] = str(inner_key)
+                                self.sift_maxcont[inner_key] = value
+
+                                # 元の外側キーを次の候補に再割り当て
+                                del self.sift_match[existing_outer]
+                                
+                                self.sift_match[existing_outer] = 'None'  # 元のキーに再割り当てできない場合に備えて None を設定
+                                if existing_outer in self.siftcount and self.siftcount[existing_outer] and self.siftcount[existing_outer][0]:
+                                    for next_inner_key, next_value in sorted(self.siftcount[existing_outer][0].items(), key=lambda x: x[1], reverse=True):
+                                        if next_inner_key not in assigned_keys or next_value > assigned_keys[next_inner_key][0]:
+                                            assigned_keys[next_inner_key] = (next_value, existing_outer)
+                                            self.sift_match[existing_outer] = str(next_inner_key)
+                                            self.sift_maxcont[next_inner_key] = next_value
+                                            break
+                                break
+
+
+
+                self.sift_match = dict(sorted(self.sift_match.items()))
+
+                print("self.sift_match",self.sift_match)
+
+                # self.sift_match2 = dict(sorted(self.sift_match2.items()))
+
+
+
+            # # フォント設定
+            #     font = cv2.FONT_HERSHEY_SIMPLEX
+            #     font_scale = 0.6
+            #     color = (255, 255, 255)  # 黒色
+            #     thickness = 2
+
+            #     # テキストの表示位置 (右上)
+            #     margin = 15
+            #     y_start = margin  # 開始y座標
+            #     line_spacing = 25  # 行間
+            #     x_right = img.shape[1] - margin  # 右端からの位置
+
+
+            #     # 辞書の内容を描画
+            #     for key, value_list in self.siftcount.items():
+            #         for value_dict in value_list:
+            #             # テキスト内容
+            #             text = f"Key {key}: " + ", ".join([f"{k}:{v}" for k, v in value_dict.items()])
+
+            #             # テキストサイズを計算 (右端揃え用)
+            #             text_size = cv2.getTextSize(text, font, font_scale, thickness)[0]
+            #             x_text = x_right - text_size[0]  # テキストの右端を画像右端に合わせる
+
+            #             # 画像上に描画
+            #             cv2.putText(self.flow, text, (x_text, y_start), font, font_scale, color, thickness)
+            #             y_start += line_spacing  # 次の行に移動
+
+
+
+                for mot_item, bo_id  in zip(self.mot_item_list.values(),self.sift_match.values()):
+
+                        if bo_id != 'None':
+                            if int(bo_id) in self.fe_idelist:
+                                box_flow = self.fe_idelist[int(bo_id)]
+                                mot_item.insert(5, box_flow)
+                            else:
+                                box_flow = []
+                                mot_item.insert(5, box_flow)
+                        else:
+                            box_flow = []
+                            mot_item.insert(5, box_flow)
+
+
+
+
+
+
+
+
+                # #mot
+                motdetections = mot.bboxes2out_detections(self.mot_item_list)
+                # print("box_view")
+                # print(motdetections)
+                _, d_trac,d_ind, lost_f_id , self.re_match = self.mottracker.step(motdetections, self.sift_match)
+                mottracks = self.mottracker.active_tracks(min_steps_alive=3)
+                print("count_box")
+                # print((d_trac))
+
+                print("len(mot)",len( mottracks))
+
+
+
+
+
+
+
+                for track_result in mottracks:
+                    self.new_id = self.bbox_count
+
+                    print("class_id_f",track_result.class_id)
+
+                    if track_result.id not in self.track_id_dict:
+
+                        self.track_id_dict[track_result.id]= self.new_id
+                        self.bbox_count += 1
+
+                    tracker_id = self.track_id_dict[track_result.id]
+
+                self.result = mot.draw_debug(self.result,mottracks,self.track_id_dict)
+
+
+
+                #検出Boxデバック用
+
+                # 重なり情報を保存する辞書
+                # overlap_dict = []
+
+                none_count2 = sum(1 for v in self.sift_match.values() if v == 'None')
+
+
+
+
+                for num, w_item in enumerate(yolo_segments):
+
+                    probability = w_item.probability
+                    x = w_item.xmin
+                    y = w_item.ymin
+                    xmax = w_item.xmax
+                    ymax = w_item.ymax
                     height = ymax - y
-                   # print(height)
+                    # print(height)
                     width = xmax - x
-                    class_id = bbox.class_id
-                    #object_id = ""
-                    object_id = num
+                    class_id = w_item.class_id
+                    object_id = ""
+                    x_masks = w_item.x_masks
+                    y_masks = w_item.y_masks
 
 
                     point_counts = {}
                     total_counts = {}
 
-                    reactangle = [x,y, width, height]
+                    reactangle = [x,y, xmax, ymax]
 
-                    count = 0
+                    # count = 0
 
-                    box_flow =[]
-
-                    
+                    if is_unknown_object(class_id, probability,reactangle,img_size=self.img_size) and height < 700 :
 
 
-                    if is_unknown_object(class_id, probability) and height < 500 :
-                        # count +=1
-                        print(class_id)
-                        #print(height)
+
+                        # for j_num, r_item in enumerate(yolo_segments):
+
+                        #     xr = r_item.xmin
+                        #     yr = r_item.ymin
+                        #     xmaxr = r_item.xmax
+                        #     ymaxr = r_item.ymax
+                        #     heightr = ymaxr - yr
+                        #     # print(height)
+                        #     widthr = xmaxr - xr
+
+
+
+                        #     reactangler = [xr,yr, xmaxr , ymaxr]
+
+
+                        #     if is_unknown_object(class_id, probability) and height < 700 :
+                        #         if num != j_num and iou(reactangle, reactangler):
+                        #             if not j_num  in overlap_dict:
+                        #                 overlap_dict.append(j_num)  # 重なっているボックスのインデックスを保存
+                        #             if  not num  in overlap_dict:
+                        #                 overlap_dict.append(num)
+
+
+
+
+                        # mask_pairs = list(zip(y_masks, x_masks))
+
+                        # m_points = np.array(mask_pairs, dtype=np.int32)
+
+
+
+
+                        if num in self.sift_match:
+                            id = self.sift_match[num]
+
+
+                            if id =="None":
+
+                                if none_count2 !=0 and not none_count2 < 0 :
+
+                                    print("self.track_id_dict", self.track_id_dict)
+
+                                    id = self.new_id-none_count2+1
+
+
+                                    # self.clipped_images[self.new_id-none_count+1] = self.assigned_template_ids[kt]
+
+                                    # self.match_sift[kt] = self.new_id-none_count+1
+
+                                    colar =get_id_color(int(id))
+
+                                    none_count2 -=1
+
+
+                                    cv2.putText(self.detect, f'Class : {class_id}', (x,y-5),cv2.FONT_HERSHEY_PLAIN, 1.5, colar , thickness=2)
+                                    self.detect = cv2.rectangle(self.detect, (x, y), (x + width, y + height), colar , thickness=3)
+                            else:
+                                id = self.sift_match[num]
+
+
+                                colar =get_id_color(int(id))
+                                cv2.putText(self.detect, f'Class : {class_id}', (x,y-5),cv2.FONT_HERSHEY_PLAIN, 1.5, colar , thickness=2)
+                                self.detect = cv2.rectangle(self.detect, (x, y), (x + width, y + height), colar , thickness=3)
+
+
+
+
+
+
+                #             self.detect = cv2.drawContours(self.detect, [m_points], -1, colar, thickness=cv2.FILLED)
+    
+
+                #siftの更新
+
+                print("assdd",len(self.assigned_template_ids))
+                print("mottracks",len(mottracks))
+
+                none_count3 = sum(1 for v in self.sift_match.values() if v == 'None')
+
+                # self.prev_matchid =[]
+
+
+
+                for kt,feature in self.assigned_template_ids.items():
+
+                    # kt,feature = assigned_template
+
+
+
+
+                    kp2, des2,class_id,det_box = feature
+
+                    self.detec_box = det_box
+                    # des2 = np.asarray(des2, dtype=np.float32)
+
+
+
+
+
+
+
+                    if kt  in self.sift_match and self.sift_match[kt] !='None' :
+
+                        self.best_match_template_id = int(self.sift_match[kt])
+
+
+                        print("self.assigned_template_ids[kt]",self.best_match_template_id)
+                        print("self.f_count",self.sift_maxcont)
+
+                        # if self.sift_maxcont != {}:
+                        #     if int(self.sift_maxcont[self.best_match_template_id]) >5:
                         
-                        brack_img = np.zeros(color_img.shape[:2])
-                        brack_img[y:y + height, x:x + width] = 255
-                        mask_img:np.ndarray = brack_img[y:y + height, x:x + width]
+                
+
+                        kp1, des1,class_id,trac_box, frame_alive = self.clipped_images[self.best_match_template_id] 
+                        # if isinstance(des1, list):
+                        self.clipped_images[self.best_match_template_id] = (kp1, des1,class_id,self.detec_box, frame_alive)
+
+                        #     des1 = np.asarray(des1, dtype=np.float32)
+
+
+                        self.match_sift[kt] = self.best_match_template_id
+
+                        colar =get_id_color(self.best_match_template_id)
+
+
+
+                        # if self.siftcount[kt][0][int(self.sift_match[kt])] > 5:
+
+                        #     self.best_match_template_id = int(self.sift_match[kt])
+
+                        #     # if len(self.clipped_images[self.best_match_template_id]) > len(self.assigned_template_ids[kt]):
+
+                        #         self.clipped_images[self.best_match_template_id] = self.assigned_template_ids[kt]
+                        #         # print("",)
+                        #         self.match_sift[kt] = self.best_match_template_id
+                        #     colar =get_id_color(self.best_match_template_id)
+                   
+
+                        pt_src =self.good_dict[kt]
+                        point_data = pt_src[self.best_match_template_id]
+                        new_pts =[]
+                        old_pts = []
+
+                        self.del_kp2= []
+
+                        counts = 0
+
+                        counts2 = 0
+
+                        frame_le = self.frame_count
+
+                        print("self.frame_count",self.frame_count)
+
                         
-                        bounding_box = BoundingBox(x, y, width, height) # BBOX(左上端座標, 幅, 高さ)
-                        area = width*height # BBOXの面積
 
-                        #total_counts = defaultdict(int)
-
-                        #print(self.feature_box_dict[self.frame_count][0]["feature"])
                         
-                        for values in self.feature_box_dict[self.frame_count][0]["feature"] :
-                            #print(values)
+                        #マッチングした特徴点の情報を更新
+                        for m in point_data :
+                            pts = kp2[m.trainIdx].pt
 
-                            new_point, old_point, trackid = values
+                            # cv2.drawMarker(self.result, tuple(np.int32((pts))), colar, markerType=cv2.MARKER_TRIANGLE_UP, markerSize=9, thickness=2, line_type=cv2.LINE_8)
+                            frae = self.frame_count - frame_alive[m.queryIdx]
 
-                            #print(trackid)
+                            if frae < 10 :
 
-                            if is_point_inside_bounding_box(new_point, reactangle):
-                                # print("x")
-                                # print(x)
-                                a,b = new_point
-                                c,d = old_point
-                                if len(box_flow) < 5:
-                                    box_flow.append(new_point)
-                                #print(trackid[0])
-                                if len(trackid) == 1 and trackid[0] != None and trackid[0] != "None":
-                                   # print(trackid[0])
-                                    txt_bk_color = get_id_color(int(trackid[-1]))
-                                    # txt_bk_color = (self._COLORS[int(trackid[0])] * 255 * 0.7).astype(np.uint8).tolist()
-                                    cv2.line(track, (int(a),int(b)),(int(c),int(d)), txt_bk_color, 2)
-                                    result = cv2.circle(result,(int(a),int(b)),5,txt_bk_color,-1)
-                                elif len(trackid) > 1:
+                                # print("kp2",len(kp2))
 
-                                    txt_bk_color = get_id_color(int(trackid[-1]))
+                                # print("m.trainIdx",m.trainIdx)
 
-                                    # txt_bk_color = (self._COLORS[int(trackid[0])] * 255 * 0.7).astype(np.uint8).tolist()
+                                # new_pts = np.float32( kp2[m.trainIdx].pt).reshape(-1,1,2)
+                                new_pts = kp2[m.trainIdx].pt
+                                new_des = des2[m.trainIdx]
+                                kp1[m.queryIdx] = kp2[m.trainIdx]
+                                des1[m.queryIdx] = new_des
 
-                                    cv2.line(track, (int(a),int(b)),(int(c),int(d)), txt_bk_color, 2)
-                                    result = cv2.circle(result,(int(a),int(b)),5,txt_bk_color,-1)
-                                else:
-                                    # txt_bk_color = (self._COLORS[trackid[0]] * 255 * 0.7).astype(np.uint8).tolist()
+                                # kp1 = np.vstack((kp1, new_pts))
+                                
 
-                                    cv2.line(track, (int(a),int(b)),(int(c),int(d)), colar, 2)    
-                                    result = cv2.circle(result,(int(a),int(b)),5,colar,-1)             
+                                # des1 = np.vstack(des1,new_des)
 
+                                frame_alive[m.queryIdx] = self.frame_count
+                                
 
-                                #print(trackid)
+                                self.del_kp2.append(m.trainIdx)
 
-                                for id in trackid:
-                                    if id in  total_counts:
-                                        total_counts[id] += 1
-                                        #print(id)
-
-                                    else:
-
-                                        total_counts.setdefault(id, 0)
-                                        total_counts[id] += 1
-                            elif len(trackid) > 0:
-                                # print("不安定")
-                                # print(new_point)
-                                # print(reactangle)
-                                if len(box_flow) < 5:
-                              
-                                    box_flow.append(old_point)
-
-
+                                counts += 1
+                                # del kp2[m.trainIdx]
+                                if len(new_pts) > 0:
+                                    if  (self.comand == "sift" or self.comand == "new_point" or self.comand == "line") :
+                                        cv2.drawMarker(self.result, tuple(np.int32((new_pts))), (0,0,255), markerType=cv2.MARKER_TRIANGLE_UP, markerSize=9, thickness=2, line_type=cv2.LINE_8)
+                                        # cv2.drawMarker(self.result, tuple(np.int32((new_pts))), colar, markerType=cv2.MARKER_TRIANGLE_UP, markerSize=9, thickness=2, line_type=cv2.LINE_8)
 
                             
-                            # for key, p_reactangle in self.curent_object_dict.items() :
-                            #     if not iou(p_reactangle, reactangle):
-                            #         if is_point_inside_bounding_box(new_point, reactangle):
 
-                                    
+                            else:
+                                # old_pts = np.float32(kp2[m.trainIdx].pt).reshape(-1,1,2)
+                                old_pts = kp2[m.trainIdx].pt
+                                old_des = des2[m.trainIdx]
 
-                    
-                                    
-                        # print("各detectboxごとのTack_featureの数")
-                        print(total_counts)       
-                        self.ID_point_count_dict.setdefault(num, []).append(total_counts)
+                                before_point = kp1[m.queryIdx].pt
+                                kp1[m.queryIdx] = kp2[m.trainIdx]
+                                des1[m.queryIdx] = old_des
+
+                                self.del_kp2.append(m.trainIdx)
+
+                                # if (self.frame_count -frame_alive[m.queryIdx]) > 100:
+                                #     frame_alive[m.queryIdx]  = self.frame_count
+                                # else:
+                                frame_alive[m.queryIdx]  = self.frame_count
+                                # else:
+
+                                # del kp2[m.trainIdx]
+
+                                counts2 += 1
+
+
+
+
+                                if len(old_pts)>0:
+                                 
+                                    if self.comand == "sift" or self.comand == "old_point" or self.comand == "line":
+                                        # print("old_pts",old_pts)
+                                        cv2.drawMarker(self.result, tuple(np.int32((old_pts))), (0,255,0), markerType=cv2.MARKER_TRIANGLE_UP, markerSize=9, thickness=2, line_type=cv2.LINE_8)
+                            
+                                    if self.comand == "line":
+
+                                        cv2.drawMarker(self.result, tuple(np.int32((before_point))), (0,255,0), markerType=cv2.MARKER_TRIANGLE_UP, markerSize=9, thickness=2, line_type=cv2.LINE_8)
+
+                                        cv2.line(self.result,tuple(np.int32((old_pts))),tuple(np.int32((before_point)),(255,0,0),2))
+
+                        # frame_alive = [x + 1 for x in frame_alive]
+                        print("kp2",len(kp2))
+                        print("des2",len(des2))
+                        # print("del_kp2",del_kp2)
+                        # n_k = len(point_data)- len(self.del_kp2)
+                        # o_k =len(self.del_kp2)
+
+                        # x_right = self.result.shape[1] - 15 
+                        # line_spacing = 25 
+                        # font = cv2.FONT_HERSHEY_SIMPLEX
+                        # font_scale = 0.6
+                        # thickness = 2
+                        # y_start =15
+                        # color = (255, 255, 255)
+                        # # テキスト内容
+                        # text =f"good_match ({counts}/{len(kp2)})"
+
+                        # text2 =f"re_match ({counts2}/{len(kp2)})"
+                        # all_p = len(kp2)
+
+                        # # テキストサイズを計算 (右端揃え用)
+                        # text_size = cv2.getTextSize(text, font, font_scale, thickness)[0]
+                        # x_text = x_right - text_size[0]  # テキストの右端を画像右端に合わせる
+
+                        # # 画像上に描画
+                        # cv2.putText(self.result, text, (x_text, y_start), font, font_scale, color, thickness)
+                        # y_start += line_spacing  # 次の行に移動
+
+                        # cv2.putText(self.result, text2, (x_text, y_start), font, font_scale, color, thickness)
+
+
+                        if self.del_kp2 != []:
+                            del_kp2=list(set(self.del_kp2))
+                            for index in sorted(del_kp2, reverse=True):
+                                # print(index)
+                                del kp2[index]
+                                del des2[index]
+                            
+                        del_siftIdx = []
+
+                        print("len(frame_alive)",len(frame_alive))
+
+
                         
+                        
+                        for f_idx , alive_count in enumerate(frame_alive):
+                            frame_le = frame_le - alive_count
+                            if frame_le > 200:
 
 
-                        #ID_point_count_dict.update(num, point_counts)  
-                        #print(ID_point_count_dict)
-                        bounding_box = BoundingBox(x, y, width, height) # BBOX(左上端座標, 幅, 高さ)
+                                # kp1 = np.delete(kp1, f_idx, axis=0)
+                                del kp1[f_idx]
+                                del des1[f_idx]
+                                del_siftIdx.append(f_idx)
 
 
-                        bbox_item = BboxObject(bounding_box, area, mask_img, timestamp,class_id,object_id)
+                  
+                        
+                        for inx in sorted( del_siftIdx, reverse=True):
+                            del frame_alive[inx]
 
-                        bbox_item2 = [x,y, width, height, probability,box_flow,class_id]
-                        mot_item_list.append(bbox_item2)
+                      
+                        
+                        #SIFT特徴点の追加
 
-                        bbox_item_list.append(bbox_item)
-                
+                        if self.siftcount[kt][0][int(self.sift_match[kt])] < 80 and len(kp1)< 8000 :
 
-
-
-                print("各detectboxごとのTack_featureの数")
-                print(self.ID_point_count_dict)
-                self.match = {}
-                # # matting
-                # for outer_key, inner_list in self.ID_point_count_dict.items():
-                #     max_key = None
-                #     max_value = float('-inf')
-                    
-                #     for inner_dict in inner_list:
-                #         for inner_key, inner_value in inner_dict.items():
-                #             if inner_value > max_value:
-                #                 max_value = inner_value
-                #                 max_key = inner_key
-                    
-                #     match[outer_key] = max_key
-                
-                print("結果")
-                self.new_key = []
-
-                
+                            if self.comand == "sift" or self.comand == "add_point":
+                                for point in kp2 :
+                                    # colar =get_id_color(self.best_match_template_id)
+                                    cv2.drawMarker(self.result, tuple(np.int32((point.pt ))), (255,0,0), markerType=cv2.MARKER_TRIANGLE_UP, markerSize=9, thickness=2, line_type=cv2.LINE_8)
 
 
-                # Step 1: Calculate the total for each inner_key
-                totals = {}
-                for outer_key, inner_list in self.ID_point_count_dict.items():
-                    for inner_dict in inner_list:
-                        for inner_key, inner_value in inner_dict.items():
-                            if inner_key not in totals:
-                                totals[inner_key] = 0
-                            totals[inner_key] += inner_value
+                            kp1.extend(kp2)
+                                
 
-                # Step 2: Collect all potential assignments with their ratios
-                potential_assignments = {}
+                            des1.extend(des2)
 
-                for outer_key, inner_list in self.ID_point_count_dict.items():
-                    
-                    for inner_dict in inner_list:
-                        for inner_key, inner_value in inner_dict.items():
-                            if outer_key not in potential_assignments:
-                                potential_assignments[outer_key] = []
-                            
-                            #特徴点を追加するかの判定
-                            if totals[inner_key] < 1 and  max(inner_dict.values()) == inner_value:
-                                self.new_key.append(outer_key)
-                                point_relia = True
+                            # num_rows = kp2.shape[0]
+                            num_rows = len(kp2)
 
-                            if totals.get(inner_key, 0) < 1:
-                                continue
+                            #新しい特徴分だけ追加
+                            frame_alive.extend([self.frame_count] * num_rows)
 
 
-                            ratio = inner_value / totals[inner_key]
-        # print(totals[inner_key])
-                                                # print(inner_value )
 
-                            potential_assignments[outer_key].append((ratio, inner_key, inner_value))
+                            self.clipped_images[self.best_match_template_id] = (kp1, des1,class_id,det_box, frame_alive)
+                        
+                        
+                    else:
+                            print("none_count3",none_count3)
+                            if none_count3 !=0 and not none_count3 < 0 :
 
-                # # Step 3: Select the best assignments based on ratios
-                            
-                # #　or表示の条件に合計の50％以下かどうか
-                # outer_totals = {}
-                # for outer_key2, inner_list2 in self.ID_point_count_dict.items():
-                #     outer_totals[outer_key2] = sum(inner_value for inner_dict in inner_list2 for inner_value in inner_dict.values())
+                                print("self.track_id_dict", self.track_id_dict)
 
-                # # Step 2: Collect all potential assignments with their ratios
+                                self.best_match_template_id = self.new_id-none_count3+1
 
-
-                # for outer_key2, inner_list2 in self.ID_point_count_dict.items():
-              
-                #     for inner_dict2 in inner_list2:
-                #         loop =0
-                #         for inner_key2, inner_value2 in inner_dict2.items():
-                #             ratio2 = inner_value2 / outer_totals[outer_key2]
-                #             if len(potential_assignments[outer_key2]) > loop:
-                #                 potential_assignments[outer_key2][loop]= potential_assignments[outer_key2][loop]+(ratio2,)
-                #                 loop += 1          
-                #             else :
-                #                 continue
-                            
-
-                # Step 3: Select the best assignments based on ratios
-                assignments = {}
-
-                for outer_key, values in potential_assignments.items():
-                    assignments[outer_key] = []
-                    for ratio, inner_key, inner_value in values:
-                        total_inner_values = sum(inner_dict[inner_key] for inner_dict in self.ID_point_count_dict[outer_key])
-                        ratio2 = inner_value / total_inner_values
-                        assignments[outer_key].append((ratio, inner_key, inner_value, ratio2))
+                                
 
 
+                                # if not  int(kt) in overlap_dict :
+
+                                # num_rows = kp2.shape[0]
+
+                                num_rows =  len(kp2)
+                                
+                                frame_count = [1] * num_rows
+
+                                print("box",self.detec_box)
+
+
+                                self.clipped_images[self.new_id-none_count3+1] = (kp2, des2,class_id,self.detec_box, frame_count)
+                                self.match_sift[kt] = self.new_id-none_count3+1
+
+                                
+                                colar =get_id_color(self.best_match_template_id)
+
+                                none_count3 -=1
+
+
+                                kp, new_des, _,_= self.assigned_template_ids[kt]
+                                for  new_kp in kp:
+
+                                    # print(new_kp.pt)
+
+                                # pt2 = tuple(np.int32(dst_pts[0]))
+
+                                    if self.comand == "sift":
+                                        
+                                        cv2.drawMarker(self.result, (int(new_kp.pt[0]),int(new_kp.pt[1])), colar, markerType=cv2.MARKER_TRIANGLE_UP, markerSize=9, thickness=2, line_type=cv2.LINE_8)
+
+
+
+
+                d_ind = sorted(d_ind, reverse=True)
+
+                keys_list = list(self.clipped_images.keys())
+
+                print(self.clipped_images.keys())
+
+                print("fff",keys_list)
 
                 
+                for l_id in d_trac:
 
-                # Function to find the best assignment
-                # def find_best_assignment(values):
-                #     # Check if there are multiple candidates with ratio > 0.5
-                #     #print(values)
-                #     candidates = [inner_key for ratio, inner_key, inner_value,ratio2 in values if ratio >= 0.8 and ratio2 > 0.5]
-                #     if len(candidates) > 1:
-                #         return " or ".join(map(str, candidates))
-                    
-                #     # Return the best available candidate
-                #     for ratio, inner_key, inner_value , ratio2 in values:
+                    if l_id in self.clipped_images:
 
-                #         return str(inner_key)
-                #     return None
-                # Function to find the best assignment
-                def find_best_assignment(values):
-                    candidates = [inner_key for ratio, inner_key, inner_value, ratio2 in values if ratio >= 0.3 and ratio2 >= 0.5]
-                    #print(ratio)
-                    if len(candidates) > 1:
-                        return " or ".join(map(str, candidates))
-                    if candidates:
-                        return str(candidates[0])
-                    return None
-                
-                # for outer_key in potential_assignments:
-                #     values = potential_assignments[outer_key]
-                #     # Sort by ratio descending
-                #     values.sort(key=lambda x: x[0], reverse=True)
-                    
-                #     # Assign the best available candidate
-                #     assigned_inner_key = find_best_assignment(values)
-                    
-                #     if assigned_inner_key is not None:
-                #         self.match[outer_key] = assigned_inner_key
-                
-                for outer_key, values in assignments.items():
-                    assigned_inner_key = find_best_assignment(values)
-                    if assigned_inner_key is not None:
-                        self.match[outer_key] = assigned_inner_key
+                        del self.clipped_images[l_id]
 
-                #print(self.match)
-                
-                self.match = resolve_conflicts(self.match)
-
-
-                
-
-
-
-                
-
-
-
-
-                # #test IOUあり
-                # # Step 1: Calculate the total for each outer_key
-                # totals = {}
-                # for outer_key, inner_list in self.ID_point_count_dict.items():
-                #     for inner_dict in inner_list:
-                #         for inner_key, inner_value in inner_dict.items():
-                #             if inner_key not in totals:
-                #                 totals[inner_key] = 0
-                #             totals[inner_key] += inner_value
-
-                # # Step 2: Collect all potential assignments with their ratios
-                # potential_assignments = {}
-
-                # for outer_key, inner_list in self.ID_point_count_dict.items():
-                #     for inner_dict in inner_list:
-                #         for inner_key, inner_value in inner_dict.items():
-                #             if inner_key not in potential_assignments:
-                #                 potential_assignments[inner_key] = []
-                #             ratio = inner_value / totals[inner_key]
-                #             potential_assignments[inner_key].append((ratio, outer_key, inner_value))
-
-                # # Step 3: Select the best assignments based on ratios
-                # used_outer_keys = set()
-
-                # # First, sort all inner_keys based on their max ratio in descending order
-                # sorted_keys = sorted(potential_assignments.keys(), key=lambda k: max(v[0] for v in potential_assignments[k]), reverse=True)
-
-                # # Function to find the best assignment
-                # def find_best_assignment(values, used_outer_keys):
-                #     for ratio, outer_key, inner_value in values:
-                #         if outer_key not in used_outer_keys:
-                #             return outer_key
-                #     return None
-
-                # for inner_key in sorted_keys:
-                #     values = potential_assignments[inner_key]
-                #     # Sort by ratio descending
-                #     values.sort(key=lambda x: x[0], reverse=True)
-                    
-                #     # Try to assign to a non-'lost' key first
-                #     non_lost_values = [(ratio, outer_key, inner_value) for ratio, outer_key, inner_value in values if 'lost' not in str(outer_key)]
-                #     assigned_outer_key = find_best_assignment(non_lost_values, used_outer_keys)
-                    
-                #     # If no non-'lost' key is available, assign to any key
-                #     if assigned_outer_key is None:
-                #         assigned_outer_key = find_best_assignment(values, used_outer_keys)
-                    
-                #     if assigned_outer_key is not None:
-                #         self.match[assigned_outer_key] = inner_key
-                #         used_outer_keys.add(assigned_outer_key)
-
-
-                # sorted_keys = sorted(potential_assignments.keys(), key=lambda k: max(v[0] for v in potential_assignments[k]), reverse=True)
-
-                # for inner_key in sorted_keys:
-                #     values = potential_assignments[inner_key]
-                #     # Sort by ratio descending, then by whether the key contains 'lost' (lost ones last)
-                #     values.sort(key=lambda x: (x[0], 'lost' in str(x[1])), reverse=True)
-                #     for ratio, outer_key, inner_value in values:
-                #         if outer_key not in used_outer_keys:
-                #             self.match[outer_key] = inner_key
-                #             used_outer_keys.add(outer_key)
-                #             break
-                #     else:  # If no key was assigned
-                #         for ratio, outer_key, inner_value in values:
-                #             if 'lost' not in str(outer_key) and outer_key not in result:
-                #                 result[outer_key] = inner_key
-                #                 break
-                        # for ratio, outer_key, inner_value in values:
-                        #     if self.match.get(outer_key, None) == None:
-                        #         self.match[outer_key] = inner_key
-                        #         break
-
-                #print(self.match)
-                
-                self.id = list(self.match.values())
-                #print( self.id)
-                
-
-                counta = 0
-                
-                # # 割り当てられていないキーを探し出して結果の辞書に追加
-                # for key in self.ID_point_count_dict.keys():
-                #     if key not in self.match:
-                #         print("ssssssssssssssssssssd")
-                #         point_relia = True
-                #         counta += 1
-                #         #print( counta)
-                #         #print(self.curent_object_dict)
-                #         n_id =len(self.curent_object_dict)+ counta
-                #         self.match[key] = str(n_id)
-                #         self.new_key.append(key)
-                #         print(key)
-                #          # ここでは値をNoneに設定
-
-                
-                print(self.match)
-
-                self.match = dict(sorted(self.match.items(), key=lambda item: item[1]))
-
-
-                print(self.match)
-
-
-
-                # #mot 
-                motdetections = mot.bboxes2out_detections(mot_item_list)
-                print("box_view")
-                print(motdetections)
-                self.mottracker.step(motdetections, self.match)   
-                mottracks = self.mottracker.active_tracks(min_steps_alive=10)
-                print("count_box")
-                print(len(mottracks))
-
-                for track_result in mottracks:
-                    if track_result.id not in self.track_id_dict: 
-                        new_id = len(self.track_id_dict)
-                        self.track_id_dict[track_result.id]= new_id
-                result = mot.draw_debug(result,mottracks,self.track_id_dict)
-
-            
-
-
-                #self.oneflag = True
-                #print(self.feature_box_dict[self.frame_count][0]["feature"] )
-
-
-                
-                for id_num in self.id :
-                    if "or" in str(id_num) :
-                        print("or_flag")
-                        uncertain_flag = True
-                    # else:
-
-                    #     print("nobo")
+                    # print("clipped_images",self.clipped_images)
 
 
                 feature_list = []
 
+                self.id_list =[]
+
+                lost_points = []
+
+                # print(len(self.feature_box_dict[self.frame_count][0]["feature"]))
+                # print(len(self.good_new.reshape(-1, 1, 2)))
+
+                del_point= []
+
+                a_mask = self.seg_mask.copy()
 
 
-                # 新しい特徴店の登録　修正部分
-                for values in self.feature_box_dict[self.frame_count][0]["feature"] :
+
+
+
+                # オプティカルフロー勾配法の新しい特徴点の登録　修正部分
+                for point_num , values in enumerate(self.feature_box_dict[self.frame_count][0]["feature"]) :
 
                     new_point, old_point, trackid = values
                     #print(values)
                     #print(trackid)
+                    lost_feature_flag = True
 
-                    for num, track_result in enumerate(mottracks): #yolox_bboxes
-
-                        tracker_id = self.track_id_dict[track_result.id]
-                        bbox = track_result.box
-                        x1, y1, x2, y2 = int(bbox[0]), int(bbox[1]), int(bbox[2]), int(bbox[3])
-                        reactangle = [x1, y1,x2-x1,y2-y1]
+                    a,b = new_point
 
 
-                        if is_point_inside_bounding_box(new_point, reactangle):
-                            a,b = new_point
-                            c,d = old_point
-                            if len(trackid) > 0:
+                    count = 0
 
-                                if "or" in str(tracker_id) :
-                                        continue
-                                elif not int(tracker_id) in trackid :
-                                    # object_id = self.match[object_id]
+                    for num, mask in self.mask_box.items(): #mottrackstrack_result
 
-                                    trackid.append(int(tracker_id))
+                        object_id = ""
+             
+                        if object_id == ""  and num in self.sift_match:
 
-                                
+
+
+                            if self.sift_match[num]!= 'None':
+                                # object_id = self.re_match[count]
+                                object_id = self.sift_match[num]
                             else:
-                                # if "lost" in str(self.match[object_id]) :
-                                #     object_id = object_id[-1]
-                                #     track_id.append(self.match[object_id])
-                                #     txt_bk_color = (self._COLORS[self.match[object_id]] * 255 * 0.7).astype(np.uint8).tolist()
-                                #     cv2.line(track, (int(a),int(b)),(int(c),int(d)), txt_bk_color, 2)
-                                #     result = cv2.circle(result,(int(a),int(b)),5,txt_bk_color,-1)
-
-                                if "or" in str(tracker_id) :
-                                    txt_bk_color = colar
-                                else:
-                                    txt_bk_color = get_id_color(int(tracker_id))
-                                    # txt_bk_color = (self._COLORS[int(object_id)] * 255 * 0.7).astype(np.uint8).tolist()
-                                    cv2.line(track, (int(a),int(b)),(int(c),int(d)),txt_bk_color, 2)
-                                    result = cv2.circle(result,(int(a),int(b)),5,txt_bk_color,-1)
-                                    #print(object_id)
-
-                                    trackid.append(int(tracker_id))
-
-
-
-
-
-
-
-                        # 特徴点登録　yolo 
-                        # # probability = w_item.probability
-                        # # x = w_item.xmin
-                        # # y = w_item.ymin
-                        # # xmax = w_item.xmax
-                        # # ymax = w_item.ymax
-                        # # height = ymax - y
-                        # # # print(height)
-                        # # width = xmax - x
-                        # # class_id = w_item.class_id
-                        # # object_id = ""
-
-
-                        # point_counts = {}
-                        # total_counts = {}
-
-                        # reactangle = [x,y, width, height]
-
-                        # count = 0
-
-                        # if is_unknown_object(class_id, probability) and height < 500 :
-                        # # print("ss" )
-
-                        #     #result = cv2.rectangle(result, (x, y), (x + width, y + height), (255,204,102), thickness=3)
-
-                        #     if object_id == "" :
-                        #         #print(object_id )
-
-                        #         # if not len(bbox_item_list) > len(self.id) :
-                        #         #     #print("aa")
-
-                        #         if num in self.match:
-                        #             object_id = num
-                        #             # print(object_id)
-
-                        #     # print("id")
-                        #     #print(object_id)
-                        #     if object_id != None and object_id != "" :
-                        #         if num in self.match:
-                        #             object_id = self.match[num]
-                        #             #print(object_id)
-
-                        #     if is_point_inside_bounding_box(new_point, reactangle):
-                        #         #print(num)
+                                object_id == 'None'
                             
-                        #         a,b = new_point
-                        #         c,d = old_point
-                        #         if len(trackid) > 0:
-                        #             #print(object_id)
-                        #             # print(self.match)
-                        #             # if "lost" in str(object_id) :
-                        #             #     object_id = object_id[-1]
+                        
+                        a,b = new_point
+                        c,d = old_point
 
+                        if mask[int(b),int(a)] ==255:
+     
+
+                            if self.comand == "flow":
+                                
+                                txt_bk_color = get_id_color(int(trackid[0]))
+
+                                oldp_color = (0, 0, 255) 
+
+    
+                                
+                                self.result = cv2.circle(self.result,(int(a),int(b)),5,oldp_color,-1)
+                                self.result = cv2.circle(self.result,(int(c),int(d)),5,txt_bk_color,-1)
+                                cv2.line(track, (int(a),int(b)),(int(c),int(d)), txt_bk_color, 2)
+
+                            lost_feature_flag = False
+
+
+
+                            if len(trackid) > 0:
+                                if object_id == 'None' or object_id == '':
                                     
-                        #             if "or" in str(object_id) :
-                        #                 continue
-                        #             elif not int(object_id) in trackid :
-                        #                 # object_id = self.match[object_id]
+                                    lost_points.append(point_num)
+                                    # del self.feature_box_dict[self.frame_count][0]["feature"][point_num]
 
-                        #                 trackid.append(int(object_id))
-
-                                
-                        #         else:
-                        #             # if "lost" in str(self.match[object_id]) :
-                        #             #     object_id = object_id[-1]
-                        #             #     track_id.append(self.match[object_id])
-                        #             #     txt_bk_color = (self._COLORS[self.match[object_id]] * 255 * 0.7).astype(np.uint8).tolist()
-                        #             #     cv2.line(track, (int(a),int(b)),(int(c),int(d)), txt_bk_color, 2)
-                        #             #     result = cv2.circle(result,(int(a),int(b)),5,txt_bk_color,-1)
-
-                        #             if "or" in str(object_id) :
-                        #                 txt_bk_color = colar
-                        #             else:
-                        #                 txt_bk_color = get_id_color(int(object_id))
-                        #                 # txt_bk_color = (self._COLORS[int(object_id)] * 255 * 0.7).astype(np.uint8).tolist()
-                        #                 cv2.line(track, (int(a),int(b)),(int(c),int(d)),txt_bk_color, 2)
-                        #                 result = cv2.circle(result,(int(a),int(b)),5,txt_bk_color,-1)
-                        #                 #print(object_id)
-
-                        #                 trackid.append(int(object_id))
-
-                        #                 # uncertain_flag = False
-                                
+                                elif int(trackid[0]) != int(object_id):    #int(self.re_match[count]) :
 
 
-                        #             #txt_bk_color = (self._COLORS[trackid[0]] * 255 * 0.7).astype(np.uint8).tolist()
-                        #         # else:
-                        #         #     print("ghghh")
-                        #         #     print(object_id)
-                        #         #     print(self.match)
-                        #         #     if "lost" in str(object_id) :
-                        #         #         object_id = object_id[-1]
-                        #         #     counta += 1
-                        #         #     object_id =  len(self.curent_object_dict)+ counta
 
-                        #         #     if "or" in str(object_id) :
-                        #         #         txt_bk_color = colar
-                        #         #     else:
-                        #         #         txt_bk_color = (self._COLORS[int(object_id)] * 255 * 0.7).astype(np.uint8).tolist()
-                        #         #         track_id.append(int(object_id))
-                        #         #         print(track_id)
+                                    # print(trackid[0])
+                                    # print('でなない')
+                                    lost_points.append(point_num)
+                                    # lost_feature_flag = True
 
-                        #         #         cv2.line(track, (int(a),int(b)),(int(c),int(d)), txt_bk_color, 2)
-                        #         #         result = cv2.circle(result,(int(a),int(b)),5,txt_bk_color,-1)
+                                if "or" in str(object_id) :
+                                    continue
 
+
+
+                            else:
+               
+
+                                if "or" in str(object_id) :
+                                    txt_bk_color = colar
+                                elif object_id !='' and object_id !='None':
+                                    txt_bk_color = get_id_color(int(object_id))
+               
+                                    trackid.append(int(object_id))
+
+                     
+
+                            count +=1
+     
+
+
+
+                    if lost_f_id !=[] or  d_trac !=[]:
+                        if trackid[0] in lost_f_id or trackid[0] in d_trac:
+                            del_point.append(point_num)
 
 
 
@@ -1721,439 +3336,492 @@ class CaptureNode(ImagePreviewNode):
 
 
 
-                   # self.oneflag = False
-
-
-                    # print("feature_list")
-                  #  print(feature_list)
-                    
-                    # print(self.curent_object_dict)
-
 
                 feature = {"feature": feature_list}
-                #print(feature)
-
-                # bbox = {"bbox": self.curent_object_dict}
 
 
 
-                # print(self.feature_box_dict[self.frame_count][0]["feature"])
-                self.feature_box_dict[self.frame_count][0]["feature"] = feature_list
-                #print(self.feature_box_dict[self.frame_count][0]["feature"])
-                # print(self.feature_box_dict)
+                # print(len(self.feature_box_dict[self.frame_count][0]["feature"]))
+                lost_points = list(set(lost_points))
+                # print("lost")
+                lost_points =sorted(lost_points, reverse=True)
+                # print(lost_points)
+                print(len(self.feature_box_dict[self.frame_count][0]["feature"]))
+
+                for point_lost in lost_points:
+                    if 0 <= point_lost < len(self.feature_box_dict[self.frame_count][0]["feature"]):
+
+                        del self.feature_box_dict[self.frame_count][0]["feature"][point_lost]
+                        self.good_new =np.delete(self.good_new, point_lost,axis=0)
+                        self.good_old =np.delete(self.good_old, point_lost,axis=0)
 
 
-                self.good_new = p1[st==1]
-                self.good_old = p0[st==1]
 
-
-                #lostしたboxの表示
-                # for l_num, lost_item in lost_box.items():
-                 
-
-                #     x, y, width, height = lost_item
-
-                #     object_id = "lost"+str(l_num)
-
-                #     l_reactangle = [x,y, width, height]
-
-                #     if object_id in self.match and not l_num in self.match  :
- 
-                #         result = cv2.rectangle(result, (x, y), (x + width, y + height), colar, thickness=3)
-                #         cv2.putText(result, f'ID : {object_id}', (x,y),cv2.FONT_HERSHEY_PLAIN, 1.5, colar, thickness=2)
-
-
-                
-
-
-                #print(ID_point_count_dict)
-                    # for obj_id, (new, old) in self.trackable_objects.items():
-                    #     new_point = self.good_new[obj_id]
-                    #     new = np.vstack((new, new_point))
-                    #     self.trackable_objects[obj_id] = (new, old)
-
-
-                # for obj_id, (new, old) in self.trackable_objects.items():
-                #     color = (0, 255, 0)  # オブジェクトごとに色を割り当てる
-                #     for i in range(1, len(new)):
-                #         a, b = new[i].ravel()
-                #         c, d = old[i].ravel()
-                #         result = cv2.line(result, (a, b), (c, d), color, 2)
-                #         result = cv2.circle(result, (a, b), 5, color, -1)
-                #         cv2.putText(result, f"ID: {obj_id}", (a, b), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
-            
 
 
 
                 best_overlap_count = 0
 
-                # # 物体追跡を描画
-                # track = np.zeros_like(img)
-                # for i,(new,old) in enumerate(zip(self.good_new,self.good_old)):
-                #     total_overlap_count = 0
-
-                #     a,b = new.ravel()
-                #     point = a,b #+211 
-                #     c,d = old.ravel()
-                #     point2 = c,d #+211
-                #     colar =(0,255,0)
-
-                #     cv2.line(track, (int(a),int(b)),(int(c),int(d)), colar, 2)
-                #     result = cv2.circle(result,(int(a),int(b)),5,colar,-1)
-
-
-
-                                                 
             
 
             self.track_list.append(track)
-            if( len(self.track_list)> 10 ):
+            if( len(self.track_list)> 3 ):
                 self.track_list.pop(0)
+            
 
+            # if self.comand == "flow":
             for t in self.track_list :
-                result = np.where(t!=0,t,result)
-            
+                self.result = np.where(t!=0,t,self.result)
+
+
+            self.matchkline2 = self.matchkline
+
             self.prvs = next
+
+
+
+            feature_list2 =[]
             
 
-            # else:
-                 
-                
-            #     self.current_object_dict = {}
-            #     if( len(self.track_list)> 10 ):
-            #         self.track_list = []
+
+            #　勾配法の特徴点追加
+            if   self.point_relia:
+                counta = 0
+                mask = img.copy()
+
+                # gpu_image = cv2.cuda_GpuMat()
+
+                # gpu_image.upload(mask)
+                add_count = len(self.new_key)
+
+
+                new_addpoint = []
+
+
+                sift_point= []
+
+                add_flow = {}
+
+                none_count3 = sum(1 for v in self.sift_match.values() if v == 'None')
+
+
+                self.mask_box
+
+
+
+                for id_n, bbox in enumerate(yolo_segments):
+                    probability = bbox.probability
+                    x = bbox.xmin
+                    y = bbox.ymin
+                    xmax = bbox.xmax
+                    ymax = bbox.ymax
+                    height = ymax - y
+                    width = xmax - x
+                    class_id = bbox.class_id
+                    x_masks = bbox.x_masks
+                    y_masks = bbox.y_masks
+
+                    mask_pairs = list(zip(y_masks, x_masks))
+
+                    m_points = np.array(mask_pairs, dtype=np.int32)
+
+
+
+
+
+                    box_info = [x,y,xmax,ymax]
+
+
+                    object_id = ""
+
+
+                    if is_unknown_object(class_id, probability,box_info,img_size=self.img_size) and height < 700 and id_n in self.new_key:
+
+                        mask = cv2.drawContours(mask, [m_points], -1, 255, thickness=cv2.FILLED)
+
+
+                        distance = 10  # 削る距離（ピクセル単位）
+                        kernel = np.ones((distance, distance), np.uint8)  # 距離に基づくカーネル
+
+
+                        mask= cv2.erode(mask, kernel, iterations=1)
+
+                        if id_n in self.assigned_template_ids:
+                            kp, new_des,_ ,_= self.assigned_template_ids[id_n]
+
+             
+
+                            # sift_point.append(kp)
+                            track_id = []
+
+                            print("kep",len(kp))
+
+
+                            for  get_point in kp:
+
+                                # a,b = add_point.ravel()
+                                a, b = get_point.pt
+                                new_point = a,b
+                                old_point = a,b
+                                # print("new",new_point)
+
+
+
+
+                                #sift_add
+
+                                if id_n  in self.sift_match and self.sift_match[id_n] !='None':
+                                    object_id = int(self.sift_match[id_n])
+                                else:
+
+                                    object_id = self.new_id-none_count3+1
+                                    none_count3 -=1
+
+
+                                track_id.append(object_id)
+
+
+
+
+
+
+                                if object_id in add_flow:
+                                    if object_id in self.fe_idelist:
+                                        # print("len(self.fe_idelist[trackid[0]])",len(self.fe_idelist[track_id[0]]))
+                                        if len(self.fe_idelist[object_id]) < 50:
+                                            self.fe_idelist[object_id].append([new_point])
+
+                                            add_flow[object_id].append(new_point)
+
+                                            new_addpoint.append([new_point])
+
+
+
+                                            feature_list2.append([new_point,old_point,track_id])
+                                        else:
+                                            break
+                                else:
+
+                                    if object_id in self.fe_idelist:
+                                        # print("len(self.fe_idelist[trackid[0]])",len(self.fe_idelist[track_id[0]]))
+
+                                        if len(self.fe_idelist[object_id]) < 50:
+                                            add_flow.setdefault(object_id, [new_point])
+                                            self.fe_idelist[object_id].append([new_point])
+                                            new_addpoint.append([new_point])
+
+
+
+                                            feature_list2.append([new_point,old_point,track_id])
+                                        else:
+                                            break
+                                    else:
+                                        add_flow.setdefault(object_id, [new_point])
+                                        self.fe_idelist.setdefault(object_id, [new_point])
+
+                                        new_addpoint.append([new_point])
+
+
+
+                                        feature_list2.append([new_point,old_point,track_id])
+
+
+
+                mask_img = cv2.cvtColor(mask, cv2.COLOR_BGR2GRAY)
+
+
+
+                p_new = cv2.goodFeaturesToTrack(next, mask = mask_img, **feature_params2)
+
+                print("特徴点追加")
+                print("追加ID ",self.new_key)
+                # mask = img.copy()
+                count2= 0
+                print("rematch" , self.re_match)
+
+
+
+                for add_point in p_new :
+
+                    # print("add_point",add_point)
+
+
+
+                    a,b = add_point.ravel()
+                    # a, b = get_point.pt
+                    new_point = a,b
+                    old_point = a,b
+                    # print("new",new_point)
+                    track_id = []
+
+
+                    for track_result in mottracks:
+                        tracker_id = self.track_id_dict[track_result.id]
+                        bbox = track_result.box
+                        x1, y1, x2, y2 = int(bbox[0]), int(bbox[1]), int(bbox[2]), int(bbox[3])
+                        reactangle2 = [x1, y1,x2-x1,y2-y1]
+                        object_id = ""
+
+
+                        if is_point_inside_bounding_box(new_point, reactangle2):
+                            object_id = tracker_id
+
+                            if object_id != "":
+                            # cal = cv2.circle(result,(int(a),int(b)),5,(255,255,255),-1)
+
+                                track_id.append(int(object_id))
+
+                                # new_addpoint.append([new_point])
+
+
+                                if track_id[0] in add_flow:
+                                    if track_id[0] in self.fe_idelist:
+                                        # print("len(self.fe_idelist[trackid[0]])",len(self.fe_idelist[track_id[0]]))
+                                        if len(self.fe_idelist[track_id[0]]) < 50:
+                                            self.fe_idelist[track_id[0]].append([new_point])
+
+                                            add_flow[track_id[0]].append(new_point)
+
+                                            new_addpoint.append([new_point])
+
+
+
+                                            feature_list2.append([new_point,old_point,track_id])
+                                        else:
+                                            break
+                                else:
+
+                                    if track_id[0] in self.fe_idelist:
+                                        # print("len(self.fe_idelist[trackid[0]])",len(self.fe_idelist[track_id[0]]))
+
+                                        if len(self.fe_idelist[track_id[0]]) < 50:
+                                            add_flow.setdefault(track_id[0], [new_point])
+                                            self.fe_idelist[track_id[0]].append([new_point])
+                                            new_addpoint.append([new_point])
+
+
+
+                                            feature_list2.append([new_point,old_point,track_id])
+                                        else:
+                                            break
+                                    else:
+                                        add_flow.setdefault(track_id[0], [new_point])
+                                        self.fe_idelist.setdefault(track_id[0], [new_point])
+
+                                        new_addpoint.append([new_point])
+
+
+
+                                        feature_list2.append([new_point,old_point,track_id])
+
+                #特徴追加
+
+
+                if new_addpoint != []:
+        
+                    new_addpoint = np.array(new_addpoint, dtype=np.float32)
+
+                    self.good_new = np.concatenate((self.good_new.reshape(-1, 1, 2), new_addpoint), axis=0)
+                    self.feature_box_dict[self.frame_count][0]["feature"].extend(feature_list2)
+
+
+
+
+
+
+                print(len(self.good_new.reshape(-1, 1, 2)))
+                print(len(self.feature_box_dict[self.frame_count][0]["feature"]))
+
+
+
+
+                if len(self.curent_object_dict) !=0:
+                    bbox = {"bbox": self.curent_object_dict}
+                    self.feature_box_dict[self.frame_count].append(bbox)
+
+
+
+                #５０フレーム記録したら、古いものから消す
+                if len(self.feature_box_dict) > 50 :
+                    # 一番前の要素を取得
+                    first_key = list(self.feature_box_dict.keys())[0]
+                    self.feature_box_dict.pop(first_key,None)
+
+
 
         #result = cv2.resize(result,(width,height))
-        self.print_fps(result)
+        self.print_fps(self.result)
 
 
-            # cv2.putText(result,
-            #             text="FPS:%f"%(1./duration),org=(10,50),fontFace=cv2.FONT_HERSHEY_SIMPLEX,
-            #             fontScale=1.0,color=(0,255,0),thickness=2,lineType=cv2.LINE_4)
-            
+        #     # # メモリ使用量を取得
+        #     # snapshot = tracemalloc.take_snapshot()
+        #     # top_stats = snapshot.statistics('lineno')
 
-        # wait bounding_boxの表示& 新しい特徴店の追加
-        #print(len(wait_item_list))
+        #     # print("[ Top 10 memory usage ]")
+        #     # for stat in top_stats[:10]:
+        #     #     print(stat)
+
+
+
+        #デバック用画面の作成
         
-        #不確かなboxがなく、数が少ないなら新しく特徴点の追加を行う
-       # print(len(self.feature_box_dict[self.frame_count][0]["feature"]))
-        feature_list2 =[]
-        new_addpoint = []
+        # self.result = np.hstack((self.result, self.testmask))
+        # self.detect = np.hstack((self.flow, self.detect))
 
-        if not uncertain_flag and point_relia:
-            counta = 0
-            p_new = cv2.goodFeaturesToTrack(next, mask = None, **feature_params)
-            print("特徴点追加")
-            print(self.new_key)
+        # self.result =cv2.vconcat([self.result, self.detect])
 
-            for add_point in p_new :
-                track_id = []
+        if self.matched_images !=[]:
+            rows = []
 
-                a,b = add_point.ravel()
-                new_point = a,b 
-                old_point = a,b 
-
-                for num, track_result in enumerate(mottracks): #yolox_bboxes
-
-                    tracker_id = self.track_id_dict[track_result.id]
-                    bbox = track_result.box
-                    x1, y1, x2, y2 = int(bbox[0]), int(bbox[1]), int(bbox[2]), int(bbox[3])
-                    reactangle = [x1, y1,x2-x1,y2-y1]
+    
 
 
-                    if is_point_inside_bounding_box(new_point, reactangle):
-                        a,b = new_point
-                        c,d = old_point
-                        
-
-                        track_id.append(int(tracker_id)) 
-                        
-                        txt_bk_color = get_id_color(int(tracker_id))
-                        # txt_bk_color = (self._COLORS[int(object_id)] * 255 * 0.7).astype(np.uint8).tolist()
-
-                        # result = cv2.circle(result,(int(a),int(b)),5,txt_bk_color,-1)
-                        new_addpoint.append([new_point])
-
-
-
-                        feature_list2.append([new_point,old_point,track_id])
-
-                        # txt_bk_color = (self._COLORS[int(object_id)] * 255 * 0.7).astype(np.uint8).tolist()
-                        cv2.line(track, (int(a),int(b)),(int(c),int(d)),txt_bk_color, 2)
-                        result = cv2.circle(result,(int(a),int(b)),5,txt_bk_color,-1)
-                        #print(object_id)
-
-
-# yolo
-
-                # for num, w_item  in enumerate(yolox_bboxes):
-                #     probability = w_item.probability
-                #     x = w_item.xmin
-                #     y = w_item.ymin
-                #     xmax = w_item.xmax
-                #     ymax = w_item.ymax
-                #     height = ymax - y
-                #     # print(height)
-                #     width = xmax - x
-                #     class_id = w_item.class_id
-                #     object_id = ""
-
-                #     total_counts = {}
-
-                #     reactangle = [x,y, width, height]
-
-                #     if is_unknown_object(class_id, probability) and height < 500 and num in self.new_key :
-                #         if object_id == "" :
-                #     #print(object_id )
-
-
-                #             if num in self.match:
-                #                 object_id = self.match[num]
-                #                 #print(object_id)
-
-                #             if is_point_inside_bounding_box(new_point, reactangle):
-                #                # print("sdsds")
-                        
-                #                 track_id.append(int(object_id)) 
-                                
-                #                 txt_bk_color = get_id_color(int(object_id))
-                #                 # txt_bk_color = (self._COLORS[int(object_id)] * 255 * 0.7).astype(np.uint8).tolist()
-
-                #                 # result = cv2.circle(result,(int(a),int(b)),5,txt_bk_color,-1)
-                #                 new_addpoint.append([new_point])
-
-
-
-                #                 feature_list2.append([new_point,old_point,track_id])
-            
-            if new_addpoint is not None:
-              #  print(new_addpoint)
-                self.good_new = np.concatenate((self.good_new.reshape(-1, 1, 2), new_addpoint), axis=0)
-                
-            
-            #print(self.good_new)
-
-
-            self.feature_box_dict[self.frame_count][0]["feature"].extend(feature_list2)
-           # print(len(self.feature_box_dict[self.frame_count][0]["feature"]))
-
+            current_time = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+            output_name = f"matched_images_grid_{current_time}.jpg"
+            output_name2 = f"matched_images_grid2_{current_time}.jpg"
            
+            final_save_path = os.path.join(self.output_folder, output_name)
+
+            final_save_path2 = os.path.join(self.output_folder, output_name2)
 
 
+            print("gazou",len( self.matched_images ))
+
+            for i in range(0, len(self.matched_images), 2):
+                row_images = self.matched_images[i:i+2]
+                # for mask in masks_shaped:
+                #     the_mask = mask.copy()
+                #     the_mask = np.stack([the_mask] * 3,axis=-1)
+                #     row_images[the_mask[:, :, 0] > 0.5] = row_images[the_mask[:, :, 0] > 0.5] * 0.5 + np.array(color) * 0.5
+
+
+
+                # 列の不足分を黒画像で埋める
+                if len(row_images) < 2:
+                    h, w, c = row_images[0].shape
+                    black_image = np.zeros((h, w, c), dtype=np.uint8)
+                    row_images.append(black_image)
                 
-
-        # # counta = 0
-        # # for num, w_item  in enumerate(yolox_bboxes):
-        # #     probability = w_item.probability
-        # #     x = w_item.xmin
-        # #     y = w_item.ymin
-        # #     xmax = w_item.xmax
-        # #     ymax = w_item.ymax
-        # #     height = ymax - y
-        # #     # print(height)
-        # #     width = xmax - x
-        # #     class_id = w_item.class_id
-        # #     object_id = ""
-
-
-        # #     point_counts = {}
-        # #     total_counts = {}
-
-        # #     reactangle = [x,y, width, height]
-
-
-        # #     brack_img = np.zeros(color_img.shape[:2])
-        # #     brack_img[y:y + height, x:x + width] = 255
-        # #     mask_img:np.ndarray = brack_img[y:y + height, x:x + width]
-
-        # #     # BBOX(左上端座標, 幅, 高さ)
-        # #     bounding_box = BoundingBox(x, y, width, height) 
-        # #     area = width*height # BBOXの面積
-
-
-        # #     count = 0
-
-        # #     if is_unknown_object(class_id, probability) and height < 500 :
-        # #         #print("ss" )
-        # #         bbox_item = BboxObject(bounding_box, area, mask_img, timestamp,class_id,object_id)
-
-        # #         #result = cv2.rectangle(result, (x, y), (x + width, y + height), (255,204,102), thickness=3)
-
-        # #         if object_id == "" :
-        # #             #print(object_id )
-
-        # #             # if not len(bbox_item_list) > len(self.id) :
-        # #             #     #print("aa")
-
-        # #             if num in self.match:
-        # #                 object_id = self.match[num]
-        # #                     #print(object_id)
-
-        # #         # print("id")
-        # #         #print(object_id)
-        # #         if object_id != None and object_id != "" :
-        # #             if num in self.match:
-        # #                 object_id = self.match[num]
-                    
-        # #             if "or" in object_id :
-        # #                 #  uncertain_flag = True
-        # #                  txt_bk_color = colar
-        # #             else:
-        # #                 #print(object_id)
-        # #                 txt_bk_color = (self._COLORS[int(object_id)] * 255 * 0.7).astype(np.uint8).tolist()
-        # #                 self.curent_object_dict[int(object_id)] = bbox_item
-
-        # #             #detectの表示　
-                        
-        # #             result = cv2.rectangle(result, (x, y), (x + width, y + height), txt_bk_color, thickness=3)
-        # #             cv2.putText(result, f'ID : {object_id}', (x,y),cv2.FONT_HERSHEY_PLAIN, 1.5, txt_bk_color, thickness=2)
-
-        # #             print(int(object_id))
-        # #             self.curent_object_dict[int(object_id)] = bbox_item
-                    
-            #     else:
-            #         #print(str(num))
-            #         #print(self.match)
-            #         if num in self.match:
-            #             #print("a")
-            #             object_id = self.match[num]
-            #         # else:
-            #         #     print("gbgg")
-            #         #     print(len(self.curent_object_dict))
-            #         #     counta += 1
-            #         #     object_id =  len(self.curent_object_dict)+ counta
-
-
-            #         txt_bk_color = (self._COLORS[int(object_id)] * 255 * 0.7).astype(np.uint8).tolist()
-            #         result = cv2.rectangle(result, (x, y), (x + width, y + height), txt_bk_color, thickness=3)
-
-
-            # # txt_bk_color = (self._COLORS[object_id] * 255 * 0.7).astype(np.uint8).tolist()
-            #     cv2.putText(result, f'ID : {object_id}', (x,y),cv2.FONT_HERSHEY_PLAIN, 1.5, txt_bk_color, thickness=2)
-
-
-                # #Track用box辞書
-                # print(int(object_id))
-                # self.curent_object_dict[int(object_id)] = bbox_item
-        #修正中            
-        # for l_num, lost_item in self.curent_object_dict.items():
-        #         # print(lost_item._bounding_box)
-
-
-        #         bounding_box_src = lost_item._bounding_box
-        #         x, y, width, height = bounding_box_src.items
-
-        #         object_id = l_num
-
-        #         l_reactangle = [x,y, width, height]
-        #         lost_counts = {}
-
-        #         if object_id != None and object_id != "" :
-
-        #             if  l_num in self.tracked_objects:
-        #                 #print(self.match)
-        #                 if str(l_num) in self.match.values():
-                            
-        #                     self.tracked_objects[l_num]['last_seen'] = self.frame_count
-        #             else:
-        #                 self.tracked_objects[l_num] = {'last_seen': self.frame_count}
-                
-        #         # ids_to_remove = []
-        #         # for obj_id, info in self.tracked_objects.items():
-        #         #     if self.frame_count - info['last_seen'] > self.max_missing_frames:
-        #         #         #print(self.frame_count - info['last_seen'])
-        #         #         ids_to_remove.append(obj_id)
-
-        #         #     for obj_id in ids_to_remove:
-        #         #         del self.tracked_objects[obj_id]
-                    
-        #         #         del self.curent_object_dict[obj_id]
-                    
-
-
-        #         #print(object_id)
-        #         txt_bk_color = (self._COLORS[int(object_id)] * 255 * 0.7).astype(np.uint8).tolist()
-        #         # print(x)
-        #         # print(y)
-
-        #         result = cv2.rectangle(result, (x, y), (x + width, y + height), txt_bk_color, thickness=3)
-        #         cv2.putText(result, f'ID : {object_id}', (x,y),cv2.FONT_HERSHEY_PLAIN, 1.5, txt_bk_color, thickness=2)
-        
-
-
-
-
-              
-        if len(self.curent_object_dict) !=0:
-            bbox = {"bbox": self.curent_object_dict}
-            self.feature_box_dict[self.frame_count].append(bbox)
-                
-
-
-
-
-                        
-
-        # for w_item in wait_item_list:
-        #     bounding_box_src = w_item._bounding_box
-        #     x, y, width, height = bounding_box_src.items
-        #     result = cv2.rectangle(result, (x, y), (x + width, y + height), (255,204,102), thickness=3)
-
-        #     # object_id_list = w_item._object_id.split('_')
-        #     # cv2.putText(result, f'ID : {object_id_list[-1]}', (x,y),cv2.FONT_HERSHEY_PLAIN, 1.5, (0, 128, 255), thickness=2)
-                                        
-
-        # for b_item in bring_in_list:
-        #     bounding_box_src = b_item._bounding_box
-        #     x, y, width, height = bounding_box_src.items
-        #     b_item_id = b_item._object_id
-        #     result = cv2.rectangle(result, (x, y), (x + width, y + height), (255,0,102), thickness=3)
-        #     b_item_id_list = b_item_id.split('_')
-        #     cv2.putText(result, f'ID : {b_item_id_list[-1]}', (x,y),cv2.FONT_HERSHEY_PLAIN, 1.5, (0, 128, 255), thickness=2)
-
-        # for frame_obj in self.frame_object_list:
-        #     action_str = ''
-        #     action = frame_obj._item._action
-        #     if action == DetectedObjectActionEnum.TAKE_OUT:
-        #         action_str = 'TAKE_OUT'
-        #     else :
-        #         action_str = ''
+                # 横に並べる
+                rows.append(cv2.hconcat(row_images))
             
-        #     x = frame_obj._item._bounding_box._x
-        #     y = frame_obj._item._bounding_box._y
+            # 縦に並べる
+            final_result = cv2.vconcat(rows)
 
-        #     cv2.putText(result, f'{action_str}', (x+10, y),cv2.FONT_HERSHEY_PLAIN, 1.5, (0, 128, 255), thickness=2)
+            self.print_fps(final_result)
 
-        
+
+
+            cv2.imwrite(final_save_path, final_result)
+
+            cv2.imwrite(final_save_path2,self.detect)
+
+
+            # cv2.namedWindow('Match', cv2.WINDOW_NORMAL)
+            # cv2.imshow('Match', final_result)
+
+
+        # if self.matched_images2 !=[]:
+        #     rows = []
+
+    
+
+
+        #     current_time2 = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        #     output_name = f"matched_images_grid_{current_time2}.jpg"
+           
+        #     final_save_path = os.path.join(self.output_folder2, output_name)
+
+
+        #     print("gazou",len( self.matched_images2 ))
+
+        #     for i in range(0, len(self.matched_images2), 2):
+        #         row_images = self.matched_images2[i:i+2]
+
+        #         # 列の不足分を黒画像で埋める
+        #         if len(row_images) < 2:
+        #             h, w, c = row_images[0].shape
+        #             black_image = np.zeros((h, w, c), dtype=np.uint8)
+        #             row_images.append(black_image)
+                
+        #         # 横に並べる
+        #         rows.append(cv2.hconcat(row_images))
+            
+        #     # 縦に並べる
+        #     final_result = cv2.vconcat(rows)
+
+        #     self.print_fps(final_result)
+
+
+
+        #     cv2.imwrite(final_save_path, final_result)
+            
+
+
+
+            # final_result = np.vstack(self.matched_images)
+
+            # cv2.namedWindow('Match', cv2.WINDOW_NORMAL)
+            # cv2.imshow('Match', final_result)
+
+            
+
+
+
+
+
+
+
+            
+
+
+
+
+
+
+
         cv2.namedWindow('OpenCV Capture', cv2.WINDOW_NORMAL)
-        cv2.imshow("OpenCV Capture", result)
+        cv2.imshow("OpenCV Capture", self.result)
 
-        # send image to NDI camera
-        if ndi_send != None:
-            ndi_img = cv2.cvtColor(result,cv2.COLOR_BGR2BGRA)
-            ndi_frame.data = ndi_img
-            ndi_frame.FourCC = ndi.FOURCC_VIDEO_TYPE_BGRX
-            ndi.send_send_video_v2(ndi_send, ndi_frame)
 
-        if ndi_send != None:
-            NDI_finish(ndi_send) 
+
+
+
+
+        # cv2.namedWindow('mask', cv2.WINDOW_NORMAL)
+        # cv2.imshow("mask",self.mask)
+
+
+
+
+
         #print(len(self.frame_object_list))
 
-        if self.frame_object_list:		
-            detected_object_list = self.create_msg(self.frame_object_list, detected_object_list, frame)
+        #Publish情報
 
-        self.detection_publisher.publish(detected_object_list)
+        # if self.frame_object_list:
+        #     detected_object_list = self.create_msg(self.frame_object_list, detected_object_list, frame)
+
+        # self.detection_publisher.publish(detected_object_list)
+
+
+
+
+        print("終わり")
 
 
         # cap.release()
         #cv2.destroyAllWindows()
-        cv2.waitKey(1)	
+        cv2.waitKey(1)
+        return self.result
+
+
 
     def  create_msg(self, frame_object_list: List[FrameObject], detected_object_list: DetectedObjectList, frame: ColorImageFrame) -> DetectedObjectList:
         for frame_object in frame_object_list:
             action, bounding_box_src, size, mask_img, time, class_id, object_id= frame_object.item.items
             x, y, width, height = bounding_box_src.items
-            
+
             detected_object = DetectedObject()
             detected_object.action = action.value
             detected_object.mask = self.bridge.cv2_to_compressed_imgmsg(mask_img, 'png')
@@ -2167,13 +3835,13 @@ class CaptureNode(ImagePreviewNode):
             self.ta_object_id =object_id
             detected_object.bounding_box = bounding_box
             print(object_id)
-            
+
             detected_object.object_id = str(object_id)
-            
+
             detected_object_list.object_list.append(detected_object)
-            
+
             self.frame_object_list.remove(frame_object)
-            
+
             if self.is_debug_mode:
                 try:
                     item_color_img = frame.new_image if action == DetectedObjectActionEnum.BRING_IN else frame.old_image
@@ -2181,17 +3849,17 @@ class CaptureNode(ImagePreviewNode):
                         f'action: {action.value}, x: {x}, y: {y}, width: {width}, height: {height}, size: {size},class_id:{class_id})')
                     icon = np.zeros((height + 10, width, 3), dtype=np.uint8)
                     icon[0:height, 0:width, :] = item_color_img[y:y + height, x:x + width, :]
-                    
+
                     img_height, img_width = item_color_img.shape[:2]
                     icon = cv2.resize(icon.copy(), (img_width // 2, img_height // 2))
                     cv2.putText(icon, f'Action : {action.value}', (0, img_height // 2 - 5), cv2.FONT_HERSHEY_PLAIN, 1.5,(255, 255, 255), thickness=2)
-                    
+
                     self.object_list[self.object_index] = icon
                     self.object_index = (self.object_index + 1) % 4
-                except Exception as e: 
+                except Exception as e:
                     print(e)
 
-                
+
                 #for bbox in frame_object_list:
                     #color = random.choice(self._colors)
                     #result_img = cv2.rectangle(frame.new_image, (x, y), (x + width, y + height), color, thickness=3)
@@ -2201,87 +3869,52 @@ class CaptureNode(ImagePreviewNode):
                 #cv2.namedWindow('yolox_object_detection', cv2.WINDOW_NORMAL)
                 #cv2.imshow("yolox_object_detection", tile_img)
                 #cv2.waitKey(1)
-                
-                
+
+
             return detected_object_list
 #
 # main
 #
 def main(args=None):
     rclpy.init(args=args)
-    
+
     capture_node = CaptureNode()
-    
+
+    capture_node.process_video()
+
+
     try:
         rclpy.spin(capture_node)
     except KeyboardInterrupt:
         pass
 
     finally:
-        
+
         # 終了処理
         capture_node.destroy_node()
         rclpy.shutdown()
 
-def increase_param():
-    global gaussian_scale, median_scale, bilateral_scale
-    gaussian_scale += 6
-    if gaussian_scale > 149:
-        gaussian_scale = 149
-    median_scale += 6
-    if median_scale > 199:
-        median_scale = 199
-    bilateral_scale += 5
-    if bilateral_scale > 30:
-        bilateral_scale = 30
-
-def decrease_param():
-    global gaussian_scale, median_scale, bilateral_scale
-    gaussian_scale -= 6
-    if gaussian_scale < 1:
-        gaussian_scale = 1
-    median_scale -= 6
-    if median_scale < 1:
-        median_scale = 1
-    bilateral_scale -= 6
-    if bilateral_scale < 1:
-        bilateral_scale = 1
-
-def reset_param():
-    global gaussian_scale, median_scale, bilateral_scale
-    gaussian_scale = 1
 
 
-def NDI_setup():
-    try:
-        global ndi
-        import NDIlib as ndi
-    except ModuleNotFoundError as e:
-        print(e)
-        print("NDI module not found, so this function unavailable.")
-        return False, None, None
+#sift segment
+def get_segmented_sift(mask_img,kp_point,kp,des): #マスク画像、キーポイントの座標郡、キーポイント、記述子
+    segmented_kp = []
+    segmented_kp_point = []
+    segmented_des = []
+    #print("shape",mask_img.shape)
 
-    if not ndi.initialize():
-        print("NDI module found but cannot be initialized.")
-        return False, None, None
-    else:
-        print("NDI successfully initialized.")
+    for k in range(len(kp_point)):
+        x_i = int(kp_point[k][0])
+        y_i = int(kp_point[k][1])
+        #print("mask_img",mask_img.shape)
+        #print("x_i",x_i)
+        #print("y_i",y_i)
+        if mask_img[y_i][x_i] == 1 and mask_img[y_i-1][x_i] == 1 and mask_img[y_i+1][x_i] == 1 and mask_img[y_i-1][x_i+1] == 1 and mask_img[y_i-1][x_i-1] == 1 and mask_img[y_i+1][x_i-1] == 1 and mask_img[y_i+1][x_i+1] == 1 and mask_img[y_i][x_i-1] == 1 and mask_img[y_i][x_i+1] == 1:
+            segmented_kp.append(kp[k])
+            segmented_kp_point.append([kp_point[k][0],kp_point[k][1]])
+            segmented_des.append(des[k])
 
-    send_settings = ndi.SendCreate()
-    send_settings.ndi_name = "ndi-python"
-    ndi_send = ndi.send_create(send_settings)
-    ndi_frame = ndi.VideoFrameV2()
-
-    return True, ndi_send, ndi_frame
-
-
-def NDI_finish(ndi_send):
-    if ndi_send != None:
-        ndi.send_destroy(ndi_send)
-        ndi.destroy()
-        return True
-    else:
-        return False
+    return segmented_kp , segmented_kp_point , segmented_des
 
 
 def is_point_inside_bounding_box(point, bbox):
@@ -2298,7 +3931,7 @@ def is_point_inside_bounding_box(point, bbox):
     # 線分が矩形の内部にあるかチェック
     if point_in_rectangle(point, bbox) :
         return True
-    
+
     return False
 
 
@@ -2343,7 +3976,7 @@ def line_segment_intersect(seg1_start, seg1_end, seg2_start, seg2_end):
     # 2つの線分の方程式の係数を計算
     a1, b1, c1 = line_equation(seg1_start, seg1_end)
     a2, b2, c2 = line_equation(seg2_start, seg2_end)
-    
+
 
     # 交差点の座標を計算
     try:
@@ -2368,7 +4001,7 @@ def line_equation(start_point, end_point):
     a = y2 - y1
     b = x1 - x2
     c = x2 * y1 - x1 * y2
-    return a, b, c      
+    return a, b, c
 
 def point_in_rectangle(point, rectangle):
     x, y = point
@@ -2378,9 +4011,9 @@ def point_in_rectangle(point, rectangle):
 
 def is_match(frame, other):
     frame_item_x, frame_item_y, frame_item_width, frame_item_height = frame
-    
+
     other_item_x, other_item_y, other_item_width, other_item_height = other
-    
+
 
     bbox_x = abs(frame_item_x - other_item_x)
     bbox_y = abs(frame_item_y - other_item_y)
@@ -2389,9 +4022,9 @@ def is_match(frame, other):
     if (bbox_x < 10) and (bbox_y < 10)and(bbox_width < 10) and (bbox_height <10) : #& bbox_width < 30 & bbox_height < 30:
         return True
     else:
-        
+
         return False
-    
+
 def iou(bbox, bbox2):
     # bbox, bbox2は矩形を表すリストで、a=[xmin, ymin, xmax, ymax]
     A_rect_x, A_rect_y, A_rect_xmax, A_rect_ymax = bbox
@@ -2415,11 +4048,16 @@ def iou(bbox, bbox2):
 
     iou = intersect / (a_area + b_area - intersect)
     #print(iou)
-    return iou > 0.5
+
+
+    # if  A_rect_xmax < B_rect_x or B_rect_xmax < A_rect_x or  A_rect_ymax < B_rect_ymax or B_rect_ymax < A_rect_y:
+    #     return False
+    # return True
+    return iou > 0.6
 
 def calculate_overlap(point, bbox ):
     x,y = point
-    
+
     rect_x, rect_y, rect_width, rect_height = bbox
     overlap_count = 0
     if rect_x <= x <= rect_x + rect_width and rect_y <= y <= rect_y + rect_height:
@@ -2451,9 +4089,9 @@ def check_overlap(box1, box2):
         return False
     else:
         return True
-    
 
-def is_unknown_object(class_id: str, probability: float, object_threshold=0.30) -> bool:
+
+def is_unknown_object(class_id: str, probability: float, box=[], img_size=(720,1280),object_threshold=0.80) -> bool:
     """物体と思われるものの規定の物体でないものかどうか調べる関数
     Args:
         class_id (str): 物体のクラス名
@@ -2462,17 +4100,38 @@ def is_unknown_object(class_id: str, probability: float, object_threshold=0.30) 
     Returns:
         bool: 物体と思われるものの規定の物体でないものかどうか
     """
-    #DEFAULT_OBJECTS = ["banana",],"person"'chair''book',
-    
-    DEFAULT_OBJECTS = ["person",'chair',"bed","handbag","backpack","banana","remote","spoon",'dog','cat','laptop','tv','microwave','refrigerator','potted plant','cup','keyboard','couch','mouse','sink','dining table','skateboard','bottle','cell phone','knife','bowl']
+    #DEFAULT_OBJECTS = ["banana",],"person"'chair''book''keyboard','laptop','microwave'
+    #img_size=(720,1280)
+    DEFAULT_OBJECTS = ['chair',"bowl",'keyboard',"teddy bear",'microwave','book',"toilet","cell phone","remote",'tie','bottle','cup','laptop','sink','refrigerator','dining table','tv','potted plant','mouse']#["person",'staffed toy','chair',"bed","handbag","backpack","banana","remote","spoon",'dog','cat','laptop','tv','microwave','refrigerator','potted plant','cup','couch','mouse','sink','dining table','skateboard','bottle','cell phone','knife','bowl']
     is_object: bool = probability > object_threshold
     is_default_object = class_id in DEFAULT_OBJECTS
+    img_height, img_width = img_size
+    edge_box = True
 
-    
+    if class_id == 'person':
+        # print("img_size",img_size)
+        # print("box[0]",box[0])
+        # print("box[1]",box[1])
+        # print("box[2]",box[2])
+        # print("box[3]",box[3])
+        if box[0] <= 0  or box[2] >= img_width-20:  #  or box[1] <= 0 box[3] >= img_height
+            edge_box = False  # 見切れている
+            # print("img_size",img_size)
+            # print("box[0]",box[0])
+            # print("box[1]",box[1])
+            # print("box[2]",box[2])
+            # print("box[3]",box[3])
+
+            print("cheak", edge_box)
+        else:
+            edge_box = True  # 完全に画面内
+
+
+
 
 
     #print(is_object and not(is_default_object))
-    return is_object and not(is_default_object)
+    return is_object and not(is_default_object) and edge_box
 
 
 def filter_boxes(boxes) -> bool:
@@ -2503,6 +4162,7 @@ def filter_boxes(boxes) -> bool:
         width = xmax - x
         class_id = box.class_id
         object_id = ""
+        # print("class",class_id)
 
         reactangle = [x,y, width, height]
 
@@ -2519,7 +4179,7 @@ def filter_boxes(boxes) -> bool:
             object_id = ""
 
             reactangle2 = [x2,y2, width2, height2]
-            if i != j and iou(reactangle, reactangle2) and class_id == class_id2 :
+            if i != j and iou(reactangle, reactangle2)  and class_id == class_id2:
                 keep = False
                 break
         if keep:
@@ -2529,7 +4189,7 @@ def filter_boxes(boxes) -> bool:
 def resolve_conflicts(d):
 
     new_dict = {}
-    
+
     # 'or'を含む値を持つキーのリスト
     or_keys = [key for key, value in d.items() if ' or ' in value]
 
@@ -2537,7 +4197,7 @@ def resolve_conflicts(d):
     for key, value in d.items():
         if ' or ' in value:
             values = value.split(' or ')
-            
+
             # 同じ値を持つキーが複数存在するかチェック
             same_or_values = [k for k in or_keys if d[k] == value]
             if len(same_or_values) > 1:
@@ -2552,7 +4212,7 @@ def resolve_conflicts(d):
                         new_dict[key] = ' or '.join(new_values)
         else:
             new_dict[key] = value
-            
+
     return new_dict
 def get_id_color(index):
         temp_index = (index + 1) * 5
@@ -2575,12 +4235,12 @@ class MOT:
         self.track_id_dict = {}
 
         self.tracker = MultiObjectTracker(dt=self.dt, model_spec=self.model_spec)
-        
+
 
 
     def track(self, outputs, ratio):
         if outputs[0] is not None:
-            outputs = outputs[0].cpu().numpy()
+            outputs = outputs[0].npu().numpy()
             outputs = [Detection(box=box[:4] / ratio, score=box[4] * box[5], class_id=box[6]) for box in outputs]
         else:
             outputs = []
@@ -2591,8 +4251,8 @@ class MOT:
     def bboxes2out_detections(self, bboxes:BoundingBoxes):
         out_detections = []#"person"
         DEFAULT_OBJECTS = ["chair"]
- #       logger.info("box") 
-        for bbox in bboxes:
+ #       logger.info("box")
+        for bbox in bboxes.values():
             #print(bbox[5])
             # a,b = bbox[5][0]
 
@@ -2601,8 +4261,9 @@ class MOT:
             class_id = bbox[6]
 
             print("class0")
+            # print(bbox)
             print(class_id )
-                    
+
             #print(bbox._bounding_box)
             #bounding_box_src = bbox._bounding_box
             #x, y, width, height = bounding_box_src.items
@@ -2615,21 +4276,21 @@ class MOT:
             else:
                 out_detections.append(Detection(box=[bbox[0], bbox[1], bbox[0]+bbox[2],bbox[1]+bbox[3],flow],score=bbox[4],class_id=class_id))
 
-            
-            
+
+
 
 
 #         for bbox in bboxes.bounding_boxes:
 
 #        #    if name in DEFAULT_OBJECTS :
 #       #      logger.info(bbox)
-#       #      bbox_np = bbox.cpu().numpy()
+#       #      bbox_np = bbox.npu().numpy()
 #       #      logger.info("bo")
 
-#       #      conf_np = bbox.probability.cpu().numpy()
+#       #      conf_np = bbox.probability.npu().numpy()
 #       #      logger.info("co")
 
-#        #     cls_np = bbox.class_id.cpu().numpy()
+#        #     cls_np = bbox.class_id.npu().numpy()
 #       #      logger.info("cl")
 #             width=bbox.xmax-bbox.xmin
 #             height = bbox.ymax-bbox.ymin
@@ -2638,7 +4299,7 @@ class MOT:
 
 #       #      detection_result = np.column_stack((boxes_np, confs_np, cls_np))
 #             out_detections.append(Detection(box=[bbox.xmin, bbox.ymin, bbox.xmax,bbox.ymax],score=bbox.probability))
-#             #out_detections.append([bbox.xmin.cpu().numpy(), bbox.ymin.cpu().numpy(), bbox.xmax.cpu().numpy(), bbox.ymax.cpu().numpy(),bbox.probability.cpu().numpy(),bbox.class_id.cpu().numpy()])
+#             #out_detections.append([bbox.xmin.npu().numpy(), bbox.ymin.npu().numpy(), bbox.xmax.npu().numpy(), bbox.ymax.npu().numpy(),bbox.probability.npu().numpy(),bbox.class_id.npu().numpy()])
 # #        logger.info("re")
 
         return out_detections #detection_result #out_detections
@@ -2693,7 +4354,7 @@ class MOT:
             #logger.info("track_id")
             bbox = track_result.box
 #            logger.info(bbox)
-            #class_id = int(track_result.class_id)
+            class_id = track_result.class_id
             #logger.info("class_id")
             score = track_result.score
             #logger.info("score")
@@ -2708,27 +4369,30 @@ class MOT:
             # トラッキングIDに応じた色を取得
             color = self.get_id_color(tracker_id)
             # color = self._COLORS[int(tracker_id)]
+            if tracker_id != 5:
 
-            # バウンディングボックス描画
-            debug_image = cv2.rectangle(
-                debug_image,
-                (x1, y1),
-                (x2, y2),
-                color,
-                thickness=2,
-            )
+                # バウンディングボックス描画
+                debug_image = cv2.rectangle(
+                    debug_image,
+                    (x1, y1),
+                    (x2, y2),
+                    color,
+                    thickness=2,
+                )
 
-            # id、ラベル名描画
-            track_id = '%.d' % tracker_id
-            text = 'ID:%s' % (track_id)
-            debug_image = cv2.putText(
-                debug_image,
-                text,
-                (x1, y1 - 10),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.7,
-                color,
-                thickness=2,
-            )
+                # id、ラベル名描画
+                track_id = '%.d' % tracker_id
+                text = 'ID:%s' % (track_id)
+                if class_id == "person":
+                    text = 'ID:%s' % (track_id)
+                debug_image = cv2.putText(
+                    debug_image,
+                    text,
+                    (x1, y1 - 10),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.7,
+                    color,
+                    thickness=2,
+                )
 
         return debug_image

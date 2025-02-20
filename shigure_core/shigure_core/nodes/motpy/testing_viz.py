@@ -1,8 +1,8 @@
 import numpy as np
 
-from motpy import track_to_string
-from motpy.core import Detection, Track, setup_logger
-from motpy.testing import CANVAS_SIZE, data_generator
+from .utils import track_to_string
+from .core import Detection, Track, setup_logger
+from .testing import CANVAS_SIZE, data_generator
 
 logger = setup_logger(__name__)
 
