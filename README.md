@@ -91,4 +91,5 @@ mysql -h 127.0.0.1 -P 3306 -u shigure -p
 ```sh
 ros2 run shigure_core caputure_flow
 ```
+⚠新しくbbox_ex_msgsを変更したため、変更後のbbox_ex_msgは、shares folderのazuma/shigure_bbox_ex_msgsからbbox_ex_msgs.zipをインストールして変更してください
 
