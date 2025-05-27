@@ -26,8 +26,6 @@ from shigure_core.nodes.yolox_object_detection.judge_params import JudgeParams
 from shigure_core.nodes.yolox_object_detection.logic import YoloxObjectDetectionLogic
 from shigure_core.nodes.yolox_object_detection.Bbox_Object import BboxObject
 
-
-
 class YoloxObjectDetectionNode(ImagePreviewNode):
 	object_list: list
 	def __init__(self):
@@ -106,17 +104,20 @@ class YoloxObjectDetectionNode(ImagePreviewNode):
 				self.object_list.append(cv2.resize(black_img.copy(), (width // 2, height // 2)))
 			#print('brack')
 		
-		# if len(self._color_img_buffer) > 25:  
-		# 	self._color_img_buffer = self._color_img_buffer[1:] #self._color_img_bufferのリストを先頭以外上書き
-		# 	self._color_img_frames.get(-25).new_image = color_img  #color_img_framesの先頭の画像を新しい画像に置き換える
+		if len(self._color_img_buffer) > 25:  
+		 	self._color_img_buffer = self._color_img_buffer[1:] #self._color_img_bufferのリストを先頭以外上書き
+		 	self._color_img_frames.get(-25).new_image = color_img  #color_img_framesの先頭の画像を新しい画像に置き換える
 		self._color_img_buffer.append(color_img) 
 		
 		timestamp = Timestamp(color_img_src.header.stamp.sec, color_img_src.header.stamp.nanosec)
 		frame = ColorImageFrame(timestamp, self._color_img_buffer[0], color_img) #bufferの先頭の画像と新しい画像
+		
 		self._color_img_frames.add(frame) #ColorImageFrameslistの更新して、listに追加
 
 		frame_object_dict,bring_in_list,wait_item_list,people_item_list,take_out_people_id,take_out_obj_class_id = self.yolox_object_detection_logic.execute(yolox_bbox_src, timestamp,people,color_img,self.frame_object_list,self._judge_params,self.take_out_people_id ,self.take_out_obj_class_id ,self.bring_in_list,self.wait_item_list)
 		
+		print("wait_item_list:",wait_item_list)
+		print("-------------------------------------------------")
 		#if self._count == 0:
 			#self.start_item_list = start_item_list
 		self.bring_in_list = bring_in_list

@@ -40,7 +40,7 @@ class SubtractionAnalysisNode(ImagePreviewNode):
             type=ParameterType.PARAMETER_STRING,
             description='Root path of save images.'
         )
-        self.declare_parameter('save_root_path', '/opt/ros2/shigure_core/events', save_path_descriptor)
+        self.declare_parameter('save_root_path', '~/ros2_ws/src/shigure_core/events', save_path_descriptor)
         self.save_root_path: str = self.get_parameter("save_root_path").get_parameter_value().string_value
 
         frame_num_descriptor = ParameterDescriptor(

@@ -95,6 +95,8 @@ class ContactDetectionNode(ImagePreviewNode):
             action = ContactActionEnum.from_tracked_object_action_enum(
                 TrackedObjectActionEnum.value_of(tracked_object.action)
             )
+            
+            #print(action.value)
 
             if action != ContactActionEnum.TOUCH:
                 contacted = Contacted()
@@ -204,6 +206,7 @@ class ContactDetectionNode(ImagePreviewNode):
                 action = ContactActionEnum.from_tracked_object_action_enum(
                     TrackedObjectActionEnum.value_of(tracked_object.action)
                 )
+                #print(action.value)
 
                 self.is_not_touch = action != ContactActionEnum.TOUCH
 

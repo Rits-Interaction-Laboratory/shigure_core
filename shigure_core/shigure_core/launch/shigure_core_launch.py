@@ -16,7 +16,7 @@ def generate_launch_description():
             executable="object_tracking",
             prefix="gnome-terminal --tab -t 'object_tracking' --",
             parameters=[
-                {"is_debug_mode": False},
+                {"is_debug_mode": True},
             ],
         ),
         Node(

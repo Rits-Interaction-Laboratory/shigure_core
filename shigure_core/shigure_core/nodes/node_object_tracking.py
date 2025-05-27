@@ -116,8 +116,8 @@ class ObjectTrackingNode(ImagePreviewNode):
             s2 = np.asarray([[bounding_box.x + bounding_box.width,
                               bounding_box.y + bounding_box.height, 1]]).T
 
-            m1 = (depth_img[top, left] * np.matmul(k_inv, s1)).T
-            m2 = (depth_img[bottom, right] * np.matmul(k_inv, s2)).T
+            m1 = (depth_min * np.matmul(k_inv, s1)).T
+            m2 = (depth_min * np.matmul(k_inv, s2)).T
 
             collider = Cube()
             collider.x, collider.y = float(m1[0, 0]), float(m1[0, 1])
@@ -127,8 +127,10 @@ class ObjectTrackingNode(ImagePreviewNode):
             tracked_object.collider = collider
 
             publish_msg.tracked_object_list.append(tracked_object)
+            
 
         self._publisher.publish(publish_msg)
+        publish_msg.tracked_object_list = []
 
     def callback_debug(self, depth_src: CompressedImage, detected_object_list: DetectedObjectList,
                        camera_info: CameraInfo, color_src: CompressedImage):

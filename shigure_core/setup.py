@@ -45,6 +45,8 @@ setup(
             'pose_save = shigure_core.nodes.node_pose_save:main',
             'yolox_object_detection = shigure_core.nodes.node_yolox_object_detection:main',
             'caputure_flow = shigure_core.nodes.capture_ros:main',
+            'pointer_transform_listener = shigure_core.nodes.pointer_transform_listener:main',
+            'node_raycast_hit_detection = shigure_core.nodes.node_raycast_hit_detection:main',
         ],
     },
 )

@@ -40,6 +40,8 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/Contacted.msg"
   "msg/ContactedList.msg"
   "msg/HeaderString.msg"
+  "msg/SelectObject.msg"
+  "msg/SelectObjectList.msg"
   DEPENDENCIES builtin_interfaces std_msgs sensor_msgs
 )
 

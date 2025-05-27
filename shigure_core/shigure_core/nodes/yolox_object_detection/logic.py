@@ -31,7 +31,7 @@ class YoloxObjectDetectionLogic:
         :return: 検出したObjectリスト, 更新された既知マスク
         """
     
-        def is_unknown_object(class_id: str, probability: float, object_threshold=0.70) -> bool:
+        def is_unknown_object(class_id: str, probability: float, object_threshold=0.30) -> bool:
             """物体と思われるものの規定の物体でないものかどうか調べる関数
             Args:
                 class_id (str): 物体のクラス名
@@ -41,7 +41,7 @@ class YoloxObjectDetectionLogic:
                 bool: 物体と思われるものの規定の物体でないものかどうか
             """
             #DEFAULT_OBJECTS = []
-            DEFAULT_OBJECTS = ['person','dog','cat','chair','laptop','tv','microwave','refrigerator','potted plant','cup','keyboard','couch','mouse','sink','dining table','skateboard']
+            DEFAULT_OBJECTS = ['person','dog','cat','chair','laptop','tv','microwave','refrigerator','potted plant','cup','keyboard','couch','mouse','sink','dining table','skateboard',"book","banana","backpack","toy","backpack"]
             is_object: bool = probability > object_threshold
             is_default_object = class_id in DEFAULT_OBJECTS
             return is_object and not(is_default_object)
@@ -60,16 +60,23 @@ class YoloxObjectDetectionLogic:
             is_people_object = class_id in PEOPLE_OBJECTS 
             return is_object and (is_people_object)
 
-        def judge_take_out_object(bring_in_item, threshold=0.2) -> bool:
+        def judge_take_out_object(bring_in_item, threshold=0.5) -> bool:
             """持ち去り判定を行う関数
             Args:
                 bring_in_item (): 持ち去るかどうか決める対象のアイテム
                 threshold (float): これ以下だと持ち去ると決めるためのしきい値
+                
             """
+            
+            #print(bring_in_item.fhist)
             # 検知率(履歴リスト中のTrueの存在率)を計算
             found_rate = sum(bring_in_item.fhist) / len(bring_in_item.fhist)
+            
+            #print(found_rate)
 
             # 検知率が15%未満だったら
+            if found_rate < threshold:
+                print("take out found rate:",found_rate)
             return found_rate < threshold
 
         def event_of_take_out(bring_in_item) -> None:
@@ -160,22 +167,42 @@ class YoloxObjectDetectionLogic:
                     bbox_people_list.append(bounding_box)
 
 
-        #if bring_in_list:
+        if bring_in_list:
             del_idx_list = []
+            #b_count=0
             # 持ち込み確定リストと現フレームリストを全照合
+            
+            
             for i, bring_in_item in enumerate(bring_in_list):
-                for bbox_item in bbox_item_list:                                                   
+                b_count=0
+                
+                for bbox_item in bbox_item_list:  
+                                                                 
                     #if bbox_item.is_exist_start: # 初期状態リストにすでに存在する現フレームアイテムは無視
                         #continue+
+                    #print("asa")
+                    #print(bbox_item._class_id)
+                    #print(len(bbox_item_list))
 
                     if bring_in_item.is_match(bbox_item): # その持ち込みアイテムと一致する現フレームアイテムがあったら
+                        b_count += 1 
                         bring_in_item.fhist.append(True) # その持ち込みアイテムの検知履歴リストにTrueを追加
                         bbox_item.is_exist_bring = True # その現フレームアイテムの「持ち込み確定リストに存在する？」フラグをオン
+                        print("bring in")
                         break
                     
                     
                     elif len(people.pose_key_points_list) == 0: #持ち込みアイテムと一致する現フレームアイテムがないとき
-                        bring_in_item.fhist.append(False)
+                        b_count += 1 
+                        if b_count == len(bbox_item_list):
+                            #b_count += 1
+                            print("sd")
+                            #print(len(bbox_item_list))
+                            bring_in_item.fhist.append(False)
+                            break
+                       
+                        
+                        
 
                        
 
@@ -183,6 +210,7 @@ class YoloxObjectDetectionLogic:
                     else:
 
 
+                        #b_count += 1
                         #人物に隠れていないかを確かめる
                         for person in people.pose_key_points_list:
                             
@@ -225,13 +253,22 @@ class YoloxObjectDetectionLogic:
 
                                             hide_judge = False
 
-                            if not hide_judge:                         
-                                bring_in_item.fhist.append(False) # 持ち込み物体が持ち去られているなら検知履歴リストにFalseを追加
-                                
+                            if not hide_judge:  
+                                b_count += 1 
+                                if b_count == len(bbox_item_list):
+                                    #print("asa") 
+                                    #b_count += 1
+                                                          
+                                    bring_in_item.fhist.append(False) # 持ち込み物体が持ち去られているなら検知履歴リストにFalseを追加
+                                    break
+                #if len(bbox_item_list) == 0:
+                    #bring_in_item.fhist.append(False)
 
                     
                 if len(bring_in_item.fhist) >= FHIST_SIZE: # その持ち込みアイテムの検知履歴が十分に溜まっていたら
+                    #print(bring_in_item.fhist)
                     if judge_take_out_object(bring_in_item):
+                      
                         for person in people.pose_key_points_list:
                             
                             #color_imgのサイズ
@@ -303,18 +340,27 @@ class YoloxObjectDetectionLogic:
                     
         if wait_item_list:
             del_idx_list = []
+            w_count=0
             # 待機リストと現フレームリストを全照合
+            
             for i, wait_item in enumerate(wait_item_list):
+                if len(bbox_item_list) == 0:
+                    wait_item.fhist.append(False)
                 for bbox_item in bbox_item_list:
                     if bbox_item.is_exist_bring: # 持ち込み確定リストにすでに存在する現フレームアイテムは無視
                         continue
                     if wait_item.is_match(bbox_item): #その待機アイテムと一致する現フレームアイテムがあったら
+                        #print("wait_item._mask",wait_item._mask)
                         wait_item.fhist.append(True) # その待機アイテムの検知履歴リストにTrueを追加
                         bbox_item.is_exist_wait = True # その現フレームアイテムの「待機リストに存在する？」フラグをオン
+                        
                         break
                 else:
-                    wait_item.fhist.append(False) #最後までどれとも一致しなかったらその待機アイテムの検知履歴リストにFalseを追加
-                    
+                    w_count+=1
+                    if w_count == len(bbox_item_list):
+                        wait_item.fhist.append(False) 
+                    #wait_item.fhist.append(False) #最後までどれとも一致しなかったらその待機アイテムの検知履歴リストにFalseを追加
+                
                 if len(wait_item.fhist) >= FHIST_SIZE: # その待機アイテムの検知履歴が十分に溜まっていたら
 
                     for person in people.pose_key_points_list:
@@ -325,10 +371,12 @@ class YoloxObjectDetectionLogic:
 
 
                     found_rate = sum(wait_item.fhist) / len(wait_item.fhist) # 検知率(検知履歴リスト中のTrueの存在率)を計算
-                    if (found_rate < 0.2) or (found_rate > 0.7): # 検知率が20%未満 or 70%超過だったら
+                    #print("found rate:",found_rate)
+                    print("wait_item.fist:",wait_item.fhist)
+                    if (found_rate < 0.5) or (found_rate > 0.6): # 検知率が20%未満 or 70%超過だったら
                         del_idx_list.append(i) # 幻だった or 持ち込みイベント発生(待機リストから削除予約)
-                    if found_rate > 0.7: # 持ち込みイベント発生の場合
-
+                    if found_rate > 0.6: # 持ち込みイベント発生の場合
+                        print("bring in found rate:",found_rate)
                         if wait_item._class_id == take_out_obj_class_id and  samepeople_judge :
                             action = DetectedObjectActionEnum.OBJ_MOVE
                             item = FrameObjectItem(
@@ -377,13 +425,18 @@ class YoloxObjectDetectionLogic:
                                     union_find_tree.unite(prev_item, item)
                     wait_item.fhist = wait_item.fhist[-(FHIST_SIZE-1):] # その待機アイテムの検知履歴リストを最新分のみ確保して更新
             # 持ち込まれた or 幻だったアイテムを待機リストから削除
+            print("del_idx_list:",len(del_idx_list))
             if del_idx_list:
                 for di in reversed(del_idx_list):
                     del wait_item_list[di]
                     
         # 初期状態リスト・持ち込み確定リスト・待機リストいずれにも存在しない現フレームアイテムは、待機リストに追加
         for bbox_item in bbox_item_list:
-            if not(bbox_item.is_exist_bring or bbox_item.is_exist_wait):
+            print("bbox_item.is_exist_bring:",bbox_item.is_exist_bring)
+            print("bbox_item.is_exist_wait:",bbox_item.is_exist_wait)
+            print("bbox_item.is_exist_start:",bbox_item.is_exist_start)
+            
+            if not(bbox_item.is_exist_bring or bbox_item.is_exist_wait or bbox_item.is_exist_start):
                 #print(f'wait_item_append : {bbox_item._class_id}')
                 wait_item_list.append(bbox_item)
                 #wait = [[i._class_id, i._bounding_box._x, i._bounding_box._y, i._found_count, i._not_found_count] for i in wait_item_list]
@@ -451,7 +504,8 @@ class YoloxObjectDetectionLogic:
         Args:
             Personbox: 人物のバウンディングボックスの座標 (左上隅のx, y座標, 右下隅のx, y座標)
             Bring_inbox: Bring_in判定されているバウンディングボックスの座標 (左上隅のx, y座標, 右下隅のx, y座標)
-        Returns:
+        Returns:sd
+
             bool: 重なっている場合はTrue、そうでない場合はFalseを返します
         """
         px_mn, py_mn, px_mx, py_mx = Personbox[0], Personbox[1], Personbox[2],Personbox[3]
