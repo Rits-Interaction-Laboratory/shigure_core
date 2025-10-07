@@ -42,7 +42,10 @@ class YoloxObjectDetectionLogic:
             """
             #DEFAULT_OBJECTS = []
             DEFAULT_OBJECTS = ['person','dog','cat','chair','laptop','tv','microwave','refrigerator','potted plant','cup','keyboard','couch','mouse','sink','dining table','skateboard',"book","banana","backpack","toy","backpack"]
-            is_object: bool = probability > object_threshold
+            if class_id == 'stuffed toy':
+                is_object: bool = probability > object_threshold
+            else:
+                is_object: bool = probability > 0.30
             is_default_object = class_id in DEFAULT_OBJECTS
             return is_object and not(is_default_object)
         
@@ -138,7 +141,7 @@ class YoloxObjectDetectionLogic:
             
             
             # if (probability < 0.48) or (class_id in ['person','chair','laptop','tv','microwave','refrigerator','potted plant','cup','keyboard','couch','mouse']):
-            if is_unknown_object(class_id, probability):
+            if is_unknown_object(class_id, probability, 0.20):
                 brack_img = np.zeros(color_img.shape[:2])
                 brack_img[y:y + height, x:x + width] = 255
                 mask_img:np.ndarray = brack_img[y:y + height, x:x + width]
@@ -188,7 +191,7 @@ class YoloxObjectDetectionLogic:
                         b_count += 1 
                         bring_in_item.fhist.append(True) # その持ち込みアイテムの検知履歴リストにTrueを追加
                         bbox_item.is_exist_bring = True # その現フレームアイテムの「持ち込み確定リストに存在する？」フラグをオン
-                        print("bring in")
+                        print("bring in %s" % bring_in_item._class_id)
                         break
                     
                     
@@ -196,7 +199,7 @@ class YoloxObjectDetectionLogic:
                         b_count += 1 
                         if b_count == len(bbox_item_list):
                             #b_count += 1
-                            print("sd")
+                            print("not found %s" % bring_in_item._class_id)
                             #print(len(bbox_item_list))
                             bring_in_item.fhist.append(False)
                             break
@@ -246,7 +249,7 @@ class YoloxObjectDetectionLogic:
                                         if YoloxObjectDetectionLogic.chickhide(rectangle,segment):
 
                                             hide_judge = True
-
+                                            print("hide judge %s" % bring_in_item._class_id)
 
                                             break
                                         else:
@@ -258,13 +261,14 @@ class YoloxObjectDetectionLogic:
                                 if b_count == len(bbox_item_list):
                                     #print("asa") 
                                     #b_count += 1
-                                                          
+
+                                    print("not found %s" % bring_in_item._class_id)      
                                     bring_in_item.fhist.append(False) # 持ち込み物体が持ち去られているなら検知履歴リストにFalseを追加
                                     break
-                #if len(bbox_item_list) == 0:
-                    #bring_in_item.fhist.append(False)
+                if len(bbox_item_list) == 0:
+                    bring_in_item.fhist.append(False)
 
-                    
+                print("len(%s.fhist) : %s"% (bring_in_item._class_id, len(bring_in_item.fhist))) 
                 if len(bring_in_item.fhist) >= FHIST_SIZE: # その持ち込みアイテムの検知履歴が十分に溜まっていたら
                     #print(bring_in_item.fhist)
                     if judge_take_out_object(bring_in_item):
@@ -304,6 +308,7 @@ class YoloxObjectDetectionLogic:
                                             take_out_people_id = person.people_id
                                             break
                                         else:
+                                            # ?
                                             take_out_people_id = person.people_id
 
 
@@ -333,8 +338,10 @@ class YoloxObjectDetectionLogic:
                                     frame_object_item_list.remove(item)
                                 union_find_tree.unite(prev_item, item)
                     bring_in_item.fhist = bring_in_item.fhist[-(FHIST_SIZE-1):]  # その持ち込みアイテムの検知履歴リストを最新分のみ確保して更新
+                    print("%s.fhist: %s" % (bring_in_item._class_id, bring_in_item.fhist))
                 #持ち去られたアイテムを持ち込み確定リストから削除
             if del_idx_list:
+                print("del_idx_list: %s" % [bring_in_list[i]._class_id for i in del_idx_list])
                 for di in reversed(del_idx_list):
                     del bring_in_list[di]
                     
@@ -377,7 +384,7 @@ class YoloxObjectDetectionLogic:
                         del_idx_list.append(i) # 幻だった or 持ち込みイベント発生(待機リストから削除予約)
                     if found_rate > 0.6: # 持ち込みイベント発生の場合
                         print("bring in found rate:",found_rate)
-                        if wait_item._class_id == take_out_obj_class_id and  samepeople_judge :
+                        if wait_item._class_id == take_out_obj_class_id and  samepeople_judge : # TAKEOUT判定くらった物体と同一クラスで，かつ持ち込んだのが同一人物なら，OBJMOVE判定
                             action = DetectedObjectActionEnum.OBJ_MOVE
                             item = FrameObjectItem(
                                 action,
@@ -400,7 +407,7 @@ class YoloxObjectDetectionLogic:
                                         frame_object_item_list.remove(item)
                                     union_find_tree.unite(prev_item, item)
                         
-                        else:
+                        else: # OBJMOVE判定されなかった物体は持ち込みイベント発生
 
                             action = DetectedObjectActionEnum.BRING_IN
                             item = FrameObjectItem(

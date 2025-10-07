@@ -170,6 +170,7 @@ class ContactDetectionNode(ImagePreviewNode):
 
             # すべての物体領域を書く
             for tracked_object in object_list.tracked_object_list:
+                print("tracked_object:",tracked_object)
                 bounding_box = tracked_object.bounding_box
                 left = np.clip(int(bounding_box.x), 0, width - 1)
                 top = np.clip(int(bounding_box.y), 0, height - 1)
@@ -198,6 +199,7 @@ class ContactDetectionNode(ImagePreviewNode):
                     else:
                         object_image = event_frame[top : bottom, left : right]
                     event_frame = self.overlay_image(overlapping_img=object_image, underlying_img=event_frame, shift=(0, 0), resize_scale=(3, 3), is_frame_line=True)
+            print("----------------------")
 
             for hand, object_item in result_list:
                 person, _, index = hand

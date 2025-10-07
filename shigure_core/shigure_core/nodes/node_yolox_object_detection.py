@@ -16,6 +16,7 @@ from shigure_core_msgs.msg import DetectedObjectList, DetectedObject, BoundingBo
 from bboxes_ex_msgs.msg import BoundingBoxes
 
 
+
 from shigure_core.enum.detected_object_action_enum import DetectedObjectActionEnum
 from shigure_core.nodes.common_model.timestamp import Timestamp
 from shigure_core.nodes.node_image_preview import ImagePreviewNode
@@ -116,7 +117,8 @@ class YoloxObjectDetectionNode(ImagePreviewNode):
 
 		frame_object_dict,bring_in_list,wait_item_list,people_item_list,take_out_people_id,take_out_obj_class_id = self.yolox_object_detection_logic.execute(yolox_bbox_src, timestamp,people,color_img,self.frame_object_list,self._judge_params,self.take_out_people_id ,self.take_out_obj_class_id ,self.bring_in_list,self.wait_item_list)
 		
-		print("wait_item_list:",wait_item_list)
+		print("bring_in_list:%s" % [i._class_id for i in bring_in_list])
+		print("wait_item_list:%s" % [i._class_id for i in wait_item_list])
 		print("-------------------------------------------------")
 		#if self._count == 0:
 			#self.start_item_list = start_item_list

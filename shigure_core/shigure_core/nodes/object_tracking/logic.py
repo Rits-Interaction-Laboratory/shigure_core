@@ -41,9 +41,6 @@ class ObjectTrackingLogic:
         current_object_dict = {}
         buffer_obj_id = str
 
-
-        
-
         linked_list: List[Tuple[str, Tuple[DetectedObject, BoundingBox], Tuple[DetectedObject, BoundingBox], int]] = []
         for object_id, prev_item in list(previous_object_dict.items()):
             prev_object, prev_bounding_box = prev_item
