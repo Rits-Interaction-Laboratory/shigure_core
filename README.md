@@ -6,7 +6,7 @@ ROS2による室内シーン変遷ロギングシステム
 Wiki : https://github.com/Rits-Interaction-Laboratory/shigure_core/wiki
 
 ## Requires
-* ROS2 Foxy [公式インストール方法](https://index.ros.org/doc/ros2/Installation/Foxy/)
+* ROS2 Humble [公式インストール方法](https://docs.ros.org/en/humble/Installation.html)
 * Intel® RealSense™ D435
 * ROS2 Wrapper for Intel® RealSense™ Devices [公式リポジトリ](https://github.com/intel/ros2_intel_realsense)
     * Rits-Interaction-Laboratory/rs_ros2_python [リポジトリ](https://github.com/Rits-Interaction-Laboratory/rs_ros2_python)
