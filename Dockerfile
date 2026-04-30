@@ -22,5 +22,8 @@ RUN bash -c "source /opt/ros/humble/setup.bash && colcon build --symlink-install
 
 RUN sed -i '/^exec/i source /ros2_ws/install/setup.bash' /ros_entrypoint.sh
 
+RUN echo "source /opt/ros/humble/setup.bash" >> /root/.bashrc \
+    && echo "source /ros2_ws/install/setup.bash" >> /root/.bashrc
+
 ENTRYPOINT ["/ros_entrypoint.sh"]
 CMD ["ros2", "launch", "shigure_core", "shigure_core_docker_launch.py"]
