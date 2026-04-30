@@ -1,0 +1,44 @@
+services:
+  shigure_core:
+    build: .
+    network_mode: host
+    environment:
+      - DISPLAY=${DISPLAY}
+      - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-0}
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  db:
+    image: mysql:8
+    environment:
+      MYSQL_ROOT_PASSWORD: shigure
+      MYSQL_DATABASE: shigure
+      MYSQL_USER: shigure
+      MYSQL_PASSWORD: shigure
+    volumes:
+      - db_data:/var/lib/mysql
+    ports:
+      - "3306:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "shigure", "-pshigure"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  migrate:
+    image: migrate/migrate
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./shigure_core/resource/db/migration:/migration
+    command: ["-path", "/migration", "-database", "mysql://shigure:shigure@tcp(db:3306)/shigure", "up"]
+    restart: on-failure
+
+volumes:
+  db_data:
