@@ -1,6 +1,9 @@
+from typing import List
+
 import cv2
 import numpy as np
-from rcl_interfaces.msg import ParameterDescriptor, ParameterType
+from rcl_interfaces.msg import ParameterDescriptor, ParameterType, SetParametersResult
+from rcl_interfaces.msg import Parameter
 from rclpy.node import Node
 from cv_bridge import CvBridge
 
@@ -28,8 +31,26 @@ class ImagePreviewNode(Node):
         self.tm = cv2.TickMeter()
         self.tm.start()
 
+        self.add_on_set_parameters_callback(self._on_set_parameters)
+
         # show info
         self.get_logger().info('IsDebugMode : ' + str(self.is_debug_mode))
+
+    def _on_set_parameters(self, params: List[Parameter]) -> SetParametersResult:
+        """
+        パラメータ変更時に呼び出されるコールバックです.
+        ros2 param set コマンドなどで動的にパラメータを変更した際に反映されます.
+
+        :param params: 変更されたパラメータのリスト
+        :return: パラメータ変更の成否
+        """
+        for param in params:
+            if param.name == 'is_debug_mode':
+                self.is_debug_mode = param.value
+                self.get_logger().info('IsDebugMode : ' + str(self.is_debug_mode))
+                if not self.is_debug_mode:
+                    cv2.destroyAllWindows()
+        return SetParametersResult(successful=True)
 
     def frame_count_up(self):
         """
