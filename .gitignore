@@ -1,6 +1,9 @@
 # Detection events
 events/*
 
+# 環境変数（マシンごとに異なる設定）
+.env
+
 shigure_core/resource/db/Dockerfile.sample
 shigure_core/resource/db/Dockerfile_migration
 shigure_core/shigure_core/nodes/past_record_script/

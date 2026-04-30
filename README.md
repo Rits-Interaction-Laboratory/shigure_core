@@ -54,7 +54,7 @@ git submodule update --init
 ```
 
 ### 5. shigure_core(本リポジトリ)の起動
-
+#### Dockerなし
 ビルド
 ```sh
 colcon build
@@ -64,6 +64,37 @@ colcon build
 実行(全ノードを実行)
 ```sh
 ros2 launch shigure_core shigure_core_launch.py
+```
+#### Dockerあり
+.envの作成
+```sh
+cp .env.example .env
+```
+
+.envを編集
+```sh
+DISPLAY=:1        # echo $DISPLAY で確認した値
+ROS_DOMAIN_ID=10   # 他システムと干渉しないよう任意の値に
+```
+
+起動 (初回)
+```sh
+docker compose up --build
+```
+
+起動 (2回目以降)
+```sh
+docker compose up
+```
+
+停止
+```sh
+docker compose down
+```
+
+DBデータも含めて完全リセットする場合
+```sh
+docker compose down -v
 ```
 
 ### 6. DBへの保存を行う場合
