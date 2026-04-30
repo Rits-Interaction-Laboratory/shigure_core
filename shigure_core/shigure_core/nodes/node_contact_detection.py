@@ -250,6 +250,7 @@ class ContactDetectionNode(ImagePreviewNode):
 
             cv2.waitKey(1)
         else:
+            cv2.destroyAllWindows()
             print(f'[{datetime.datetime.now()}] fps : {self.fps}', end='\r')
 
     @staticmethod

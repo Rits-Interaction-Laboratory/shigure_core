@@ -273,8 +273,8 @@ class YoloxObjectDetectionNode(ImagePreviewNode):
 			cv2.namedWindow('yolox_object_detection', cv2.WINDOW_NORMAL)
 			cv2.imshow("yolox_object_detection", tile_img)
 			cv2.waitKey(1)
-		#else:
-			#print(f'[{datetime.datetime.now()}] fps : {self.fps}', end='\r')
+		else:
+			cv2.destroyAllWindows()
 			
 			
 			
