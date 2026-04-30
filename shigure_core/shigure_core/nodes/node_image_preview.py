@@ -48,8 +48,6 @@ class ImagePreviewNode(Node):
             if param.name == 'is_debug_mode':
                 self.is_debug_mode = param.value
                 self.get_logger().info('IsDebugMode : ' + str(self.is_debug_mode))
-                if not self.is_debug_mode:
-                    cv2.destroyAllWindows()
         return SetParametersResult(successful=True)
 
     def frame_count_up(self):

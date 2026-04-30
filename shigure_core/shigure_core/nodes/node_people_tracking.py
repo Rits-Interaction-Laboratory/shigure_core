@@ -101,6 +101,11 @@ class PeopleTrackingNode(ImagePreviewNode):
     def callback_debug(self, depth_src: CompressedImage, key_points_list: OpenPosePoseKeyPointsList,
                        camera_info: CameraInfo, color_src: CompressedImage):
         published_msg: ShigurePoseKeyPointsList = self.callback(depth_src, key_points_list, camera_info)
+
+        if not self.is_debug_mode:
+            cv2.destroyAllWindows()
+            return
+
         color_img: np.ndarray = self.bridge.compressed_imgmsg_to_cv2(color_src)
         height, width = color_img.shape[:2]
 
