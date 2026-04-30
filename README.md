@@ -48,7 +48,12 @@ docker run -it --gpus all --net host people_detection_ros2_docker
 bash /run.bash
 ```
 
-### 4. shigure_core(本リポジトリ)の起動
+### 4. サブモジュール(bbox_ex_msgs)の用意
+```sh
+git submodule update --init
+```
+
+### 5. shigure_core(本リポジトリ)の起動
 
 ビルド
 ```sh
@@ -61,7 +66,7 @@ colcon build
 ros2 launch shigure_core shigure_core_launch.py
 ```
 
-### 5. DBへの保存を行う場合
+### 6. DBへの保存を行う場合
 
 DBの起動 <br>
 ```sh
