@@ -24,7 +24,7 @@ def generate_launch_description():
             executable="people_tracking",
             prefix="xterm -T 'people_tracking' -e",
             parameters=[
-                {"is_debug_mode": False},
+                {"is_debug_mode": True},
                 {"focal_length": 1.0},
             ],
         ),
