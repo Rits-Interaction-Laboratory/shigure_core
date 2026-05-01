@@ -9,7 +9,8 @@ from typing import List
 import numpy as np
 import rclpy
 import string
-from rcl_interfaces.msg import ParameterDescriptor, ParameterType
+from rcl_interfaces.msg import ParameterDescriptor, ParameterType, SetParametersResult
+from rcl_interfaces.msg import Parameter
 from rclpy.qos import QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import Image, CompressedImage, CameraInfo
 from shigure_core_msgs.msg import DetectedObjectList, DetectedObject, BoundingBox,PoseKeyPointsList
@@ -76,14 +77,28 @@ class YoloxObjectDetectionNode(ImagePreviewNode):
 		#self.start_item_list:List[BboxObject]= []
 		self.bring_in_list:List[BboxObject] = []
 		self.wait_item_list:List[BboxObject] = []
+		# ros params
+		self.declare_parameter('buffer_size', 25,
+			ParameterDescriptor(type=ParameterType.PARAMETER_INTEGER,
+				description='カラー画像のバッファサイズ。'))
+		self.declare_parameter('judge_params_allow_empty_frame_count', 5,
+			ParameterDescriptor(type=ParameterType.PARAMETER_INTEGER,
+				description='物体が消えたと判定するまでに許容する空フレーム数。'))
+
+		self.buffer_size: int = self.get_parameter('buffer_size').get_parameter_value().integer_value
+		self._judge_params = JudgeParams(
+			200,
+			5000,
+			self.get_parameter('judge_params_allow_empty_frame_count').get_parameter_value().integer_value,
+		)
+
+		self.add_on_set_parameters_callback(self._on_set_parameters_yolox)
+
 		self._color_img_buffer: List[np.ndarray] = []
 		self._color_img_frames = ColorImageFrames()
-		self._buffer_size = 90
 
 		self.take_out_obj_class_id  = string
 		self.take_out_people_id = string
-		
-		self._judge_params = JudgeParams(200, 5000, 5)
 		#self._count = 0
 		
 		self._colors = []
@@ -93,6 +108,23 @@ class YoloxObjectDetectionNode(ImagePreviewNode):
 		
 		self.object_index = 0
 		
+	def _on_set_parameters_yolox(self, params: List[Parameter]) -> SetParametersResult:
+		"""
+		パラメータ変更時に呼び出されるコールバックです.
+
+		:param params: 変更されたパラメータのリスト
+		:return: パラメータ変更の成否
+		"""
+		for param in params:
+			if param.name == 'buffer_size':
+				self.buffer_size = param.value
+				self._color_img_buffer = self._color_img_buffer[-self.buffer_size:]
+				self.get_logger().info('BufferSize : ' + str(self.buffer_size))
+			elif param.name == 'judge_params_allow_empty_frame_count':
+				self._judge_params = JudgeParams(200, 5000, param.value)
+				self.get_logger().info(f'JudgeParams : allow_empty={param.value}')
+		return SetParametersResult(successful=True)
+
 	def callback(self, yolox_bbox_src: BoundingBoxes,people: PoseKeyPointsList, color_img_src: CompressedImage, camera_info: CameraInfo):
 		self.get_logger().info('Buffering start', once=True)
 		self.frame_count_up()
@@ -105,7 +137,7 @@ class YoloxObjectDetectionNode(ImagePreviewNode):
 				self.object_list.append(cv2.resize(black_img.copy(), (width // 2, height // 2)))
 			#print('brack')
 		
-		if len(self._color_img_buffer) > 25:  
+		if len(self._color_img_buffer) > self.buffer_size:
 		 	self._color_img_buffer = self._color_img_buffer[1:] #self._color_img_bufferのリストを先頭以外上書き
 		 	self._color_img_frames.get(-25).new_image = color_img  #color_img_framesの先頭の画像を新しい画像に置き換える
 		self._color_img_buffer.append(color_img) 
@@ -115,7 +147,7 @@ class YoloxObjectDetectionNode(ImagePreviewNode):
 		
 		self._color_img_frames.add(frame) #ColorImageFrameslistの更新して、listに追加
 
-		frame_object_dict,bring_in_list,wait_item_list,people_item_list,take_out_people_id,take_out_obj_class_id = self.yolox_object_detection_logic.execute(yolox_bbox_src, timestamp,people,color_img,self.frame_object_list,self._judge_params,self.take_out_people_id ,self.take_out_obj_class_id ,self.bring_in_list,self.wait_item_list)
+		frame_object_dict, bring_in_list, wait_item_list, people_item_list, take_out_people_id, take_out_obj_class_id = self.yolox_object_detection_logic.execute(yolox_bbox_src, timestamp, people, color_img, self.frame_object_list, self._judge_params, self.take_out_people_id, self.take_out_obj_class_id, self.bring_in_list, self.wait_item_list)
 		
 		print("bring_in_list:%s" % [i._class_id for i in bring_in_list])
 		print("wait_item_list:%s" % [i._class_id for i in wait_item_list])
