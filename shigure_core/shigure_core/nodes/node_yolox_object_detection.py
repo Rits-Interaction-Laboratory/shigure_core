@@ -208,11 +208,13 @@ class YoloxObjectDetectionNode(ImagePreviewNode):
 				bounding_box_src = w_item._bounding_box
 				x, y, width, height = bounding_box_src.items
 				result_img = cv2.rectangle(result_img, (x, y), (x + width, y + height), (255,204,102), thickness=3)
-				
+				cv2.putText(result_img, 'WAIT', (x + 2, y + 20), cv2.FONT_HERSHEY_PLAIN, 1.5, (255,204,102), thickness=3)
+
 			for b_item in bring_in_list:
 				bounding_box_src = b_item._bounding_box
 				x, y, width, height = bounding_box_src.items
 				result_img = cv2.rectangle(result_img, (x, y), (x + width, y + height), (255,0,102), thickness=3)
+				cv2.putText(result_img, 'BRING', (x + 2, y + 20), cv2.FONT_HERSHEY_PLAIN, 1.5, (255,0,102), thickness=3)
 				
 			for bbox in yolox_bbox_src.bounding_boxes:
 
@@ -298,7 +300,7 @@ class YoloxObjectDetectionNode(ImagePreviewNode):
 				x = frame_obj._item._bounding_box._x
 				y = frame_obj._item._bounding_box._y
 				
-				cv2.putText(result_img, f'{action_str}', (x, y),cv2.FONT_HERSHEY_PLAIN, 1.5, (255, 255, 255), thickness=2)
+				cv2.putText(result_img, f'{action_str}', (x, y), cv2.FONT_HERSHEY_PLAIN, 1.5, (0, 0, 0), thickness=3)
 
 				
 			tile_img = cv2.hconcat([yolox_img, result_img])
@@ -361,7 +363,7 @@ class YoloxObjectDetectionNode(ImagePreviewNode):
 				#cv2.waitKey(1)
 				
 				
-			return detected_object_list
+		return detected_object_list
 	  
 def main(args=None):
 	rclpy.init(args=args)
