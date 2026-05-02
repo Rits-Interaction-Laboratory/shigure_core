@@ -12,10 +12,12 @@ from shigure_core.enum.detected_object_action_enum import DetectedObjectActionEn
 from shigure_core.nodes.common_model.timestamp import Timestamp
 from shigure_core.nodes.common_model.union_find_tree import UnionFindTree
 from shigure_core.nodes.common_model.bounding_box import BoundingBox
+from shigure_core.nodes.yolox_object_detection.color_image_frame import ColorImageFrame
+from shigure_core.nodes.yolox_object_detection.color_image_frames import ColorImageFrames
 from shigure_core.nodes.yolox_object_detection.frame_object import FrameObject
 from shigure_core.nodes.yolox_object_detection.frame_object_item import FrameObjectItem
 from shigure_core.nodes.yolox_object_detection.judge_params import JudgeParams
-from shigure_core.nodes.yolox_object_detection.Bbox_Object import BboxObject
+from shigure_core.nodes.yolox_object_detection.bbox_object import BboxObject
 
 
 class YoloxObjectDetectionLogic:
@@ -27,6 +29,18 @@ class YoloxObjectDetectionLogic:
         self._wait_item_list: List[BboxObject] = []
         self._take_out_people_id = string
         self._take_out_obj_class_id = string
+        self._buffer_size: int = 25
+        self._color_img_buffer: List[np.ndarray] = []
+        self._color_img_frames = ColorImageFrames()
+
+    @property
+    def buffer_size(self) -> int:
+        return self._buffer_size
+
+    @buffer_size.setter
+    def buffer_size(self, value: int) -> None:
+        self._buffer_size = value
+        self._color_img_buffer = self._color_img_buffer[-value:]
 
     @property
     def frame_object_list(self) -> List[FrameObject]:
@@ -40,15 +54,23 @@ class YoloxObjectDetectionLogic:
     def wait_item_list(self) -> List[BboxObject]:
         return self._wait_item_list
 
-    def execute(self, yolox_bbox: BoundingBoxes, started_at: Timestamp, people: PoseKeyPointsList, color_img: np.ndarray, judge_params: JudgeParams) -> None:
+    def execute(self, yolox_bbox: BoundingBoxes, sec: int, nanosec: int, people: PoseKeyPointsList, color_img: np.ndarray, judge_params: JudgeParams) -> None:
         """
         物体検出ロジック
         :param yolox_bbox:
-        :param started_at:
-        :param active_frame_objects:
+        :param sec: タイムスタンプ（秒）
+        :param nanosec: タイムスタンプ（ナノ秒）
         :param judge_params:
-        :return: 検出したObjectリスト, 更新された既知マスク
+        :return: None（結果は self._frame_object_list に格納）
         """
+        started_at = Timestamp(sec, nanosec)
+
+        if len(self._color_img_buffer) > self._buffer_size:
+            self._color_img_buffer = self._color_img_buffer[1:]
+            self._color_img_frames.get(-self._buffer_size).new_image = color_img
+        self._color_img_buffer.append(color_img)
+        frame = ColorImageFrame(started_at, self._color_img_buffer[0], color_img)
+        self._color_img_frames.add(frame)
     
         def is_unknown_object(class_id: str, probability: float, object_threshold=0.30) -> bool:
             """物体と思われるものの規定の物体でないものかどうか調べる関数

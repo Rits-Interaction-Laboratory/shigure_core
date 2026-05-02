@@ -6,7 +6,7 @@ from bboxes_ex_msgs.msg import BoundingBoxes
 from shigure_core_msgs.msg import PoseKeyPointsList
 
 from shigure_core.enum.detected_object_action_enum import DetectedObjectActionEnum
-from shigure_core.nodes.yolox_object_detection.Bbox_Object import BboxObject
+from shigure_core.nodes.yolox_object_detection.bbox_object import BboxObject
 from shigure_core.nodes.yolox_object_detection.frame_object import FrameObject
 
 _POSE_PAIRS = [

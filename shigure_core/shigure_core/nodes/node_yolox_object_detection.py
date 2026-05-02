@@ -12,10 +12,7 @@ from bboxes_ex_msgs.msg import BoundingBoxes
 
 
 
-from shigure_core.nodes.common_model.timestamp import Timestamp
 from shigure_core.nodes.node_image_preview import ImagePreviewNode
-from shigure_core.nodes.yolox_object_detection.color_image_frame import ColorImageFrame
-from shigure_core.nodes.yolox_object_detection.color_image_frames import ColorImageFrames
 from shigure_core.nodes.yolox_object_detection.frame_object import FrameObject
 from shigure_core.nodes.yolox_object_detection.judge_params import JudgeParams
 from shigure_core.nodes.yolox_object_detection.logic import YoloxObjectDetectionLogic
@@ -75,7 +72,7 @@ class YoloxObjectDetectionNode(ImagePreviewNode):
 			ParameterDescriptor(type=ParameterType.PARAMETER_INTEGER,
 				description='物体が消えたと判定するまでに許容する空フレーム数。'))
 
-		self.buffer_size: int = self.get_parameter('buffer_size').get_parameter_value().integer_value
+		self.yolox_object_detection_logic.buffer_size = self.get_parameter('buffer_size').get_parameter_value().integer_value
 		self._judge_params = JudgeParams(
 			200,
 			5000,
@@ -83,9 +80,6 @@ class YoloxObjectDetectionNode(ImagePreviewNode):
 		)
 
 		self.add_on_set_parameters_callback(self._on_set_parameters_yolox)
-
-		self._color_img_buffer: List[np.ndarray] = []
-		self._color_img_frames = ColorImageFrames()
 
 		
 	def _on_set_parameters_yolox(self, params: List[Parameter]) -> SetParametersResult:
@@ -97,9 +91,8 @@ class YoloxObjectDetectionNode(ImagePreviewNode):
 		"""
 		for param in params:
 			if param.name == 'buffer_size':
-				self.buffer_size = param.value
-				self._color_img_buffer = self._color_img_buffer[-self.buffer_size:]
-				self.get_logger().info('BufferSize : ' + str(self.buffer_size))
+				self.yolox_object_detection_logic.buffer_size = param.value
+				self.get_logger().info('BufferSize : ' + str(param.value))
 			elif param.name == 'judge_params_allow_empty_frame_count':
 				self._judge_params = JudgeParams(200, 5000, param.value)
 				self.get_logger().info(f'JudgeParams : allow_empty={param.value}')
@@ -109,17 +102,10 @@ class YoloxObjectDetectionNode(ImagePreviewNode):
 		self.get_logger().info('Buffering start', once=True)
 		self.frame_count_up()
 		color_img: np.ndarray = self.bridge.compressed_imgmsg_to_cv2(color_img_src)
-		if len(self._color_img_buffer) > self.buffer_size:
-		 	self._color_img_buffer = self._color_img_buffer[1:] #self._color_img_bufferのリストを先頭以外上書き
-		 	self._color_img_frames.get(-25).new_image = color_img  #color_img_framesの先頭の画像を新しい画像に置き換える
-		self._color_img_buffer.append(color_img) 
-		
-		timestamp = Timestamp(color_img_src.header.stamp.sec, color_img_src.header.stamp.nanosec)
-		frame = ColorImageFrame(timestamp, self._color_img_buffer[0], color_img) #bufferの先頭の画像と新しい画像
-		
-		self._color_img_frames.add(frame) #ColorImageFrameslistの更新して、listに追加
+		sec = color_img_src.header.stamp.sec
+		nano_sec = color_img_src.header.stamp.nanosec
 
-		self.yolox_object_detection_logic.execute(yolox_bbox_src, timestamp, people, color_img, self._judge_params)
+		self.yolox_object_detection_logic.execute(yolox_bbox_src, sec, nano_sec, people, color_img, self._judge_params)
 		self.frame_object_list = self.yolox_object_detection_logic.frame_object_list
 		
 		#result_img = cv2.cvtColor(subtraction_analysis_img, cv2.COLOR_GRAY2BGR)
@@ -130,7 +116,6 @@ class YoloxObjectDetectionNode(ImagePreviewNode):
 		
 		#frame = self._color_img_frames.top_frame 
 		
-		sec, nano_sec = frame.timestamp.timestamp
 		detected_object_list = DetectedObjectList()
 		detected_object_list.header.stamp.sec = sec
 		detected_object_list.header.stamp.nanosec = nano_sec
