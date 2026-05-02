@@ -1,11 +1,8 @@
-from itertools import chain
-import random
 import cv2
 import message_filters
 from typing import List
 import numpy as np
 import rclpy
-import string
 from rcl_interfaces.msg import ParameterDescriptor, ParameterType, SetParametersResult
 from rcl_interfaces.msg import Parameter
 from rclpy.qos import QoSProfile, ReliabilityPolicy
@@ -15,7 +12,6 @@ from bboxes_ex_msgs.msg import BoundingBoxes
 
 
 
-from shigure_core.enum.detected_object_action_enum import DetectedObjectActionEnum
 from shigure_core.nodes.common_model.timestamp import Timestamp
 from shigure_core.nodes.node_image_preview import ImagePreviewNode
 from shigure_core.nodes.yolox_object_detection.color_image_frame import ColorImageFrame
@@ -23,7 +19,6 @@ from shigure_core.nodes.yolox_object_detection.color_image_frames import ColorIm
 from shigure_core.nodes.yolox_object_detection.frame_object import FrameObject
 from shigure_core.nodes.yolox_object_detection.judge_params import JudgeParams
 from shigure_core.nodes.yolox_object_detection.logic import YoloxObjectDetectionLogic
-from shigure_core.nodes.yolox_object_detection.Bbox_Object import BboxObject
 from shigure_core.nodes.yolox_object_detection.visualizer import YoloxVisualizer
 
 class YoloxObjectDetectionNode(ImagePreviewNode):
@@ -72,9 +67,6 @@ class YoloxObjectDetectionNode(ImagePreviewNode):
 		self.yolox_object_detection_logic = YoloxObjectDetectionLogic()
 		
 		self.frame_object_list: List[FrameObject] = []
-		#self.start_item_list:List[BboxObject]= []
-		self.bring_in_list:List[BboxObject] = []
-		self.wait_item_list:List[BboxObject] = []
 		# ros params
 		self.declare_parameter('buffer_size', 25,
 			ParameterDescriptor(type=ParameterType.PARAMETER_INTEGER,
@@ -95,16 +87,6 @@ class YoloxObjectDetectionNode(ImagePreviewNode):
 		self._color_img_buffer: List[np.ndarray] = []
 		self._color_img_frames = ColorImageFrames()
 
-		self.take_out_obj_class_id  = string
-		self.take_out_people_id = string
-		#self._count = 0
-		
-		self._colors = []
-		for i in range(255):
-			self._colors.append(tuple([random.randint(128, 192) for _ in range(3)]))
-		
-		
-		self.object_index = 0
 		
 	def _on_set_parameters_yolox(self, params: List[Parameter]) -> SetParametersResult:
 		"""
@@ -127,14 +109,6 @@ class YoloxObjectDetectionNode(ImagePreviewNode):
 		self.get_logger().info('Buffering start', once=True)
 		self.frame_count_up()
 		color_img: np.ndarray = self.bridge.compressed_imgmsg_to_cv2(color_img_src)
-		height, width = color_img.shape[:2]
-		if not hasattr(self, 'object_list'):
-			self.object_list = []
-			black_img = np.zeros_like(color_img)
-			for i in range(4):
-				self.object_list.append(cv2.resize(black_img.copy(), (width // 2, height // 2)))
-			#print('brack')
-		
 		if len(self._color_img_buffer) > self.buffer_size:
 		 	self._color_img_buffer = self._color_img_buffer[1:] #self._color_img_bufferのリストを先頭以外上書き
 		 	self._color_img_frames.get(-25).new_image = color_img  #color_img_framesの先頭の画像を新しい画像に置き換える
@@ -145,21 +119,8 @@ class YoloxObjectDetectionNode(ImagePreviewNode):
 		
 		self._color_img_frames.add(frame) #ColorImageFrameslistの更新して、listに追加
 
-		frame_object_dict, bring_in_list, wait_item_list, people_item_list, take_out_people_id, take_out_obj_class_id = self.yolox_object_detection_logic.execute(yolox_bbox_src, timestamp, people, color_img, self.frame_object_list, self._judge_params, self.take_out_people_id, self.take_out_obj_class_id, self.bring_in_list, self.wait_item_list)
-		
-		print("bring_in_list:%s" % [i._class_id for i in bring_in_list])
-		print("wait_item_list:%s" % [i._class_id for i in wait_item_list])
-		print("-------------------------------------------------")
-		#if self._count == 0:
-			#self.start_item_list = start_item_list
-		self.bring_in_list = bring_in_list
-		self.wait_item_list = wait_item_list
-		self.people_item_list = people_item_list
-		self.take_out_people_id = take_out_people_id
-		self.take_out_obj_class_id = take_out_obj_class_id		
-		#count = 1
-		#self._count = count
-		self.frame_object_list = list(chain.from_iterable(frame_object_dict.values())) #frame_object_dictをすべて取り出し
+		self.yolox_object_detection_logic.execute(yolox_bbox_src, timestamp, people, color_img, self._judge_params)
+		self.frame_object_list = self.yolox_object_detection_logic.frame_object_list
 		
 		#result_img = cv2.cvtColor(subtraction_analysis_img, cv2.COLOR_GRAY2BGR)
 		#print(len(bring_in_list))
@@ -185,13 +146,15 @@ class YoloxObjectDetectionNode(ImagePreviewNode):
 		# 		self.get_logger().warning('検知が終了していないオブジェクトを含んでいます')
 
 		if self.frame_object_list:		
-			detected_object_list = self.create_msg(self.frame_object_list, detected_object_list, frame)
+			detected_object_list = self.create_msg(self.frame_object_list, detected_object_list)
 		
 		self.detection_publisher.publish(detected_object_list)
 
 		if self.is_debug_mode:
 			YoloxVisualizer.draw(
-				color_img, yolox_bbox_src, wait_item_list, bring_in_list,
+				color_img, yolox_bbox_src,
+				self.yolox_object_detection_logic.wait_item_list,
+				self.yolox_object_detection_logic.bring_in_list,
 				people, self.frame_object_list
 			)
 		else:
@@ -201,9 +164,9 @@ class YoloxObjectDetectionNode(ImagePreviewNode):
 			
 			
 				
-	def  create_msg(self, frame_object_list: List[FrameObject], detected_object_list: DetectedObjectList, frame: ColorImageFrame) -> DetectedObjectList:
+	def create_msg(self, frame_object_list: List[FrameObject], detected_object_list: DetectedObjectList) -> DetectedObjectList:
 		for frame_object in frame_object_list:
-			action, bounding_box_src, size, mask_img, time, class_id= frame_object.item.items
+			action, bounding_box_src, _, mask_img, _, _ = frame_object.item.items
 			x, y, width, height = bounding_box_src.items
 			
 			detected_object = DetectedObject()
@@ -220,37 +183,8 @@ class YoloxObjectDetectionNode(ImagePreviewNode):
 			detected_object_list.object_list.append(detected_object)
 			
 			self.frame_object_list.remove(frame_object)
-			
-			if self.is_debug_mode:
-				try:
-					item_color_img = frame.new_image if action == DetectedObjectActionEnum.BRING_IN else frame.old_image
-					print('イベントが検出されました(',
-						f'action: {action.value}, x: {x}, y: {y}, width: {width}, height: {height}, size: {size},class_id:{class_id})')
-					icon = np.zeros((height + 10, width, 3), dtype=np.uint8)
-					icon[0:height, 0:width, :] = item_color_img[y:y + height, x:x + width, :]
-					
-					img_height, img_width = item_color_img.shape[:2]
-					icon = cv2.resize(icon.copy(), (img_width // 2, img_height // 2))
-					cv2.putText(icon, f'Action : {action.value}', (0, img_height // 2 - 5), cv2.FONT_HERSHEY_PLAIN, 1.5,(255, 255, 255), thickness=2)
-					
-					self.object_list[self.object_index] = icon
-					self.object_index = (self.object_index + 1) % 4
-				except Exception as e: 
-					print(e)
 
-				
-				#for bbox in frame_object_list:
-					#color = random.choice(self._colors)
-					#result_img = cv2.rectangle(frame.new_image, (x, y), (x + width, y + height), color, thickness=3)
-				#brack_img = np.zeros_like(frame.new_image)
-				#img = self.print_fps(brack_img)
-				#tile_img = cv2.hconcat([result_img, img])
-				#cv2.namedWindow('yolox_object_detection', cv2.WINDOW_NORMAL)
-				#cv2.imshow("yolox_object_detection", tile_img)
-				#cv2.waitKey(1)
-				
-				
-			return detected_object_list
+		return detected_object_list
 	  
 def main(args=None):
 	rclpy.init(args=args)

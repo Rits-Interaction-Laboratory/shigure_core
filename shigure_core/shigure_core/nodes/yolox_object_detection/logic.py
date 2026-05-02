@@ -1,4 +1,5 @@
 from collections import defaultdict
+from itertools import chain
 from typing import List, Dict, Tuple
 import copy
 import cv2
@@ -19,14 +20,32 @@ from shigure_core.nodes.yolox_object_detection.Bbox_Object import BboxObject
 
 class YoloxObjectDetectionLogic:
     """物体検出ロジッククラス"""
-    @staticmethod
-    def execute(yolox_bbox: BoundingBoxes, started_at: Timestamp, people:PoseKeyPointsList, color_img:np.ndarray, frame_object_list: List[FrameObject],
-                judge_params: JudgeParams,take_out_people_id:string,take_out_obj_class_id:string, bring_in_list:List[BboxObject],wait_item_list:[BboxObject] )-> Dict[str, List[FrameObject]]:
+
+    def __init__(self):
+        self._frame_object_list: List[FrameObject] = []
+        self._bring_in_list: List[BboxObject] = []
+        self._wait_item_list: List[BboxObject] = []
+        self._take_out_people_id = string
+        self._take_out_obj_class_id = string
+
+    @property
+    def frame_object_list(self) -> List[FrameObject]:
+        return self._frame_object_list
+
+    @property
+    def bring_in_list(self) -> List[BboxObject]:
+        return self._bring_in_list
+
+    @property
+    def wait_item_list(self) -> List[BboxObject]:
+        return self._wait_item_list
+
+    def execute(self, yolox_bbox: BoundingBoxes, started_at: Timestamp, people: PoseKeyPointsList, color_img: np.ndarray, judge_params: JudgeParams) -> None:
         """
         物体検出ロジック
         :param yolox_bbox:
         :param started_at:
-        :param frame_object_list:
+        :param active_frame_objects:
         :param judge_params:
         :return: 検出したObjectリスト, 更新された既知マスク
         """
@@ -115,12 +134,12 @@ class YoloxObjectDetectionLogic:
         hide_judge = False
 
         # 検知が終了しているものは除外
-        for frame_object in frame_object_list:
+        for frame_object in self._frame_object_list:
             if frame_object.is_finished():
                 result[str(frame_object.item.detected_at)].append(frame_object)
             else:
                 prev_frame_object_dict[frame_object.item] = frame_object
-        frame_object_list = list(prev_frame_object_dict.values())
+        active_frame_objects = list(prev_frame_object_dict.values())
 
         yolox_bboxes = yolox_bbox.bounding_boxes #yolox-rosから受け取った物体集合から物体一つずつ取り出す
         FHIST_SIZE = 10 # 検知履歴を遡って参照する範囲
@@ -170,13 +189,13 @@ class YoloxObjectDetectionLogic:
                     bbox_people_list.append(bounding_box)
 
 
-        if bring_in_list:
+        if self._bring_in_list:
             del_idx_list = []
             #b_count=0
             # 持ち込み確定リストと現フレームリストを全照合
             
             
-            for i, bring_in_item in enumerate(bring_in_list):
+            for i, bring_in_item in enumerate(self._bring_in_list):
                 b_count=0
                 
                 for bbox_item in bbox_item_list:  
@@ -305,16 +324,16 @@ class YoloxObjectDetectionLogic:
 
                                         #骨格と持ち込み物体の重なり判定
                                         if YoloxObjectDetectionLogic.chickhide(rectangle,segment):
-                                            take_out_people_id = person.people_id
+                                            self._take_out_people_id = person.people_id
                                             break
                                         else:
                                             # ?
-                                            take_out_people_id = person.people_id
+                                            self._take_out_people_id = person.people_id
 
 
 
 
-                        take_out_obj_class_id = bring_in_item._class_id
+                        self._take_out_obj_class_id = bring_in_item._class_id
                         #print('take_out')
                         del_idx_list.append(i) # 持ち去りイベント発生(持ち込み確定リストから削除予約)
                         action = DetectedObjectActionEnum.TAKE_OUT
@@ -332,7 +351,7 @@ class YoloxObjectDetectionLogic:
                             if is_matched:
                                 if not union_find_tree.has_item(prev_item):
                                     union_find_tree.add(prev_item)
-                                    frame_object_list.remove(frame_object)
+                                    active_frame_objects.remove(frame_object)
                                 if not union_find_tree.has_item(item):
                                     union_find_tree.add(item)
                                     frame_object_item_list.remove(item)
@@ -341,16 +360,16 @@ class YoloxObjectDetectionLogic:
                     print("%s.fhist: %s" % (bring_in_item._class_id, bring_in_item.fhist))
                 #持ち去られたアイテムを持ち込み確定リストから削除
             if del_idx_list:
-                print("del_idx_list: %s" % [bring_in_list[i]._class_id for i in del_idx_list])
+                print("del_idx_list: %s" % [self._bring_in_list[i]._class_id for i in del_idx_list])
                 for di in reversed(del_idx_list):
-                    del bring_in_list[di]
+                    del self._bring_in_list[di]
                     
-        if wait_item_list:
+        if self._wait_item_list:
             del_idx_list = []
             w_count=0
             # 待機リストと現フレームリストを全照合
             
-            for i, wait_item in enumerate(wait_item_list):
+            for i, wait_item in enumerate(self._wait_item_list):
                 if len(bbox_item_list) == 0:
                     wait_item.fhist.append(False)
                 for bbox_item in bbox_item_list:
@@ -371,7 +390,7 @@ class YoloxObjectDetectionLogic:
                 if len(wait_item.fhist) >= FHIST_SIZE: # その待機アイテムの検知履歴が十分に溜まっていたら
 
                     for person in people.pose_key_points_list:
-                        if person.people_id == take_out_people_id :
+                        if person.people_id == self._take_out_people_id :
                             samepeople_judge = True
                             break
 
@@ -384,7 +403,7 @@ class YoloxObjectDetectionLogic:
                         del_idx_list.append(i) # 幻だった or 持ち込みイベント発生(待機リストから削除予約)
                     if found_rate > 0.6: # 持ち込みイベント発生の場合
                         print("bring in found rate:",found_rate)
-                        if wait_item._class_id == take_out_obj_class_id and  samepeople_judge : # TAKEOUT判定くらった物体と同一クラスで，かつ持ち込んだのが同一人物なら，OBJMOVE判定
+                        if wait_item._class_id == self._take_out_obj_class_id and  samepeople_judge : # TAKEOUT判定くらった物体と同一クラスで，かつ持ち込んだのが同一人物なら，OBJMOVE判定
                             action = DetectedObjectActionEnum.OBJ_MOVE
                             item = FrameObjectItem(
                                 action,
@@ -395,13 +414,13 @@ class YoloxObjectDetectionLogic:
                                 wait_item._class_id
                             )
                             frame_object_item_list.append(item)
-                            bring_in_list.append(wait_item)
+                            self._bring_in_list.append(wait_item)
                             for prev_item, frame_object in prev_frame_object_dict.items():
                                 is_matched, size = prev_item.is_match(item)
                                 if is_matched:
                                     if not union_find_tree.has_item(prev_item):
                                         union_find_tree.add(prev_item)
-                                        frame_object_list.remove(frame_object)
+                                        active_frame_objects.remove(frame_object)
                                     if not union_find_tree.has_item(item):
                                         union_find_tree.add(item)
                                         frame_object_item_list.remove(item)
@@ -419,13 +438,13 @@ class YoloxObjectDetectionLogic:
                                 wait_item._class_id
                             )
                             frame_object_item_list.append(item)
-                            bring_in_list.append(wait_item)
+                            self._bring_in_list.append(wait_item)
                             for prev_item, frame_object in prev_frame_object_dict.items():
                                 is_matched, size = prev_item.is_match(item)
                                 if is_matched:
                                     if not union_find_tree.has_item(prev_item):
                                         union_find_tree.add(prev_item)
-                                        frame_object_list.remove(frame_object)
+                                        active_frame_objects.remove(frame_object)
                                     if not union_find_tree.has_item(item):
                                         union_find_tree.add(item)
                                         frame_object_item_list.remove(item)
@@ -435,7 +454,7 @@ class YoloxObjectDetectionLogic:
             print("del_idx_list:",len(del_idx_list))
             if del_idx_list:
                 for di in reversed(del_idx_list):
-                    del wait_item_list[di]
+                    del self._wait_item_list[di]
                     
         # 初期状態リスト・持ち込み確定リスト・待機リストいずれにも存在しない現フレームアイテムは、待機リストに追加
         for bbox_item in bbox_item_list:
@@ -445,8 +464,8 @@ class YoloxObjectDetectionLogic:
             
             if not(bbox_item.is_exist_bring or bbox_item.is_exist_wait or bbox_item.is_exist_start):
                 #print(f'wait_item_append : {bbox_item._class_id}')
-                wait_item_list.append(bbox_item)
-                #wait = [[i._class_id, i._bounding_box._x, i._bounding_box._y, i._found_count, i._not_found_count] for i in wait_item_list]
+                self._wait_item_list.append(bbox_item)
+                #wait = [[i._class_id, i._bounding_box._x, i._bounding_box._y, i._found_count, i._not_found_count] for i in self._wait_item_list]
                 #_ = [print(w) for w in wait]
                 
             
@@ -461,7 +480,7 @@ class YoloxObjectDetectionLogic:
             result[str(new_item.detected_at)].append(FrameObject(new_item, judge_params.allow_empty_frame_count))
             
         # リンクしなかったframe_objectは空のフレームを挟む
-        for frame_object in frame_object_list:
+        for frame_object in active_frame_objects:
             frame_object.add_empty_frame()
             result[str(frame_object.item.detected_at)].append(frame_object)
         
@@ -470,7 +489,7 @@ class YoloxObjectDetectionLogic:
             frame_object = FrameObject(frame_object_item, judge_params.allow_empty_frame_count)
             result[str(frame_object_item.detected_at)].append(frame_object)
             
-        return result,bring_in_list,wait_item_list,bbox_people_list,take_out_people_id,take_out_obj_class_id
+        self._frame_object_list = list(chain.from_iterable(result.values()))
     
     @staticmethod
     def update_item(left: FrameObjectItem, right: FrameObjectItem, mask_img: np.ndarray) -> Tuple[FrameObjectItem, np.ndarray]:
