@@ -106,29 +106,14 @@ class YoloxObjectDetectionNode(ImagePreviewNode):
 		nano_sec = color_img_src.header.stamp.nanosec
 
 		self.yolox_object_detection_logic.execute(yolox_bbox_src, sec, nano_sec, people, color_img, self._judge_params)
-		self.frame_object_list = self.yolox_object_detection_logic.frame_object_list
+		self.frame_object_list = self.yolox_object_detection_logic.consume_frame_object_list()
 		
-		#result_img = cv2.cvtColor(subtraction_analysis_img, cv2.COLOR_GRAY2BGR)
-		#print(len(bring_in_list))
-		
-		#if self._color_img_frames.is_full():　<--self._color_img_framesのフレームが最大ならTrue
 		self.get_logger().info('Buffering end', once=True)
-		
-		#frame = self._color_img_frames.top_frame 
 		
 		detected_object_list = DetectedObjectList()
 		detected_object_list.header.stamp.sec = sec
 		detected_object_list.header.stamp.nanosec = nano_sec
 		detected_object_list.header.frame_id = camera_info.header.frame_id
-		
-
-		# timestamp_str = str(frame.timestamp)
-		# if timestamp_str in frame_object_dict.keys():
-		# 	frame_object_list = frame_object_dict.get(timestamp_str)
-		# 	#print(time)
-		# 	# 検知開始時間が同じのフレームオブジェクトが検知済でなければ警告
-		# 	if not all([frame_object.is_finished() for frame_object in frame_object_list]):
-		# 		self.get_logger().warning('検知が終了していないオブジェクトを含んでいます')
 
 		if self.frame_object_list:		
 			detected_object_list = self.create_msg(self.frame_object_list, detected_object_list)
@@ -166,8 +151,6 @@ class YoloxObjectDetectionNode(ImagePreviewNode):
 			detected_object.bounding_box = bounding_box
 			
 			detected_object_list.object_list.append(detected_object)
-			
-			self.frame_object_list.remove(frame_object)
 
 		return detected_object_list
 	  

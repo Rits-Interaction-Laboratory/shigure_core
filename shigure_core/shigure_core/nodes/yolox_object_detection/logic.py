@@ -46,6 +46,11 @@ class YoloxObjectDetectionLogic:
     def frame_object_list(self) -> List[FrameObject]:
         return self._frame_object_list
 
+    def consume_frame_object_list(self) -> List[FrameObject]:
+        items = list(self._frame_object_list)
+        self._frame_object_list.clear()
+        return items
+
     @property
     def bring_in_list(self) -> List[BboxObject]:
         return self._bring_in_list
@@ -539,30 +544,6 @@ class YoloxObjectDetectionLogic:
         x, y, width, height = bounding_box.items
         mask_img[y:y + height, x:x + width] = np.where(mask > 0, mask, mask_img[y:y + height, x:x + width])
         return mask_img
-    
-    # @staticmethod
-    # def intersect(a, b) :
-    #     ax_mn, ay_mn, ax_mx, ay_mx = a[0], a[1], a[2], a[3]
-    #     bx_mn, by_mn, bx_mx, by_mx = b[0], b[1], b[2], b[3]
-    #     return (ax_mn <= bx_mx and  ax_mx >= bx_mn) and (ay_mn <=  by_mx and ay_mx >= by_mn) # and (a.minZ <= b.maxZ and a.maxZ >= b.minZ)
-    
-    @staticmethod
-    def is_overlap(Personbox, Bring_inbox):
-        """物体と思われるものの規定の物体でないものかどうか調べる関数
-        Args:
-            Personbox: 人物のバウンディングボックスの座標 (左上隅のx, y座標, 右下隅のx, y座標)
-            Bring_inbox: Bring_in判定されているバウンディングボックスの座標 (左上隅のx, y座標, 右下隅のx, y座標)
-        Returns:sd
-
-            bool: 重なっている場合はTrue、そうでない場合はFalseを返します
-        """
-        px_mn, py_mn, px_mx, py_mx = Personbox[0], Personbox[1], Personbox[2],Personbox[3]
-        bx_mn, by_mn, bx_mx, by_mx = Bring_inbox[0], Bring_inbox[1], Bring_inbox[2], Bring_inbox[3]
-        # 2つのバウンディングボックスが重なっているかどうかを判定
-        if (px_mn <= bx_mx and  px_mx >= bx_mn) and (py_mn <=  by_mx and py_mx >= by_mn):
-            return True
-        else: 
-            return False
         
     @staticmethod
     def chickhide(rectangle, segment):
