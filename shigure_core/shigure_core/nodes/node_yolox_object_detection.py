@@ -14,7 +14,6 @@ from bboxes_ex_msgs.msg import BoundingBoxes
 
 from shigure_core.nodes.node_image_preview import ImagePreviewNode
 from shigure_core.nodes.yolox_object_detection.frame_object import FrameObject
-from shigure_core.nodes.yolox_object_detection.judge_params import JudgeParams
 from shigure_core.nodes.yolox_object_detection.logic import YoloxObjectDetectionLogic
 from shigure_core.nodes.yolox_object_detection.visualizer import YoloxVisualizer
 
@@ -68,16 +67,7 @@ class YoloxObjectDetectionNode(ImagePreviewNode):
 		self.declare_parameter('buffer_size', 25,
 			ParameterDescriptor(type=ParameterType.PARAMETER_INTEGER,
 				description='カラー画像のバッファサイズ。'))
-		self.declare_parameter('judge_params_allow_empty_frame_count', 5,
-			ParameterDescriptor(type=ParameterType.PARAMETER_INTEGER,
-				description='物体が消えたと判定するまでに許容する空フレーム数。'))
-
 		self.yolox_object_detection_logic.buffer_size = self.get_parameter('buffer_size').get_parameter_value().integer_value
-		self._judge_params = JudgeParams(
-			200,
-			5000,
-			self.get_parameter('judge_params_allow_empty_frame_count').get_parameter_value().integer_value,
-		)
 
 		self.add_on_set_parameters_callback(self._on_set_parameters_yolox)
 
@@ -93,9 +83,6 @@ class YoloxObjectDetectionNode(ImagePreviewNode):
 			if param.name == 'buffer_size':
 				self.yolox_object_detection_logic.buffer_size = param.value
 				self.get_logger().info('BufferSize : ' + str(param.value))
-			elif param.name == 'judge_params_allow_empty_frame_count':
-				self._judge_params = JudgeParams(200, 5000, param.value)
-				self.get_logger().info(f'JudgeParams : allow_empty={param.value}')
 		return SetParametersResult(successful=True)
 
 	def callback(self, yolox_bbox_src: BoundingBoxes,people: PoseKeyPointsList, color_img_src: CompressedImage, camera_info: CameraInfo):
@@ -105,7 +92,7 @@ class YoloxObjectDetectionNode(ImagePreviewNode):
 		sec = color_img_src.header.stamp.sec
 		nano_sec = color_img_src.header.stamp.nanosec
 
-		self.yolox_object_detection_logic.execute(yolox_bbox_src, sec, nano_sec, people, color_img, self._judge_params)
+		self.yolox_object_detection_logic.execute(yolox_bbox_src, sec, nano_sec, people, color_img)
 		self.frame_object_list = self.yolox_object_detection_logic.consume_frame_object_list()
 		
 		self.get_logger().info('Buffering end', once=True)

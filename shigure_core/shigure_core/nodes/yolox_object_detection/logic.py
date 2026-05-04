@@ -10,7 +10,6 @@ from shigure_core.nodes.yolox_object_detection.color_image_frame import ColorIma
 from shigure_core.nodes.yolox_object_detection.color_image_frames import ColorImageFrames
 from shigure_core.nodes.yolox_object_detection.frame_object import FrameObject
 from shigure_core.nodes.yolox_object_detection.frame_object_item import FrameObjectItem
-from shigure_core.nodes.yolox_object_detection.judge_params import JudgeParams
 from shigure_core.nodes.yolox_object_detection.detection import Detection
 from shigure_core.nodes.yolox_object_detection.tracked_object import TrackedObject, TrackedState
 
@@ -53,7 +52,7 @@ class YoloxObjectDetectionLogic:
     def wait_item_list(self) -> List[TrackedObject]:
         return [t for t in self._tracked_objects if t.state == TrackedState.WAITING]
 
-    def execute(self, yolox_bbox: BoundingBoxes, sec: int, nanosec: int, people: PoseKeyPointsList, color_img: np.ndarray, judge_params: JudgeParams) -> None:
+    def execute(self, yolox_bbox: BoundingBoxes, sec: int, nanosec: int, people: PoseKeyPointsList, color_img: np.ndarray) -> None:
         started_at = Timestamp(sec, nanosec)
 
         if len(self._color_img_buffer) > self._buffer_size:
@@ -70,10 +69,7 @@ class YoloxObjectDetectionLogic:
         frame_object_item_list += self._update_waiting(detections, matched, people)
         self._register_new(detections, matched)
 
-        self._frame_object_list = [
-            FrameObject(item, judge_params.allow_empty_frame_count)
-            for item in frame_object_item_list
-        ]
+        self._frame_object_list = [FrameObject(item) for item in frame_object_item_list]
 
     def _update_confirmed(self, detections: List[Detection], matched: set, people: PoseKeyPointsList) -> List[FrameObjectItem]:
         """CONFIRMED 物体を現フレームと照合し TAKE_OUT を判定する"""
