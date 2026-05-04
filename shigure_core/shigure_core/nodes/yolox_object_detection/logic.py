@@ -18,6 +18,7 @@ from shigure_core.nodes.yolox_object_detection.frame_object import FrameObject
 from shigure_core.nodes.yolox_object_detection.frame_object_item import FrameObjectItem
 from shigure_core.nodes.yolox_object_detection.judge_params import JudgeParams
 from shigure_core.nodes.yolox_object_detection.bbox_object import BboxObject
+from shigure_core.nodes.yolox_object_detection.detection import Detection
 
 
 class YoloxObjectDetectionLogic:
@@ -77,38 +78,6 @@ class YoloxObjectDetectionLogic:
         frame = ColorImageFrame(started_at, self._color_img_buffer[0], color_img)
         self._color_img_frames.add(frame)
     
-        def is_unknown_object(class_id: str, probability: float, object_threshold=0.30) -> bool:
-            """物体と思われるものの規定の物体でないものかどうか調べる関数
-            Args:
-                class_id (str): 物体のクラス名
-                probability (float): 物体かどうかの確からしさ（max 1）
-                object_threshold (float): 物体と判定するしきい値（max 1）
-            Returns:
-                bool: 物体と思われるものの規定の物体でないものかどうか
-            """
-            #DEFAULT_OBJECTS = []
-            DEFAULT_OBJECTS = ['person','dog','cat','chair','laptop','tv','microwave','refrigerator','potted plant','cup','keyboard','couch','mouse','sink','dining table','skateboard',"book","banana","backpack","toy","backpack"]
-            if class_id == 'stuffed toy':
-                is_object: bool = probability > object_threshold
-            else:
-                is_object: bool = probability > 0.30
-            is_default_object = class_id in DEFAULT_OBJECTS
-            return is_object and not(is_default_object)
-        
-        def is_people_object(class_id: str, probability: float, object_threshold=0.48) -> bool:
-            """物体が人物であるかどうか調べる関数
-            Args:
-                class_id (str): 物体のクラス名
-                probability (float): 物体かどうかの確からしさ（max 1）
-                object_threshold (float): 物体と判定するしきい値（max 1）
-            Returns:
-                bool: 物体が人物であるかどうか
-            """
-            PEOPLE_OBJECTS = ['person','dog','cat','chair','laptop','tv','microwave','refrigerator','potted plant','cup','keyboard','couch','mouse','sink','dining table','skateboard']
-            is_object: bool = probability > object_threshold
-            is_people_object = class_id in PEOPLE_OBJECTS 
-            return is_object and (is_people_object)
-
         def judge_take_out_object(bring_in_item, threshold=0.5) -> bool:
             """持ち去り判定を行う関数
             Args:
@@ -168,52 +137,13 @@ class YoloxObjectDetectionLogic:
                 prev_frame_object_dict[frame_object.item] = frame_object
         active_frame_objects = list(prev_frame_object_dict.values())
 
-        yolox_bboxes = yolox_bbox.bounding_boxes #yolox-rosから受け取った物体集合から物体一つずつ取り出す
         FHIST_SIZE = 10 # 検知履歴を遡って参照する範囲
-        
-        # 届いた現フレームのyolox-bbox群情報を整理して新しくリストにまとめる
-        bbox_item_list = []
-        bbox_people_list = []
-        bbox_testobject_list = []
-        for i, bbox in enumerate(yolox_bboxes):
-            probability = bbox.probability
-            x = bbox.xmin
-            y = bbox.ymin
-            xmax = bbox.xmax
-            ymax = bbox.ymax
-            height = ymax - y
-            width = xmax - x
-            class_id = bbox.class_id
-            
-            
-            # if (probability < 0.48) or (class_id in ['person','chair','laptop','tv','microwave','refrigerator','potted plant','cup','keyboard','couch','mouse']):
-            if is_unknown_object(class_id, probability, 0.20):
-                brack_img = np.zeros(color_img.shape[:2])
-                brack_img[y:y + height, x:x + width] = 255
-                mask_img:np.ndarray = brack_img[y:y + height, x:x + width]
-                
-                bounding_box = BoundingBox(x, y, width, height) # BBOX(左上端座標, 幅, 高さ)
-                area = width*height # BBOXの面積
-                
-                bbox_item = BboxObject(bounding_box, area, mask_img, started_at,class_id)
-                bbox_item_list.append(bbox_item)
 
-                test_item = [x,y,xmax,ymax]
-
-                #人物と物体の判定用のobject_list
-                bbox_testobject_list.append(test_item)
-
-            else:
-                if is_people_object(class_id, probability):
-                    brack_img = np.zeros(color_img.shape[:2])
-                    brack_img[y:y + height, x:x + width] = 255
-                    mask_img:np.ndarray = brack_img[y:y + height, x:x + width]
-                    
-                    bounding_box = BoundingBox(x, y, width, height) # BBOX(左上端座標, 幅, 高さ)
-                    area = width*height # BBOXの面積
-                    
-                    people_item = [x,y,xmax,ymax]
-                    bbox_people_list.append(bounding_box)
+        detections = self._parse_detections(yolox_bbox, color_img, started_at)
+        bbox_item_list = [
+            BboxObject(d.bbox, d.bbox.width * d.bbox.height, d.mask, d.found_at, d.class_id)
+            for d in detections
+        ]
 
 
         if self._bring_in_list:
@@ -518,6 +448,36 @@ class YoloxObjectDetectionLogic:
             
         self._frame_object_list = list(chain.from_iterable(result.values()))
     
+    @staticmethod
+    def _parse_detections(yolox_bbox: BoundingBoxes, color_img: np.ndarray, started_at: Timestamp) -> List[Detection]:
+        detections = []
+        for bbox in yolox_bbox.bounding_boxes:
+            x = bbox.xmin
+            y = bbox.ymin
+            width = bbox.xmax - x
+            height = bbox.ymax - y
+            class_id = bbox.class_id
+            probability = bbox.probability
+            if YoloxObjectDetectionLogic.is_unknown_object(class_id, probability, 0.20):
+                mask_img = np.zeros(color_img.shape[:2])
+                mask_img[y:y + height, x:x + width] = 255
+                mask_img = mask_img[y:y + height, x:x + width]
+                detections.append(Detection(BoundingBox(x, y, width, height), class_id, mask_img, started_at))
+        return detections
+
+    @staticmethod
+    def is_unknown_object(class_id: str, probability: float, object_threshold: float = 0.30) -> bool:
+        DEFAULT_OBJECTS = [
+            'person', 'dog', 'cat', 'chair', 'laptop', 'tv', 'microwave', 'refrigerator',
+            'potted plant', 'cup', 'keyboard', 'couch', 'mouse', 'sink', 'dining table',
+            'skateboard', 'book', 'banana', 'backpack', 'toy',
+        ]
+        if class_id == 'stuffed toy':
+            is_object = probability > object_threshold
+        else:
+            is_object = probability > 0.30
+        return is_object and class_id not in DEFAULT_OBJECTS
+
     @staticmethod
     def update_item(left: FrameObjectItem, right: FrameObjectItem, mask_img: np.ndarray) -> Tuple[FrameObjectItem, np.ndarray]:
         x = min(left.bounding_box.x, right.bounding_box.x)
