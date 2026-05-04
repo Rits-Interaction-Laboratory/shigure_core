@@ -1,16 +1,10 @@
-from collections import defaultdict
-from itertools import chain
-from typing import List, Dict, Tuple
-import copy
-import cv2
+from typing import List, Tuple
 import numpy as np
-import string
 from shigure_core_msgs.msg import PoseKeyPointsList
 from bboxes_ex_msgs.msg import BoundingBoxes
 
 from shigure_core.enum.detected_object_action_enum import DetectedObjectActionEnum
 from shigure_core.nodes.common_model.timestamp import Timestamp
-from shigure_core.nodes.common_model.union_find_tree import UnionFindTree
 from shigure_core.nodes.common_model.bounding_box import BoundingBox
 from shigure_core.nodes.yolox_object_detection.color_image_frame import ColorImageFrame
 from shigure_core.nodes.yolox_object_detection.color_image_frames import ColorImageFrames
@@ -28,8 +22,8 @@ class YoloxObjectDetectionLogic:
         self._frame_object_list: List[FrameObject] = []
         self._bring_in_list: List[BboxObject] = []
         self._wait_item_list: List[BboxObject] = []
-        self._take_out_people_id = string
-        self._take_out_obj_class_id = string
+        self._take_out_people_id: str = ""
+        self._take_out_obj_class_id: str = ""
         self._buffer_size: int = 25
         self._color_img_buffer: List[np.ndarray] = []
         self._color_img_frames = ColorImageFrames()
@@ -61,14 +55,6 @@ class YoloxObjectDetectionLogic:
         return self._wait_item_list
 
     def execute(self, yolox_bbox: BoundingBoxes, sec: int, nanosec: int, people: PoseKeyPointsList, color_img: np.ndarray, judge_params: JudgeParams) -> None:
-        """
-        物体検出ロジック
-        :param yolox_bbox:
-        :param sec: タイムスタンプ（秒）
-        :param nanosec: タイムスタンプ（ナノ秒）
-        :param judge_params:
-        :return: None（結果は self._frame_object_list に格納）
-        """
         started_at = Timestamp(sec, nanosec)
 
         if len(self._color_img_buffer) > self._buffer_size:
@@ -77,376 +63,183 @@ class YoloxObjectDetectionLogic:
         self._color_img_buffer.append(color_img)
         frame = ColorImageFrame(started_at, self._color_img_buffer[0], color_img)
         self._color_img_frames.add(frame)
-    
-        def judge_take_out_object(bring_in_item, threshold=0.5) -> bool:
-            """持ち去り判定を行う関数
-            Args:
-                bring_in_item (): 持ち去るかどうか決める対象のアイテム
-                threshold (float): これ以下だと持ち去ると決めるためのしきい値
-                
-            """
-            
-            #print(bring_in_item.fhist)
-            # 検知率(履歴リスト中のTrueの存在率)を計算
-            found_rate = sum(bring_in_item.fhist) / len(bring_in_item.fhist)
-            
-            #print(found_rate)
 
-            # 検知率が15%未満だったら
-            if found_rate < threshold:
-                print("take out found rate:",found_rate)
-            return found_rate < threshold
-
-        def event_of_take_out(bring_in_item) -> None:
-            """持ち去りイベントを発生させる関数
-            Args:
-                bring_in_item (): 持ち去りたい対象のアイテム
-            """
-            item = FrameObjectItem(
-                        DetectedObjectActionEnum.TAKE_OUT,
-                        bring_in_item._bounding_box,
-                        bring_in_item._size,
-                        bring_in_item._mask, 
-                        bring_in_item._found_at,
-                        bring_in_item._class_id
-                    )
-        
-        # ラベリング処理
-        
-        prev_frame_object_dict = {}
-        bbox_compare_list:List[BboxObject] = []
-        union_find_tree: UnionFindTree[FrameObjectItem] = UnionFindTree[FrameObjectItem]()
-        frame_object_item_list = []
-        result = defaultdict(list)
-        
-        #del_idx_reverse = []
-        is_exist_start = False
-        is_exist_wait = False
-        is_exist_bring = False
-
-
-        samepeople_judge =False
-        
-        hide_judge = False
-
-        # 検知が終了しているものは除外
-        for frame_object in self._frame_object_list:
-            if frame_object.is_finished():
-                result[str(frame_object.item.detected_at)].append(frame_object)
-            else:
-                prev_frame_object_dict[frame_object.item] = frame_object
-        active_frame_objects = list(prev_frame_object_dict.values())
-
-        FHIST_SIZE = 10 # 検知履歴を遡って参照する範囲
-
+        FHIST_SIZE = 10
         detections = self._parse_detections(yolox_bbox, color_img, started_at)
         bbox_item_list = [
             BboxObject(d.bbox, d.bbox.width * d.bbox.height, d.mask, d.found_at, d.class_id)
             for d in detections
         ]
 
+        frame_object_item_list = self._update_confirmed(bbox_item_list, people, FHIST_SIZE)
+        frame_object_item_list += self._update_waiting(bbox_item_list, people, FHIST_SIZE)
+        self._register_new(bbox_item_list)
 
-        if self._bring_in_list:
-            del_idx_list = []
-            #b_count=0
-            # 持ち込み確定リストと現フレームリストを全照合
-            
-            
-            for i, bring_in_item in enumerate(self._bring_in_list):
-                b_count=0
-                
-                for bbox_item in bbox_item_list:  
-                                                                 
-                    #if bbox_item.is_exist_start: # 初期状態リストにすでに存在する現フレームアイテムは無視
-                        #continue+
-                    #print("asa")
-                    #print(bbox_item._class_id)
-                    #print(len(bbox_item_list))
+        self._frame_object_list = [
+            FrameObject(item, judge_params.allow_empty_frame_count)
+            for item in frame_object_item_list
+        ]
 
-                    if bring_in_item.is_match(bbox_item): # その持ち込みアイテムと一致する現フレームアイテムがあったら
-                        b_count += 1 
-                        bring_in_item.fhist.append(True) # その持ち込みアイテムの検知履歴リストにTrueを追加
-                        bbox_item.is_exist_bring = True # その現フレームアイテムの「持ち込み確定リストに存在する？」フラグをオン
-                        print("bring in %s" % bring_in_item._class_id)
-                        break
-                    
-                    
-                    elif len(people.pose_key_points_list) == 0: #持ち込みアイテムと一致する現フレームアイテムがないとき
-                        b_count += 1 
-                        if b_count == len(bbox_item_list):
-                            #b_count += 1
-                            print("not found %s" % bring_in_item._class_id)
-                            #print(len(bbox_item_list))
-                            bring_in_item.fhist.append(False)
-                            break
-                       
-                        
-                        
+    def _update_confirmed(self, bbox_item_list: List[BboxObject], people: PoseKeyPointsList, fhist_size: int) -> List[FrameObjectItem]:
+        """bring_in_list の各アイテムを現フレームと照合し TAKE_OUT を判定する"""
+        frame_object_items: List[FrameObjectItem] = []
+        del_idx_list: List[int] = []
 
-                       
+        for i, bring_in_item in enumerate(self._bring_in_list):
+            matched = False
+            for bbox_item in bbox_item_list:
+                if bring_in_item.is_match(bbox_item):
+                    bring_in_item.fhist.append(True)
+                    bbox_item.is_exist_bring = True
+                    matched = True
+                    print("bring in %s" % bring_in_item._class_id)
+                    break
 
-                        
-                    else:
-
-
-                        #b_count += 1
-                        #人物に隠れていないかを確かめる
-                        for person in people.pose_key_points_list:
-                            
-                            #color_imgのサイズ
-                            img_height, img_width = color_img.shape[:2]
-
-                            bounding_box = person.bounding_box
-                            left = np.clip(int(bounding_box.x), 0, img_width- 1)
-                            top = np.clip(int(bounding_box.y), 0, img_height - 1)
-                            right = np.clip(int(bounding_box.x + bounding_box.width), 0, img_width - 1)
-                            bottom = np.clip(int(bounding_box.y + bounding_box.height), 0, img_height - 1)
-                            part_count: int  = len(person.point_data)
-                            
-                            for part in range(part_count):
-                            # 対象の位置
-                                pixel_point = person.point_data[part].pixel_point
-                                x = np.clip(int(pixel_point.x), 0, img_width - 1)
-                                y = np.clip(int(pixel_point.y), 0, img_height - 1)
-                                
-                                POSE_PAIRS:List[List[int]] =  [ [1,0],[1,2],[1,5],[2,3],[3,4],[5,6],[6,7],[1,8],[8,9],[8,12],[9,10],[10,11],[11,22],[11,24],[12,13],[13,14],[14,19],[14,21],[15,0],[15,17],[16,0],[16,18],[19,20],[22,11],[22,23]]
-                                # Draw Skeleton
-                                for pair in POSE_PAIRS:
-                                    partA:int  = pair[0]
-                                    partB:int  = pair[1]
-
-                                    if person.point_data[partA].pixel_point.x > 0 and person.point_data[partA].pixel_point.y > 0 and  person.point_data[partB].pixel_point.x>0  and person.point_data[partB].pixel_point.x>0  :
-                                        segment: tuple[float, float, float, float] =[person.point_data[partA].pixel_point.x,person.point_data[partA].pixel_point.y,person.point_data[partB].pixel_point.x,person.point_data[partB].pixel_point.y]
-                                        bounding_box_src = bring_in_item._bounding_box
-                                        b_item_x, b_item_y, b_item_width, b_item_height = bounding_box_src.items
-                                        rectangle: tuple[float, float, float, float] = [b_item_x,b_item_y ,b_item_width,b_item_height]
-
-                                        #骨格と持ち込み物体の重なり判定
-                                        if YoloxObjectDetectionLogic.chickhide(rectangle,segment):
-
-                                            hide_judge = True
-                                            print("hide judge %s" % bring_in_item._class_id)
-
-                                            break
-                                        else:
-
-                                            hide_judge = False
-
-                            if not hide_judge:  
-                                b_count += 1 
-                                if b_count == len(bbox_item_list):
-                                    #print("asa") 
-                                    #b_count += 1
-
-                                    print("not found %s" % bring_in_item._class_id)      
-                                    bring_in_item.fhist.append(False) # 持ち込み物体が持ち去られているなら検知履歴リストにFalseを追加
-                                    break
-                if len(bbox_item_list) == 0:
+            if not matched:
+                occluded = YoloxObjectDetectionLogic._is_occluded_by_people(
+                    bring_in_item._bounding_box, people
+                )
+                if len(bbox_item_list) == 0 or not occluded:
                     bring_in_item.fhist.append(False)
-
-                print("len(%s.fhist) : %s"% (bring_in_item._class_id, len(bring_in_item.fhist))) 
-                if len(bring_in_item.fhist) >= FHIST_SIZE: # その持ち込みアイテムの検知履歴が十分に溜まっていたら
-                    #print(bring_in_item.fhist)
-                    if judge_take_out_object(bring_in_item):
-                      
-                        for person in people.pose_key_points_list:
-                            
-                            #color_imgのサイズ
-                            img_height, img_width = color_img.shape[:2]
-
-                            bounding_box = person.bounding_box
-                            left = np.clip(int(bounding_box.x), 0, img_width- 1)
-                            top = np.clip(int(bounding_box.y), 0, img_height - 1)
-                            right = np.clip(int(bounding_box.x + bounding_box.width), 0, img_width - 1)
-                            bottom = np.clip(int(bounding_box.y + bounding_box.height), 0, img_height - 1)
-                            part_count: int  = len(person.point_data)
-                            
-                            for part in range(part_count):
-                            # 対象の位置
-                                pixel_point = person.point_data[part].pixel_point
-                                x = np.clip(int(pixel_point.x), 0, img_width - 1)
-                                y = np.clip(int(pixel_point.y), 0, img_height - 1)
-                                
-                                POSE_PAIRS:List[List[int]] =  [ [1,0],[1,2],[1,5],[2,3],[3,4],[5,6],[6,7],[1,8],[8,9],[8,12],[9,10],[10,11],[11,22],[11,24],[12,13],[13,14],[14,19],[14,21],[15,0],[15,17],[16,0],[16,18],[19,20],[22,11],[22,23]]
-                                # Draw Skeleton
-                                for pair in POSE_PAIRS:
-                                    partA:int  = pair[0]
-                                    partB:int  = pair[1]
-
-                                    if person.point_data[partA].pixel_point.x > 0 and person.point_data[partA].pixel_point.y > 0 and  person.point_data[partB].pixel_point.x>0  and person.point_data[partB].pixel_point.x>0  :
-                                        segment: tuple[float, float, float, float] =[person.point_data[partA].pixel_point.x,person.point_data[partA].pixel_point.y,person.point_data[partB].pixel_point.x,person.point_data[partB].pixel_point.y]
-                                        bounding_box_src = bring_in_item._bounding_box
-                                        b_item_x, b_item_y, b_item_width, b_item_height = bounding_box_src.items
-                                        rectangle: tuple[float, float, float, float] = [b_item_x,b_item_y ,b_item_width,b_item_height]
-
-                                        #骨格と持ち込み物体の重なり判定
-                                        if YoloxObjectDetectionLogic.chickhide(rectangle,segment):
-                                            self._take_out_people_id = person.people_id
-                                            break
-                                        else:
-                                            # ?
-                                            self._take_out_people_id = person.people_id
-
-
-
-
-                        self._take_out_obj_class_id = bring_in_item._class_id
-                        #print('take_out')
-                        del_idx_list.append(i) # 持ち去りイベント発生(持ち込み確定リストから削除予約)
-                        action = DetectedObjectActionEnum.TAKE_OUT
-                        item = FrameObjectItem(
-                            action,
-                            bring_in_item._bounding_box,
-                            bring_in_item._size,
-                            bring_in_item._mask, 
-                            bring_in_item._found_at,
-                            bring_in_item._class_id
-                        )
-                        frame_object_item_list.append(item)
-                        for prev_item, frame_object in prev_frame_object_dict.items():
-                            is_matched, size = prev_item.is_match(item)
-                            if is_matched:
-                                if not union_find_tree.has_item(prev_item):
-                                    union_find_tree.add(prev_item)
-                                    active_frame_objects.remove(frame_object)
-                                if not union_find_tree.has_item(item):
-                                    union_find_tree.add(item)
-                                    frame_object_item_list.remove(item)
-                                union_find_tree.unite(prev_item, item)
-                    bring_in_item.fhist = bring_in_item.fhist[-(FHIST_SIZE-1):]  # その持ち込みアイテムの検知履歴リストを最新分のみ確保して更新
-                    print("%s.fhist: %s" % (bring_in_item._class_id, bring_in_item.fhist))
-                #持ち去られたアイテムを持ち込み確定リストから削除
-            if del_idx_list:
-                print("del_idx_list: %s" % [self._bring_in_list[i]._class_id for i in del_idx_list])
-                for di in reversed(del_idx_list):
-                    del self._bring_in_list[di]
-                    
-        if self._wait_item_list:
-            del_idx_list = []
-            w_count=0
-            # 待機リストと現フレームリストを全照合
-            
-            for i, wait_item in enumerate(self._wait_item_list):
-                if len(bbox_item_list) == 0:
-                    wait_item.fhist.append(False)
-                for bbox_item in bbox_item_list:
-                    if bbox_item.is_exist_bring: # 持ち込み確定リストにすでに存在する現フレームアイテムは無視
-                        continue
-                    if wait_item.is_match(bbox_item): #その待機アイテムと一致する現フレームアイテムがあったら
-                        #print("wait_item._mask",wait_item._mask)
-                        wait_item.fhist.append(True) # その待機アイテムの検知履歴リストにTrueを追加
-                        bbox_item.is_exist_wait = True # その現フレームアイテムの「待機リストに存在する？」フラグをオン
-                        
-                        break
+                    print("not found %s" % bring_in_item._class_id)
                 else:
-                    w_count+=1
-                    if w_count == len(bbox_item_list):
-                        wait_item.fhist.append(False) 
-                    #wait_item.fhist.append(False) #最後までどれとも一致しなかったらその待機アイテムの検知履歴リストにFalseを追加
-                
-                if len(wait_item.fhist) >= FHIST_SIZE: # その待機アイテムの検知履歴が十分に溜まっていたら
+                    print("hide judge %s" % bring_in_item._class_id)
 
-                    for person in people.pose_key_points_list:
-                        if person.people_id == self._take_out_people_id :
-                            samepeople_judge = True
-                            break
+            print("len(%s.fhist) : %s" % (bring_in_item._class_id, len(bring_in_item.fhist)))
+            if len(bring_in_item.fhist) >= fhist_size:
+                found_rate = sum(bring_in_item.fhist) / len(bring_in_item.fhist)
+                if found_rate < 0.5:
+                    print("take out found rate:", found_rate)
+                    self._take_out_people_id = YoloxObjectDetectionLogic._find_take_out_person_id(
+                        bring_in_item._bounding_box, people
+                    )
+                    self._take_out_obj_class_id = bring_in_item._class_id
+                    del_idx_list.append(i)
+                    frame_object_items.append(FrameObjectItem(
+                        DetectedObjectActionEnum.TAKE_OUT,
+                        bring_in_item._bounding_box,
+                        bring_in_item._size,
+                        bring_in_item._mask,
+                        bring_in_item._found_at,
+                        bring_in_item._class_id,
+                    ))
+                bring_in_item.fhist = bring_in_item.fhist[-(fhist_size - 1):]
+                print("%s.fhist: %s" % (bring_in_item._class_id, bring_in_item.fhist))
 
+        if del_idx_list:
+            print("del_idx_list: %s" % [self._bring_in_list[i]._class_id for i in del_idx_list])
+            for di in reversed(del_idx_list):
+                del self._bring_in_list[di]
 
+        return frame_object_items
 
-                    found_rate = sum(wait_item.fhist) / len(wait_item.fhist) # 検知率(検知履歴リスト中のTrueの存在率)を計算
-                    #print("found rate:",found_rate)
-                    print("wait_item.fist:",wait_item.fhist)
-                    if (found_rate < 0.5) or (found_rate > 0.6): # 検知率が20%未満 or 70%超過だったら
-                        del_idx_list.append(i) # 幻だった or 持ち込みイベント発生(待機リストから削除予約)
-                    if found_rate > 0.6: # 持ち込みイベント発生の場合
-                        print("bring in found rate:",found_rate)
-                        if wait_item._class_id == self._take_out_obj_class_id and  samepeople_judge : # TAKEOUT判定くらった物体と同一クラスで，かつ持ち込んだのが同一人物なら，OBJMOVE判定
-                            action = DetectedObjectActionEnum.OBJ_MOVE
-                            item = FrameObjectItem(
-                                action,
-                                wait_item._bounding_box, 
-                                wait_item._size, 
-                                wait_item._mask, 
-                                wait_item._found_at,
-                                wait_item._class_id
-                            )
-                            frame_object_item_list.append(item)
-                            self._bring_in_list.append(wait_item)
-                            for prev_item, frame_object in prev_frame_object_dict.items():
-                                is_matched, size = prev_item.is_match(item)
-                                if is_matched:
-                                    if not union_find_tree.has_item(prev_item):
-                                        union_find_tree.add(prev_item)
-                                        active_frame_objects.remove(frame_object)
-                                    if not union_find_tree.has_item(item):
-                                        union_find_tree.add(item)
-                                        frame_object_item_list.remove(item)
-                                    union_find_tree.unite(prev_item, item)
-                        
-                        else: # OBJMOVE判定されなかった物体は持ち込みイベント発生
+    def _update_waiting(self, bbox_item_list: List[BboxObject], people: PoseKeyPointsList, fhist_size: int) -> List[FrameObjectItem]:
+        """wait_item_list の各アイテムを現フレームと照合し BRING_IN / OBJ_MOVE を判定する"""
+        frame_object_items: List[FrameObjectItem] = []
+        del_idx_list: List[int] = []
 
-                            action = DetectedObjectActionEnum.BRING_IN
-                            item = FrameObjectItem(
-                                action,
-                                wait_item._bounding_box, 
-                                wait_item._size, 
-                                wait_item._mask, 
-                                wait_item._found_at,
-                                wait_item._class_id
-                            )
-                            frame_object_item_list.append(item)
-                            self._bring_in_list.append(wait_item)
-                            for prev_item, frame_object in prev_frame_object_dict.items():
-                                is_matched, size = prev_item.is_match(item)
-                                if is_matched:
-                                    if not union_find_tree.has_item(prev_item):
-                                        union_find_tree.add(prev_item)
-                                        active_frame_objects.remove(frame_object)
-                                    if not union_find_tree.has_item(item):
-                                        union_find_tree.add(item)
-                                        frame_object_item_list.remove(item)
-                                    union_find_tree.unite(prev_item, item)
-                    wait_item.fhist = wait_item.fhist[-(FHIST_SIZE-1):] # その待機アイテムの検知履歴リストを最新分のみ確保して更新
-            # 持ち込まれた or 幻だったアイテムを待機リストから削除
-            print("del_idx_list:",len(del_idx_list))
-            if del_idx_list:
-                for di in reversed(del_idx_list):
-                    del self._wait_item_list[di]
-                    
-        # 初期状態リスト・持ち込み確定リスト・待機リストいずれにも存在しない現フレームアイテムは、待機リストに追加
+        for i, wait_item in enumerate(self._wait_item_list):
+            for bbox_item in bbox_item_list:
+                if bbox_item.is_exist_bring:
+                    continue
+                if wait_item.is_match(bbox_item):
+                    wait_item.fhist.append(True)
+                    bbox_item.is_exist_wait = True
+                    break
+            else:
+                wait_item.fhist.append(False)
+
+            if len(wait_item.fhist) >= fhist_size:
+                samepeople_judge = any(
+                    p.people_id == self._take_out_people_id
+                    for p in people.pose_key_points_list
+                )
+                found_rate = sum(wait_item.fhist) / len(wait_item.fhist)
+                print("wait_item.fist:", wait_item.fhist)
+                if found_rate < 0.5:
+                    del_idx_list.append(i)
+                elif found_rate > 0.6:
+                    print("bring in found rate:", found_rate)
+                    del_idx_list.append(i)
+                    if wait_item._class_id == self._take_out_obj_class_id and samepeople_judge:
+                        action = DetectedObjectActionEnum.OBJ_MOVE
+                    else:
+                        action = DetectedObjectActionEnum.BRING_IN
+                    frame_object_items.append(FrameObjectItem(
+                        action,
+                        wait_item._bounding_box,
+                        wait_item._size,
+                        wait_item._mask,
+                        wait_item._found_at,
+                        wait_item._class_id,
+                    ))
+                    self._bring_in_list.append(wait_item)
+                wait_item.fhist = wait_item.fhist[-(fhist_size - 1):]
+
+        print("del_idx_list:", len(del_idx_list))
+        if del_idx_list:
+            for di in reversed(del_idx_list):
+                del self._wait_item_list[di]
+
+        return frame_object_items
+
+    def _register_new(self, bbox_item_list: List[BboxObject]) -> None:
+        """どの追跡物体にも一致しなかった検出を WAITING として新規登録する"""
         for bbox_item in bbox_item_list:
-            print("bbox_item.is_exist_bring:",bbox_item.is_exist_bring)
-            print("bbox_item.is_exist_wait:",bbox_item.is_exist_wait)
-            print("bbox_item.is_exist_start:",bbox_item.is_exist_start)
-            
-            if not(bbox_item.is_exist_bring or bbox_item.is_exist_wait or bbox_item.is_exist_start):
-                #print(f'wait_item_append : {bbox_item._class_id}')
+            if not (bbox_item.is_exist_bring or bbox_item.is_exist_wait):
                 self._wait_item_list.append(bbox_item)
-                #wait = [[i._class_id, i._bounding_box._x, i._bounding_box._y, i._found_count, i._not_found_count] for i in self._wait_item_list]
-                #_ = [print(w) for w in wait]
-                
-            
-                    
-        # リンクした範囲を1つにまとめる
-        groups = union_find_tree.all_group_members().values()
-        for items in groups:
-            new_item: FrameObjectItem = items[0]
-            mask_img = YoloxObjectDetectionLogic.update_mask_image(np.zeros(color_img.shape[:2]),new_item)
-            for item in items[1:]:
-                new_item, mask_img = YoloxObjectDetectionLogic.update_item(new_item, item, mask_img)
-            result[str(new_item.detected_at)].append(FrameObject(new_item, judge_params.allow_empty_frame_count))
-            
-        # リンクしなかったframe_objectは空のフレームを挟む
-        for frame_object in active_frame_objects:
-            frame_object.add_empty_frame()
-            result[str(frame_object.item.detected_at)].append(frame_object)
-        
-        # リンクしなかったframe_object_itemは新たなframe_objectとして登録
-        for frame_object_item in frame_object_item_list:
-            frame_object = FrameObject(frame_object_item, judge_params.allow_empty_frame_count)
-            result[str(frame_object_item.detected_at)].append(frame_object)
-            
-        self._frame_object_list = list(chain.from_iterable(result.values()))
+
+    @staticmethod
+    def _is_occluded_by_people(bbox: BoundingBox, people: PoseKeyPointsList) -> bool:
+        """物体の bbox が骨格セグメントと重なっているかどうかを判定する"""
+        POSE_PAIRS: List[List[int]] = [
+            [1,0],[1,2],[1,5],[2,3],[3,4],[5,6],[6,7],[1,8],[8,9],[8,12],
+            [9,10],[10,11],[11,22],[11,24],[12,13],[13,14],[14,19],[14,21],
+            [15,0],[15,17],[16,0],[16,18],[19,20],[22,11],[22,23],
+        ]
+        rectangle = [bbox._x, bbox._y, bbox._width, bbox._height]
+        for person in people.pose_key_points_list:
+            for pair in POSE_PAIRS:
+                partA, partB = pair
+                if (person.point_data[partA].pixel_point.x > 0 and
+                        person.point_data[partA].pixel_point.y > 0 and
+                        person.point_data[partB].pixel_point.x > 0 and
+                        person.point_data[partB].pixel_point.y > 0):
+                    segment = [
+                        person.point_data[partA].pixel_point.x,
+                        person.point_data[partA].pixel_point.y,
+                        person.point_data[partB].pixel_point.x,
+                        person.point_data[partB].pixel_point.y,
+                    ]
+                    if YoloxObjectDetectionLogic.chickhide(rectangle, segment):
+                        return True
+        return False
+
+    @staticmethod
+    def _find_take_out_person_id(bbox: BoundingBox, people: PoseKeyPointsList) -> str:
+        """TAKE_OUT 時に物体を隠している人物の ID を返す。なければ空文字列を返す"""
+        POSE_PAIRS: List[List[int]] = [
+            [1,0],[1,2],[1,5],[2,3],[3,4],[5,6],[6,7],[1,8],[8,9],[8,12],
+            [9,10],[10,11],[11,22],[11,24],[12,13],[13,14],[14,19],[14,21],
+            [15,0],[15,17],[16,0],[16,18],[19,20],[22,11],[22,23],
+        ]
+        rectangle = [bbox._x, bbox._y, bbox._width, bbox._height]
+        for person in people.pose_key_points_list:
+            for pair in POSE_PAIRS:
+                partA, partB = pair
+                if (person.point_data[partA].pixel_point.x > 0 and
+                        person.point_data[partA].pixel_point.y > 0 and
+                        person.point_data[partB].pixel_point.x > 0 and
+                        person.point_data[partB].pixel_point.y > 0):
+                    segment = [
+                        person.point_data[partA].pixel_point.x,
+                        person.point_data[partA].pixel_point.y,
+                        person.point_data[partB].pixel_point.x,
+                        person.point_data[partB].pixel_point.y,
+                    ]
+                    if YoloxObjectDetectionLogic.chickhide(rectangle, segment):
+                        return person.people_id
+        return ""
     
     @staticmethod
     def _parse_detections(yolox_bbox: BoundingBoxes, color_img: np.ndarray, started_at: Timestamp) -> List[Detection]:
