@@ -52,7 +52,10 @@ class YoloxObjectDetectionLogic:
     def wait_item_list(self) -> List[TrackedObject]:
         return [t for t in self._tracked_objects if t.state == TrackedState.WAITING]
 
-    def execute(self, yolox_bbox: BoundingBoxes, sec: int, nanosec: int, people: PoseKeyPointsList, color_img: np.ndarray) -> None:
+    def execute(self, yolox_bbox: BoundingBoxes, sec: int, nanosec: int, people: PoseKeyPointsList,
+                color_img: np.ndarray, fhist_size: int, confirm_threshold: float, dismiss_threshold: float,
+                take_out_threshold: float, match_dist_threshold: int, probability_threshold: float,
+                stuffed_toy_threshold: float) -> None:
         started_at = Timestamp(sec, nanosec)
 
         if len(self._color_img_buffer) > self._buffer_size:
@@ -62,16 +65,20 @@ class YoloxObjectDetectionLogic:
         frame = ColorImageFrame(started_at, self._color_img_buffer[0], color_img)
         self._color_img_frames.add(frame)
 
-        detections = self._parse_detections(yolox_bbox, color_img, started_at)
+        detections = self._parse_detections(yolox_bbox, color_img, started_at, probability_threshold,
+                                           stuffed_toy_threshold)
 
         matched: set = set()
-        frame_object_item_list = self._update_confirmed(detections, matched, people)
-        frame_object_item_list += self._update_waiting(detections, matched, people)
+        frame_object_item_list = self._update_confirmed(detections, matched, people, fhist_size, take_out_threshold,
+                                                        match_dist_threshold)
+        frame_object_item_list += self._update_waiting(detections, matched, people, fhist_size, confirm_threshold,
+                                                       dismiss_threshold, match_dist_threshold)
         self._register_new(detections, matched)
 
         self._frame_object_list = [FrameObject(item) for item in frame_object_item_list]
 
-    def _update_confirmed(self, detections: List[Detection], matched: set, people: PoseKeyPointsList) -> List[FrameObjectItem]:
+    def _update_confirmed(self, detections: List[Detection], matched: set, people: PoseKeyPointsList,
+                          fhist_size: int, take_out_threshold: float, match_dist_threshold: int) -> List[FrameObjectItem]:
         """CONFIRMED 物体を現フレームと照合し TAKE_OUT を判定する"""
         frame_object_items: List[FrameObjectItem] = []
         to_remove: List[TrackedObject] = []
@@ -79,8 +86,8 @@ class YoloxObjectDetectionLogic:
         for obj in [o for o in self._tracked_objects if o.state == TrackedState.CONFIRMED]:
             found = False
             for det in detections:
-                if obj.matches(det):
-                    obj.record(True)
+                if obj.matches(det, match_dist_threshold):
+                    obj.record(True, fhist_size)
                     matched.add(id(det))
                     found = True
                     print("bring in %s" % obj.class_id)
@@ -89,14 +96,14 @@ class YoloxObjectDetectionLogic:
             if not found:
                 occluded = YoloxObjectDetectionLogic._is_occluded_by_people(obj.bbox, people)
                 if len(detections) == 0 or not occluded:
-                    obj.record(False)
+                    obj.record(False, fhist_size)
                     print("not found %s" % obj.class_id)
                 else:
                     print("hide judge %s" % obj.class_id)
 
             print("len(%s.fhist) : %s" % (obj.class_id, len(obj.fhist)))
-            if obj.is_history_full:
-                if obj.should_take_out():
+            if obj.is_history_full(fhist_size):
+                if obj.should_take_out(fhist_size, take_out_threshold):
                     print("take out found rate:", obj.found_rate)
                     self._take_out_people_id = YoloxObjectDetectionLogic._find_take_out_person_id(
                         obj.bbox, people
@@ -111,7 +118,7 @@ class YoloxObjectDetectionLogic:
                         obj.found_at,
                         obj.class_id,
                     ))
-                obj.trim_history()
+                obj.trim_history(fhist_size)
                 print("%s.fhist: %s" % (obj.class_id, obj.fhist))
 
         if to_remove:
@@ -121,7 +128,9 @@ class YoloxObjectDetectionLogic:
 
         return frame_object_items
 
-    def _update_waiting(self, detections: List[Detection], matched: set, people: PoseKeyPointsList) -> List[FrameObjectItem]:
+    def _update_waiting(self, detections: List[Detection], matched: set, people: PoseKeyPointsList,
+                        fhist_size: int, confirm_threshold: float, dismiss_threshold: float,
+                        match_dist_threshold: int) -> List[FrameObjectItem]:
         """WAITING 物体を現フレームと照合し BRING_IN / OBJ_MOVE を判定する"""
         frame_object_items: List[FrameObjectItem] = []
         to_remove: List[TrackedObject] = []
@@ -130,22 +139,22 @@ class YoloxObjectDetectionLogic:
             for det in detections:
                 if id(det) in matched:
                     continue
-                if obj.matches(det):
-                    obj.record(True)
+                if obj.matches(det, match_dist_threshold):
+                    obj.record(True, fhist_size)
                     matched.add(id(det))
                     break
             else:
-                obj.record(False)
+                obj.record(False, fhist_size)
 
-            if obj.is_history_full:
+            if obj.is_history_full(fhist_size):
                 samepeople_judge = any(
                     p.people_id == self._take_out_people_id
                     for p in people.pose_key_points_list
                 )
                 print("wait_item.fist:", obj.fhist)
-                if obj.should_dismiss():
+                if obj.should_dismiss(fhist_size, dismiss_threshold):
                     to_remove.append(obj)
-                elif obj.should_confirm():
+                elif obj.should_confirm(fhist_size, confirm_threshold):
                     print("bring in found rate:", obj.found_rate)
                     if obj.class_id == self._take_out_obj_class_id and samepeople_judge:
                         action = DetectedObjectActionEnum.OBJ_MOVE
@@ -160,7 +169,7 @@ class YoloxObjectDetectionLogic:
                         obj.class_id,
                     ))
                     obj.state = TrackedState.CONFIRMED
-                obj.trim_history()
+                obj.trim_history(fhist_size)
 
         print("del_idx_list:", len(to_remove))
         for obj in to_remove:
@@ -227,7 +236,8 @@ class YoloxObjectDetectionLogic:
         return ""
     
     @staticmethod
-    def _parse_detections(yolox_bbox: BoundingBoxes, color_img: np.ndarray, started_at: Timestamp) -> List[Detection]:
+    def _parse_detections(yolox_bbox: BoundingBoxes, color_img: np.ndarray, started_at: Timestamp,
+                         probability_threshold: float, stuffed_toy_threshold: float) -> List[Detection]:
         """上流ノードからの yolox_bbox を Detection のリストに変換する"""
         detections = []
         for bbox in yolox_bbox.bounding_boxes:
@@ -237,7 +247,8 @@ class YoloxObjectDetectionLogic:
             height = bbox.ymax - y
             class_id = bbox.class_id
             probability = bbox.probability
-            if YoloxObjectDetectionLogic.is_unknown_object(class_id, probability, 0.20):
+            if YoloxObjectDetectionLogic.is_unknown_object(class_id, probability, probability_threshold,
+                                                           stuffed_toy_threshold):
                 mask_img = np.zeros(color_img.shape[:2])
                 mask_img[y:y + height, x:x + width] = 255
                 mask_img = mask_img[y:y + height, x:x + width]
@@ -245,12 +256,14 @@ class YoloxObjectDetectionLogic:
         return detections
 
     @staticmethod
-    def is_unknown_object(class_id: str, probability: float, object_threshold: float = 0.30) -> bool:
+    def is_unknown_object(class_id: str, probability: float, probability_threshold: float,
+                          stuffed_toy_threshold: float) -> bool:
         """
         物体と思われるものの規定の物体でないものかどうか調べる関数
         :param class_id: 物体のクラス名
         :param probability: 物体かどうかの確からしさ（max 1）
-        :param object_threshold: 物体と判定するしきい値（max 1, ぬいぐるみ専用の閾値）
+        :param probability_threshold: 物体と判定するしきい値（max 1）
+        :param stuffed_toy_threshold: 物体と判定するしきい値（max 1, ぬいぐるみ専用の閾値）
         :return: 物体と思われるものの規定の物体でないものかどうか
         """
         DEFAULT_OBJECTS = [
@@ -259,9 +272,9 @@ class YoloxObjectDetectionLogic:
             'skateboard', 'book', 'banana', 'backpack', 'toy',
         ]
         if class_id == 'stuffed toy':
-            is_object = probability > object_threshold
+            is_object = probability > stuffed_toy_threshold
         else:
-            is_object = probability > 0.30
+            is_object = probability > probability_threshold
         return is_object and class_id not in DEFAULT_OBJECTS
 
     @staticmethod

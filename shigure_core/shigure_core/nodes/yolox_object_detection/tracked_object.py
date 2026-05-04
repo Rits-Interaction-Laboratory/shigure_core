@@ -7,8 +7,6 @@ from shigure_core.nodes.common_model.bounding_box import BoundingBox
 from shigure_core.nodes.common_model.timestamp import Timestamp
 from shigure_core.nodes.yolox_object_detection.detection import Detection
 
-FHIST_SIZE = 10
-
 
 class TrackedState(Enum):
     WAITING = auto()
@@ -24,11 +22,12 @@ class TrackedObject:
         self.state: TrackedState = TrackedState.WAITING
         self.fhist: List[bool] = []
 
-    def record(self, found: Optional[bool]) -> None:
+    def record(self, found: Optional[bool], fhist_size: int) -> None:
         """None = 骨格隠蔽によりスキップ"""
         if found is None:
             return
         self.fhist.append(found)
+        self.trim_history(fhist_size)
 
     @property
     def found_rate(self) -> float:
@@ -36,27 +35,30 @@ class TrackedObject:
             return 0.0
         return sum(self.fhist) / len(self.fhist)
 
-    @property
-    def is_history_full(self) -> bool:
-        return len(self.fhist) >= FHIST_SIZE
+    def is_history_full(self, fhist_size: int) -> bool:
+        return len(self.fhist) >= fhist_size
 
-    def should_confirm(self) -> bool:
-        return self.is_history_full and self.found_rate > 0.6
+    def should_confirm(self, fhist_size: int, confirm_threshold: float) -> bool:
+        return self.is_history_full(fhist_size) and self.found_rate > confirm_threshold
 
-    def should_dismiss(self) -> bool:
-        return self.is_history_full and self.found_rate < 0.5
+    def should_dismiss(self, fhist_size: int, dismiss_threshold: float) -> bool:
+        return self.is_history_full(fhist_size) and self.found_rate < dismiss_threshold
 
-    def should_take_out(self) -> bool:
-        return self.is_history_full and self.found_rate < 0.5
+    def should_take_out(self, fhist_size: int, take_out_threshold: float) -> bool:
+        return self.is_history_full(fhist_size) and self.found_rate < take_out_threshold
 
-    def trim_history(self) -> None:
-        self.fhist = self.fhist[-(FHIST_SIZE - 1):]
+    def trim_history(self, fhist_size: int) -> None:
+        if len(self.fhist) > fhist_size:
+            self.fhist = self.fhist[-fhist_size:]
 
-    def matches(self, detection: Detection) -> bool:
+    def matches(self, detection: Detection, match_dist_threshold: int) -> bool:
         bbox_x = abs(self.bbox._x - detection.bbox._x)
         bbox_y = abs(self.bbox._y - detection.bbox._y)
         bbox_width = abs(self.bbox._width - detection.bbox._width)
-        if (self.class_id == detection.class_id) and (bbox_x < 10) and (bbox_y < 10) and (bbox_width < 10):
+        if (self.class_id == detection.class_id) and \
+           (bbox_x < match_dist_threshold) and \
+           (bbox_y < match_dist_threshold) and \
+           (bbox_width < match_dist_threshold):
             self.found_at = detection.found_at
             return True
         return False

@@ -64,10 +64,46 @@ class YoloxObjectDetectionNode(ImagePreviewNode):
 		
 		self.frame_object_list: List[FrameObject] = []
 		# ros params
+		self.declare_parameter('fhist_size', 10,
+			ParameterDescriptor(type=ParameterType.PARAMETER_INTEGER,
+				description='判定に使用するフレーム数。'))
+		self.fhist_size = self.get_parameter('fhist_size').get_parameter_value().integer_value
+
+		self.declare_parameter('confirm_threshold', 0.6,
+			ParameterDescriptor(type=ParameterType.PARAMETER_DOUBLE,
+				description='持ち込み確定しきい値。'))
+		self.confirm_threshold = self.get_parameter('confirm_threshold').get_parameter_value().double_value
+
+		self.declare_parameter('dismiss_threshold', 0.5,
+			ParameterDescriptor(type=ParameterType.PARAMETER_DOUBLE,
+				description='追跡破棄しきい値。'))
+		self.dismiss_threshold = self.get_parameter('dismiss_threshold').get_parameter_value().double_value
+
+		self.declare_parameter('take_out_threshold', 0.5,
+			ParameterDescriptor(type=ParameterType.PARAMETER_DOUBLE,
+				description='持ち出し確定しきい値。'))
+		self.take_out_threshold = self.get_parameter('take_out_threshold').get_parameter_value().double_value
+
+		self.declare_parameter('match_dist_threshold', 10,
+			ParameterDescriptor(type=ParameterType.PARAMETER_INTEGER,
+				description='同一物体と判定する距離しきい値。'))
+		self.match_dist_threshold = self.get_parameter('match_dist_threshold').get_parameter_value().integer_value
+
+		self.declare_parameter('probability_threshold', 0.3,
+			ParameterDescriptor(type=ParameterType.PARAMETER_DOUBLE,
+				description='物体検出確率しきい値。'))
+		self.probability_threshold = self.get_parameter('probability_threshold').get_parameter_value().double_value
+
+		self.declare_parameter('stuffed_toy_threshold', 0.2,
+			ParameterDescriptor(type=ParameterType.PARAMETER_DOUBLE,
+				description='ぬいぐるみ専用物体検出確率しきい値。'))
+		self.stuffed_toy_threshold = self.get_parameter('stuffed_toy_threshold').get_parameter_value().double_value
+
 		self.declare_parameter('buffer_size', 25,
 			ParameterDescriptor(type=ParameterType.PARAMETER_INTEGER,
 				description='カラー画像のバッファサイズ。'))
-		self.yolox_object_detection_logic.buffer_size = self.get_parameter('buffer_size').get_parameter_value().integer_value
+		self.buffer_size = self.get_parameter('buffer_size').get_parameter_value().integer_value
+		self.yolox_object_detection_logic.buffer_size = self.buffer_size
 
 		self.add_on_set_parameters_callback(self._on_set_parameters_yolox)
 
@@ -80,9 +116,31 @@ class YoloxObjectDetectionNode(ImagePreviewNode):
 		:return: パラメータ変更の成否
 		"""
 		for param in params:
-			if param.name == 'buffer_size':
+			if param.name == 'fhist_size':
+				self.fhist_size = param.value
+				self.get_logger().info(f'FhistSize : {param.value}')
+			elif param.name == 'confirm_threshold':
+				self.confirm_threshold = param.value
+				self.get_logger().info(f'ConfirmThreshold : {param.value}')
+			elif param.name == 'dismiss_threshold':
+				self.dismiss_threshold = param.value
+				self.get_logger().info(f'DismissThreshold : {param.value}')
+			elif param.name == 'take_out_threshold':
+				self.take_out_threshold = param.value
+				self.get_logger().info(f'TakeOutThreshold : {param.value}')
+			elif param.name == 'match_dist_threshold':
+				self.match_dist_threshold = param.value
+				self.get_logger().info(f'MatchDistThreshold : {param.value}')
+			elif param.name == 'probability_threshold':
+				self.probability_threshold = param.value
+				self.get_logger().info(f'ProbabilityThreshold : {param.value}')
+			elif param.name == 'stuffed_toy_threshold':
+				self.stuffed_toy_threshold = param.value
+				self.get_logger().info(f'StuffedToyThreshold : {param.value}')
+			elif param.name == 'buffer_size':
+				self.buffer_size = param.value
 				self.yolox_object_detection_logic.buffer_size = param.value
-				self.get_logger().info('BufferSize : ' + str(param.value))
+				self.get_logger().info(f'BufferSize : {param.value}')
 		return SetParametersResult(successful=True)
 
 	def callback(self, yolox_bbox_src: BoundingBoxes, people: PoseKeyPointsList, color_img_src: CompressedImage, camera_info: CameraInfo):
@@ -93,7 +151,12 @@ class YoloxObjectDetectionNode(ImagePreviewNode):
 		nano_sec = color_img_src.header.stamp.nanosec
 
 		# ロジックの実行 (yoloxの物体検出結果から，物体の持ち込み/移動/持ち出し<イベント>を判定する)
-		self.yolox_object_detection_logic.execute(yolox_bbox_src, sec, nano_sec, people, color_img)
+		self.yolox_object_detection_logic.execute(
+			yolox_bbox_src, sec, nano_sec, people, color_img,
+			self.fhist_size, self.confirm_threshold, self.dismiss_threshold,
+			self.take_out_threshold, self.match_dist_threshold,
+			self.probability_threshold, self.stuffed_toy_threshold
+		)
 		self.frame_object_list = self.yolox_object_detection_logic.consume_frame_object_list()
 		
 		self.get_logger().info('Buffering end', once=True)
