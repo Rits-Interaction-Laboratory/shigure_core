@@ -196,7 +196,7 @@ class YoloxObjectDetectionLogic:
                         person.point_data[partB].pixel_point.x,
                         person.point_data[partB].pixel_point.y,
                     ]
-                    if YoloxObjectDetectionLogic.chickhide(rectangle, segment):
+                    if YoloxObjectDetectionLogic._intersects_bbox_and_segment(rectangle, segment):
                         return True
         return False
 
@@ -222,12 +222,13 @@ class YoloxObjectDetectionLogic:
                         person.point_data[partB].pixel_point.x,
                         person.point_data[partB].pixel_point.y,
                     ]
-                    if YoloxObjectDetectionLogic.chickhide(rectangle, segment):
+                    if YoloxObjectDetectionLogic._intersects_bbox_and_segment(rectangle, segment):
                         return person.people_id
         return ""
     
     @staticmethod
     def _parse_detections(yolox_bbox: BoundingBoxes, color_img: np.ndarray, started_at: Timestamp) -> List[Detection]:
+        """上流ノードからの yolox_bbox を Detection のリストに変換する"""
         detections = []
         for bbox in yolox_bbox.bounding_boxes:
             x = bbox.xmin
@@ -245,6 +246,13 @@ class YoloxObjectDetectionLogic:
 
     @staticmethod
     def is_unknown_object(class_id: str, probability: float, object_threshold: float = 0.30) -> bool:
+        """
+        物体と思われるものの規定の物体でないものかどうか調べる関数
+        :param class_id: 物体のクラス名
+        :param probability: 物体かどうかの確からしさ（max 1）
+        :param object_threshold: 物体と判定するしきい値（max 1, ぬいぐるみ専用の閾値）
+        :return: 物体と思われるものの規定の物体でないものかどうか
+        """
         DEFAULT_OBJECTS = [
             'person', 'dog', 'cat', 'chair', 'laptop', 'tv', 'microwave', 'refrigerator',
             'potted plant', 'cup', 'keyboard', 'couch', 'mouse', 'sink', 'dining table',
@@ -257,34 +265,7 @@ class YoloxObjectDetectionLogic:
         return is_object and class_id not in DEFAULT_OBJECTS
 
     @staticmethod
-    def update_item(left: FrameObjectItem, right: FrameObjectItem, mask_img: np.ndarray) -> Tuple[FrameObjectItem, np.ndarray]:
-        x = min(left.bounding_box.x, right.bounding_box.x)
-        y = min(left.bounding_box.y, right.bounding_box.y)
-        width = max(left.bounding_box.x + left.bounding_box.width,right.bounding_box.x + right.bounding_box.width) - x
-        height = max(left.bounding_box.y + left.bounding_box.height,right.bounding_box.y + right.bounding_box.height) - y
-        mask_img = YoloxObjectDetectionLogic.update_mask_image(mask_img, right)
-        size = np.count_nonzero(mask_img[y:y + height, x:x + width])
-        
-        new_bounding_box = BoundingBox(x, y, width, height)
-        
-        action = left.action
-        left_is_before = left.detected_at.is_before(right.detected_at)
-        
-        # 持ち込み時は新しい方を選択
-        new_detected_at = left.detected_at if left_is_before else right.detected_at
-        new_class_id = left._class_id if left_is_before else right.detected_at
-        
-        return FrameObjectItem(action, new_bounding_box, size, mask_img[y:y + height, x:x + width],new_detected_at,new_class_id), mask_img
-    
-    @staticmethod
-    def update_mask_image(mask_img: np.ndarray, item: FrameObjectItem) -> np.ndarray:
-        _, bounding_box, _, mask, _ ,_= item.items
-        x, y, width, height = bounding_box.items
-        mask_img[y:y + height, x:x + width] = np.where(mask > 0, mask, mask_img[y:y + height, x:x + width])
-        return mask_img
-        
-    @staticmethod
-    def chickhide(rectangle, segment):
+    def _intersects_bbox_and_segment(rectangle, segment):
 	# 矩形の頂点を取得
         rect_x, rect_y, rect_width, rect_height = rectangle
         rect_top_left = (rect_x, rect_y)

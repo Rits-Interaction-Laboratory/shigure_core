@@ -85,13 +85,14 @@ class YoloxObjectDetectionNode(ImagePreviewNode):
 				self.get_logger().info('BufferSize : ' + str(param.value))
 		return SetParametersResult(successful=True)
 
-	def callback(self, yolox_bbox_src: BoundingBoxes,people: PoseKeyPointsList, color_img_src: CompressedImage, camera_info: CameraInfo):
+	def callback(self, yolox_bbox_src: BoundingBoxes, people: PoseKeyPointsList, color_img_src: CompressedImage, camera_info: CameraInfo):
 		self.get_logger().info('Buffering start', once=True)
 		self.frame_count_up()
 		color_img: np.ndarray = self.bridge.compressed_imgmsg_to_cv2(color_img_src)
 		sec = color_img_src.header.stamp.sec
 		nano_sec = color_img_src.header.stamp.nanosec
 
+		# ロジックの実行 (yoloxの物体検出結果から，物体の持ち込み/移動/持ち出し<イベント>を判定する)
 		self.yolox_object_detection_logic.execute(yolox_bbox_src, sec, nano_sec, people, color_img)
 		self.frame_object_list = self.yolox_object_detection_logic.consume_frame_object_list()
 		
