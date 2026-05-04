@@ -6,8 +6,8 @@ from bboxes_ex_msgs.msg import BoundingBoxes
 from shigure_core_msgs.msg import PoseKeyPointsList
 
 from shigure_core.enum.detected_object_action_enum import DetectedObjectActionEnum
-from shigure_core.nodes.yolox_object_detection.bbox_object import BboxObject
 from shigure_core.nodes.yolox_object_detection.frame_object import FrameObject
+from shigure_core.nodes.yolox_object_detection.tracked_object import TrackedObject
 
 _POSE_PAIRS = [
     [1, 0], [1, 2], [1, 5], [2, 3], [3, 4], [5, 6], [6, 7],
@@ -24,8 +24,8 @@ class YoloxVisualizer:
     def draw(
         color_img: np.ndarray,
         yolox_bboxes: BoundingBoxes,
-        wait_item_list: List[BboxObject],
-        bring_in_list: List[BboxObject],
+        wait_item_list: List[TrackedObject],
+        bring_in_list: List[TrackedObject],
         people: PoseKeyPointsList,
         frame_object_list: List[FrameObject],
     ) -> None:
@@ -34,12 +34,12 @@ class YoloxVisualizer:
         yolox_img = color_img.copy()
 
         for w_item in wait_item_list:
-            x, y, w, h = w_item._bounding_box.items
+            x, y, w, h = w_item.bbox.items
             cv2.rectangle(result_img, (x, y), (x + w, y + h), (255, 204, 102), thickness=3)
             cv2.putText(result_img, 'WAIT', (x + 2, y + 20), cv2.FONT_HERSHEY_PLAIN, 1.5, (255, 204, 102), thickness=3)
 
         for b_item in bring_in_list:
-            x, y, w, h = b_item._bounding_box.items
+            x, y, w, h = b_item.bbox.items
             cv2.rectangle(result_img, (x, y), (x + w, y + h), (255, 0, 102), thickness=3)
             cv2.putText(result_img, 'BRING', (x + 2, y + 20), cv2.FONT_HERSHEY_PLAIN, 1.5, (255, 0, 102), thickness=3)
 
@@ -60,7 +60,7 @@ class YoloxVisualizer:
                     cv2.line(result_img, (int(pA.x), int(pA.y)), (int(pB.x), int(pB.y)), (0, 255, 255), 3)
                     segment = [pA.x, pA.y, pB.x, pB.y]
                     for b_item in bring_in_list:
-                        bx, by, bw, bh = b_item._bounding_box.items
+                        bx, by, bw, bh = b_item.bbox.items
                         if YoloxVisualizer._intersects([bx, by, bw, bh], segment):
                             cv2.putText(result_img, 'OVERLAP', (bx, bh + by),
                                         cv2.FONT_HERSHEY_PLAIN, 1.5, (255, 75, 0), thickness=3)

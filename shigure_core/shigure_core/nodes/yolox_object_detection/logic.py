@@ -11,8 +11,8 @@ from shigure_core.nodes.yolox_object_detection.color_image_frames import ColorIm
 from shigure_core.nodes.yolox_object_detection.frame_object import FrameObject
 from shigure_core.nodes.yolox_object_detection.frame_object_item import FrameObjectItem
 from shigure_core.nodes.yolox_object_detection.judge_params import JudgeParams
-from shigure_core.nodes.yolox_object_detection.bbox_object import BboxObject
 from shigure_core.nodes.yolox_object_detection.detection import Detection
+from shigure_core.nodes.yolox_object_detection.tracked_object import TrackedObject, TrackedState
 
 
 class YoloxObjectDetectionLogic:
@@ -20,8 +20,7 @@ class YoloxObjectDetectionLogic:
 
     def __init__(self):
         self._frame_object_list: List[FrameObject] = []
-        self._bring_in_list: List[BboxObject] = []
-        self._wait_item_list: List[BboxObject] = []
+        self._tracked_objects: List[TrackedObject] = []
         self._take_out_people_id: str = ""
         self._take_out_obj_class_id: str = ""
         self._buffer_size: int = 25
@@ -47,12 +46,12 @@ class YoloxObjectDetectionLogic:
         return items
 
     @property
-    def bring_in_list(self) -> List[BboxObject]:
-        return self._bring_in_list
+    def bring_in_list(self) -> List[TrackedObject]:
+        return [t for t in self._tracked_objects if t.state == TrackedState.CONFIRMED]
 
     @property
-    def wait_item_list(self) -> List[BboxObject]:
-        return self._wait_item_list
+    def wait_item_list(self) -> List[TrackedObject]:
+        return [t for t in self._tracked_objects if t.state == TrackedState.WAITING]
 
     def execute(self, yolox_bbox: BoundingBoxes, sec: int, nanosec: int, people: PoseKeyPointsList, color_img: np.ndarray, judge_params: JudgeParams) -> None:
         started_at = Timestamp(sec, nanosec)
@@ -64,130 +63,120 @@ class YoloxObjectDetectionLogic:
         frame = ColorImageFrame(started_at, self._color_img_buffer[0], color_img)
         self._color_img_frames.add(frame)
 
-        FHIST_SIZE = 10
         detections = self._parse_detections(yolox_bbox, color_img, started_at)
-        bbox_item_list = [
-            BboxObject(d.bbox, d.bbox.width * d.bbox.height, d.mask, d.found_at, d.class_id)
-            for d in detections
-        ]
 
-        frame_object_item_list = self._update_confirmed(bbox_item_list, people, FHIST_SIZE)
-        frame_object_item_list += self._update_waiting(bbox_item_list, people, FHIST_SIZE)
-        self._register_new(bbox_item_list)
+        matched: set = set()
+        frame_object_item_list = self._update_confirmed(detections, matched, people)
+        frame_object_item_list += self._update_waiting(detections, matched, people)
+        self._register_new(detections, matched)
 
         self._frame_object_list = [
             FrameObject(item, judge_params.allow_empty_frame_count)
             for item in frame_object_item_list
         ]
 
-    def _update_confirmed(self, bbox_item_list: List[BboxObject], people: PoseKeyPointsList, fhist_size: int) -> List[FrameObjectItem]:
-        """bring_in_list の各アイテムを現フレームと照合し TAKE_OUT を判定する"""
+    def _update_confirmed(self, detections: List[Detection], matched: set, people: PoseKeyPointsList) -> List[FrameObjectItem]:
+        """CONFIRMED 物体を現フレームと照合し TAKE_OUT を判定する"""
         frame_object_items: List[FrameObjectItem] = []
-        del_idx_list: List[int] = []
+        to_remove: List[TrackedObject] = []
 
-        for i, bring_in_item in enumerate(self._bring_in_list):
-            matched = False
-            for bbox_item in bbox_item_list:
-                if bring_in_item.is_match(bbox_item):
-                    bring_in_item.fhist.append(True)
-                    bbox_item.is_exist_bring = True
-                    matched = True
-                    print("bring in %s" % bring_in_item._class_id)
+        for obj in [o for o in self._tracked_objects if o.state == TrackedState.CONFIRMED]:
+            found = False
+            for det in detections:
+                if obj.matches(det):
+                    obj.record(True)
+                    matched.add(id(det))
+                    found = True
+                    print("bring in %s" % obj.class_id)
                     break
 
-            if not matched:
-                occluded = YoloxObjectDetectionLogic._is_occluded_by_people(
-                    bring_in_item._bounding_box, people
-                )
-                if len(bbox_item_list) == 0 or not occluded:
-                    bring_in_item.fhist.append(False)
-                    print("not found %s" % bring_in_item._class_id)
+            if not found:
+                occluded = YoloxObjectDetectionLogic._is_occluded_by_people(obj.bbox, people)
+                if len(detections) == 0 or not occluded:
+                    obj.record(False)
+                    print("not found %s" % obj.class_id)
                 else:
-                    print("hide judge %s" % bring_in_item._class_id)
+                    print("hide judge %s" % obj.class_id)
 
-            print("len(%s.fhist) : %s" % (bring_in_item._class_id, len(bring_in_item.fhist)))
-            if len(bring_in_item.fhist) >= fhist_size:
-                found_rate = sum(bring_in_item.fhist) / len(bring_in_item.fhist)
-                if found_rate < 0.5:
-                    print("take out found rate:", found_rate)
+            print("len(%s.fhist) : %s" % (obj.class_id, len(obj.fhist)))
+            if obj.is_history_full:
+                if obj.should_take_out():
+                    print("take out found rate:", obj.found_rate)
                     self._take_out_people_id = YoloxObjectDetectionLogic._find_take_out_person_id(
-                        bring_in_item._bounding_box, people
+                        obj.bbox, people
                     )
-                    self._take_out_obj_class_id = bring_in_item._class_id
-                    del_idx_list.append(i)
+                    self._take_out_obj_class_id = obj.class_id
+                    to_remove.append(obj)
                     frame_object_items.append(FrameObjectItem(
                         DetectedObjectActionEnum.TAKE_OUT,
-                        bring_in_item._bounding_box,
-                        bring_in_item._size,
-                        bring_in_item._mask,
-                        bring_in_item._found_at,
-                        bring_in_item._class_id,
+                        obj.bbox,
+                        obj.bbox.width * obj.bbox.height,
+                        obj.mask,
+                        obj.found_at,
+                        obj.class_id,
                     ))
-                bring_in_item.fhist = bring_in_item.fhist[-(fhist_size - 1):]
-                print("%s.fhist: %s" % (bring_in_item._class_id, bring_in_item.fhist))
+                obj.trim_history()
+                print("%s.fhist: %s" % (obj.class_id, obj.fhist))
 
-        if del_idx_list:
-            print("del_idx_list: %s" % [self._bring_in_list[i]._class_id for i in del_idx_list])
-            for di in reversed(del_idx_list):
-                del self._bring_in_list[di]
+        if to_remove:
+            print("del: %s" % [o.class_id for o in to_remove])
+            for obj in to_remove:
+                self._tracked_objects.remove(obj)
 
         return frame_object_items
 
-    def _update_waiting(self, bbox_item_list: List[BboxObject], people: PoseKeyPointsList, fhist_size: int) -> List[FrameObjectItem]:
-        """wait_item_list の各アイテムを現フレームと照合し BRING_IN / OBJ_MOVE を判定する"""
+    def _update_waiting(self, detections: List[Detection], matched: set, people: PoseKeyPointsList) -> List[FrameObjectItem]:
+        """WAITING 物体を現フレームと照合し BRING_IN / OBJ_MOVE を判定する"""
         frame_object_items: List[FrameObjectItem] = []
-        del_idx_list: List[int] = []
+        to_remove: List[TrackedObject] = []
 
-        for i, wait_item in enumerate(self._wait_item_list):
-            for bbox_item in bbox_item_list:
-                if bbox_item.is_exist_bring:
+        for obj in [o for o in self._tracked_objects if o.state == TrackedState.WAITING]:
+            for det in detections:
+                if id(det) in matched:
                     continue
-                if wait_item.is_match(bbox_item):
-                    wait_item.fhist.append(True)
-                    bbox_item.is_exist_wait = True
+                if obj.matches(det):
+                    obj.record(True)
+                    matched.add(id(det))
                     break
             else:
-                wait_item.fhist.append(False)
+                obj.record(False)
 
-            if len(wait_item.fhist) >= fhist_size:
+            if obj.is_history_full:
                 samepeople_judge = any(
                     p.people_id == self._take_out_people_id
                     for p in people.pose_key_points_list
                 )
-                found_rate = sum(wait_item.fhist) / len(wait_item.fhist)
-                print("wait_item.fist:", wait_item.fhist)
-                if found_rate < 0.5:
-                    del_idx_list.append(i)
-                elif found_rate > 0.6:
-                    print("bring in found rate:", found_rate)
-                    del_idx_list.append(i)
-                    if wait_item._class_id == self._take_out_obj_class_id and samepeople_judge:
+                print("wait_item.fist:", obj.fhist)
+                if obj.should_dismiss():
+                    to_remove.append(obj)
+                elif obj.should_confirm():
+                    print("bring in found rate:", obj.found_rate)
+                    if obj.class_id == self._take_out_obj_class_id and samepeople_judge:
                         action = DetectedObjectActionEnum.OBJ_MOVE
                     else:
                         action = DetectedObjectActionEnum.BRING_IN
                     frame_object_items.append(FrameObjectItem(
                         action,
-                        wait_item._bounding_box,
-                        wait_item._size,
-                        wait_item._mask,
-                        wait_item._found_at,
-                        wait_item._class_id,
+                        obj.bbox,
+                        obj.bbox.width * obj.bbox.height,
+                        obj.mask,
+                        obj.found_at,
+                        obj.class_id,
                     ))
-                    self._bring_in_list.append(wait_item)
-                wait_item.fhist = wait_item.fhist[-(fhist_size - 1):]
+                    obj.state = TrackedState.CONFIRMED
+                obj.trim_history()
 
-        print("del_idx_list:", len(del_idx_list))
-        if del_idx_list:
-            for di in reversed(del_idx_list):
-                del self._wait_item_list[di]
+        print("del_idx_list:", len(to_remove))
+        for obj in to_remove:
+            self._tracked_objects.remove(obj)
 
         return frame_object_items
 
-    def _register_new(self, bbox_item_list: List[BboxObject]) -> None:
+    def _register_new(self, detections: List[Detection], matched: set) -> None:
         """どの追跡物体にも一致しなかった検出を WAITING として新規登録する"""
-        for bbox_item in bbox_item_list:
-            if not (bbox_item.is_exist_bring or bbox_item.is_exist_wait):
-                self._wait_item_list.append(bbox_item)
+        for det in detections:
+            if id(det) not in matched:
+                self._tracked_objects.append(TrackedObject(det))
 
     @staticmethod
     def _is_occluded_by_people(bbox: BoundingBox, people: PoseKeyPointsList) -> bool:
