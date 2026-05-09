@@ -1,10 +1,13 @@
 import random
 import re
+from typing import List
 
 import cv2
 import message_filters
 import numpy as np
 import rclpy
+from rcl_interfaces.msg import ParameterDescriptor, ParameterType, SetParametersResult
+from rcl_interfaces.msg import Parameter
 from rclpy.qos import QoSProfile, ReliabilityPolicy
 from openpose_ros2_msgs.msg import PoseKeyPointsList as OpenPosePoseKeyPointsList
 from sensor_msgs.msg import CompressedImage, CameraInfo
@@ -64,12 +67,48 @@ class PeopleTrackingNode(ImagePreviewNode):
                 [depth_subscriber, key_points_subscriber, depth_camera_info_subscriber, color_subscriber], 400000)
             self.time_synchronizer.registerCallback(self.callback_debug)
 
+        # ros params
+        self.declare_parameter('threshold_distance', 1000,
+                               ParameterDescriptor(type=ParameterType.PARAMETER_INTEGER,
+                                                   description='同一人物と判定する最大移動距離(mm)。'))
+        self.declare_parameter('threshold_person', 0.3,
+                               ParameterDescriptor(type=ParameterType.PARAMETER_DOUBLE,
+                                                   description='人物として認めるOpenPose平均信頼度のしきい値。'))
+        self.declare_parameter('neck_index', 1,
+                               ParameterDescriptor(type=ParameterType.PARAMETER_INTEGER,
+                                                   description='追跡基準点とする関節番号（OpenPoseインデックス）。'))
+
+        self.threshold_distance: int = self.get_parameter('threshold_distance').get_parameter_value().integer_value
+        self.threshold_person: float = self.get_parameter('threshold_person').get_parameter_value().double_value
+        self.neck_index: int = self.get_parameter('neck_index').get_parameter_value().integer_value
+
+        self.add_on_set_parameters_callback(self._on_set_parameters_people_tracking)
+
         self.tracking_info = TrackingInfo()
         self.people_tracking_logic = PeopleTrackingLogic()
 
         self._colors = []
         for i in range(255):
             self._colors.append(tuple([random.randint(128, 192) for _ in range(3)]))
+
+    def _on_set_parameters_people_tracking(self, params: List[Parameter]) -> SetParametersResult:
+        """
+        パラメータ変更時に呼び出されるコールバックです.
+
+        :param params: 変更されたパラメータのリスト
+        :return: パラメータ変更の成否
+        """
+        for param in params:
+            if param.name == 'threshold_distance':
+                self.threshold_distance = param.value
+                self.get_logger().info('ThresholdDistance : ' + str(self.threshold_distance))
+            elif param.name == 'threshold_person':
+                self.threshold_person = param.value
+                self.get_logger().info('ThresholdPerson : ' + str(self.threshold_person))
+            elif param.name == 'neck_index':
+                self.neck_index = param.value
+                self.get_logger().info('NeckIndex : ' + str(self.neck_index))
+        return SetParametersResult(successful=True)
 
     def callback(self, depth_src: CompressedImage, key_points_list: OpenPosePoseKeyPointsList, camera_info: CameraInfo):
         self.frame_count_up()
@@ -83,7 +122,10 @@ class PeopleTrackingNode(ImagePreviewNode):
         #     [ 0  0  1]
         k = camera_info.k.reshape((3, 3))
 
-        self.tracking_info = self.people_tracking_logic.execute(depth_img, key_points_list, self.tracking_info, k)
+        self.tracking_info = self.people_tracking_logic.execute(
+            depth_img, key_points_list, self.tracking_info, k,
+            self.threshold_distance, self.threshold_person, self.neck_index
+        )
 
         # publish
         publish_msg = ShigurePoseKeyPointsList()
@@ -114,10 +156,10 @@ class PeopleTrackingNode(ImagePreviewNode):
             people_id = pose_key_points.people_id
             _, _, _, current_pose_key_points = self.tracking_info.get_people_dict()[people_id]
 
-            neck_point = current_pose_key_points.pose_key_points[1]
+            ref_point = current_pose_key_points.pose_key_points[self.neck_index]
 
-            x = int(neck_point.x) if neck_point.x < width else width - 1
-            y = int(neck_point.y) if neck_point.y < height else height - 1
+            x = int(ref_point.x) if ref_point.x < width else width - 1
+            y = int(ref_point.y) if ref_point.y < height else height - 1
 
             bounding_box = pose_key_points.bounding_box
             left = int(bounding_box.x) if bounding_box.x < width else width - 1

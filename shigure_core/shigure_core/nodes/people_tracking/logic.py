@@ -5,15 +5,13 @@ from openpose_ros2_msgs.msg import PoseKeyPointsList, PoseKeyPoints, PoseKeyPoin
 
 from shigure_core.nodes.people_tracking.tracking_info import TrackingInfo
 
-_NECK_INDEX = 1
-
-
 class PeopleTrackingLogic:
     """人物追跡ロジック."""
 
     @staticmethod
     def execute(depth_img: np.ndarray, key_points_list: PoseKeyPointsList, tracking_info: TrackingInfo,
-                k: np.ndarray, threshold_distance: int = 1000, threshold_person: float = 0.3) -> TrackingInfo:
+                k: np.ndarray, threshold_distance: int = 1000, threshold_person: float = 0.3,
+                neck_index: int = 1) -> TrackingInfo:
         height, width = depth_img.shape[:2]
 
         current_people_list = []
@@ -25,9 +23,8 @@ class PeopleTrackingLogic:
             # 検出率が閾値より小さければtrackingをスキップ
             if average_score < threshold_person:
                 continue
-        
-            # とりあえずNeckの座標で計算
-            neck_point: PoseKeyPoint = key_points.pose_key_points[_NECK_INDEX]
+
+            neck_point: PoseKeyPoint = key_points.pose_key_points[neck_index]
 
             if neck_point.x == 0 and neck_point.y == 0:
                 continue
