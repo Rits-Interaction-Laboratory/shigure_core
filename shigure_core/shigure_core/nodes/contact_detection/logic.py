@@ -12,12 +12,11 @@ import pandas as pd
 class ContactDetectionLogic:
     """接触推定ロジック."""
 
-    LEFT_HAND_INDEX = 4
-    RIGHT_HAND_INDEX = 7
-
-    @classmethod
-    def execute(cls, object_list: TrackedObjectList, people: PoseKeyPointsList,
-                hand_collider_distance: int = 300) -> Tuple[
+    @staticmethod
+    def execute(object_list: TrackedObjectList, people: PoseKeyPointsList,
+                hand_collider_distance: int = 300,
+                left_hand_index: int = 4,
+                right_hand_index: int = 7) -> Tuple[
             List[Tuple[Tuple[PoseKeyPoints, Cube, int], Tuple[TrackedObject, Cube]]], bool]:
 
         is_not_touch = False
@@ -25,19 +24,19 @@ class ContactDetectionLogic:
         hand_cube_list = []
         person: PoseKeyPoints
         for person in people.pose_key_points_list:
-            left_hand: PointData = person.point_data[cls.LEFT_HAND_INDEX]
+            left_hand: PointData = person.point_data[left_hand_index]
             if int(left_hand.pixel_point.x) != 0 and int(left_hand.pixel_point.y) != 0:
                 hand_cube_list.append(
                     (person,
                      ContactDetectionLogic.convert_point_to_cube(left_hand.projection_point, hand_collider_distance),
-                     cls.LEFT_HAND_INDEX)
+                     left_hand_index)
                 )
-            right_hand: PointData = person.point_data[cls.RIGHT_HAND_INDEX]
+            right_hand: PointData = person.point_data[right_hand_index]
             if int(right_hand.pixel_point.x) != 0 and int(right_hand.pixel_point.y) != 0:
                 hand_cube_list.append(
                     (person,
                      ContactDetectionLogic.convert_point_to_cube(right_hand.projection_point, hand_collider_distance),
-                     cls.RIGHT_HAND_INDEX)
+                     right_hand_index)
                 )
 
         object_cube_list = []

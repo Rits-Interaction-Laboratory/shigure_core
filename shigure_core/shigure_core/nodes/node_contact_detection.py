@@ -7,6 +7,8 @@ import cv2
 import message_filters
 import numpy as np
 import rclpy
+from rcl_interfaces.msg import ParameterDescriptor, ParameterType, SetParametersResult
+from rcl_interfaces.msg import Parameter
 from rclpy.qos import QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import CompressedImage, CameraInfo
 from shigure_core_msgs.msg import PoseKeyPointsList, TrackedObjectList, ContactedList, Contacted
@@ -16,7 +18,6 @@ from shigure_core.enum.tracked_object_action_enum import TrackedObjectActionEnum
 from shigure_core.nodes.contact_detection.id_manager import IdManager
 from shigure_core.nodes.contact_detection.logic import ContactDetectionLogic
 from shigure_core.nodes.node_image_preview import ImagePreviewNode
-from shigure_core.nodes.object_detection.frame_object import FrameObject
 
 
 class ContactDetectionNode(ImagePreviewNode):
@@ -28,8 +29,26 @@ class ContactDetectionNode(ImagePreviewNode):
         # QoS Settings
         shigure_qos = QoSProfile(depth=10, reliability=ReliabilityPolicy.BEST_EFFORT)
 
-        self.LEFT_HAND_INDEX = 4
-        self.RIGHT_HAND_INDEX = 7
+        # ros params
+        self.declare_parameter('hand_collider_distance', 300,
+                               ParameterDescriptor(type=ParameterType.PARAMETER_INTEGER,
+                                                   description='手と物体の接触判定に使う距離しきい値(mm)。'))
+        self.declare_parameter('left_hand_index', 4,
+                               ParameterDescriptor(type=ParameterType.PARAMETER_INTEGER,
+                                                   description='左手の判定に使う関節番号（OpenPoseインデックス）。'))
+        self.declare_parameter('right_hand_index', 7,
+                               ParameterDescriptor(type=ParameterType.PARAMETER_INTEGER,
+                                                   description='右手の判定に使う関節番号（OpenPoseインデックス）。'))
+        self.declare_parameter('expansion_param', 20,
+                               ParameterDescriptor(type=ParameterType.PARAMETER_INTEGER,
+                                                   description='デバッグ画像の物体領域拡大マージン(px)。'))
+
+        self.hand_collider_distance: int = self.get_parameter('hand_collider_distance').get_parameter_value().integer_value
+        self.LEFT_HAND_INDEX: int = self.get_parameter('left_hand_index').get_parameter_value().integer_value
+        self.RIGHT_HAND_INDEX: int = self.get_parameter('right_hand_index').get_parameter_value().integer_value
+        self.expansion_param: int = self.get_parameter('expansion_param').get_parameter_value().integer_value
+
+        self.add_on_set_parameters_callback(self._on_set_parameters_contact)
 
         # publisher, subscriber
         self._publisher = self.create_publisher(
@@ -68,22 +87,39 @@ class ContactDetectionNode(ImagePreviewNode):
 
         self.contact_detection_logic = ContactDetectionLogic()
 
-        self.frame_object_list: List[FrameObject] = []
-        self._color_img_buffer: List[np.ndarray] = []
-        self._buffer_size = 90
-
-        self.hand_collider_distance = 300  # 手の当たり判定の距離
-
         self.is_not_touch = False
-        self.action_index = 0
         self._id_manager = IdManager()
+
+    def _on_set_parameters_contact(self, params: List[Parameter]) -> SetParametersResult:
+        """
+        パラメータ変更時に呼び出されるコールバックです.
+
+        :param params: 変更されたパラメータのリスト
+        :return: パラメータ変更の成否
+        """
+        for param in params:
+            if param.name == 'hand_collider_distance':
+                self.hand_collider_distance = param.value
+                self.get_logger().info('HandColliderDistance : ' + str(self.hand_collider_distance))
+            elif param.name == 'left_hand_index':
+                self.LEFT_HAND_INDEX = param.value
+                self.get_logger().info('LeftHandIndex : ' + str(self.LEFT_HAND_INDEX))
+            elif param.name == 'right_hand_index':
+                self.RIGHT_HAND_INDEX = param.value
+                self.get_logger().info('RightHandIndex : ' + str(self.RIGHT_HAND_INDEX))
+            elif param.name == 'expansion_param':
+                self.expansion_param = param.value
+                self.get_logger().info('ExpansionParam : ' + str(self.expansion_param))
+        return SetParametersResult(successful=True)
 
     def callback(self, object_list: TrackedObjectList, people: PoseKeyPointsList, color_img_src: CompressedImage, camera_info: CameraInfo):
         self.frame_count_up()
 
         color_img: np.ndarray = self.bridge.compressed_imgmsg_to_cv2(color_img_src)
 
-        result_list, self.is_not_touch = self.contact_detection_logic.execute(object_list, people)
+        result_list, self.is_not_touch = self.contact_detection_logic.execute(
+            object_list, people, self.hand_collider_distance, self.LEFT_HAND_INDEX, self.RIGHT_HAND_INDEX
+        )
 
         publish_msg = ContactedList()
         publish_msg.header.stamp = color_img_src.header.stamp
@@ -189,11 +225,10 @@ class ContactDetectionNode(ImagePreviewNode):
                     # 右側ウインドウへの検知物体の拡大表示
                     # 物体画像は, 上下左右にexpansion_paramだけ大きく切り取る
                     object_image = []
-                    expansion_param = 20
-                    left_expansion = left - expansion_param
-                    top_expansion = top - expansion_param
-                    right_expansion = right + expansion_param
-                    bottom_expansion = bottom + expansion_param
+                    left_expansion = left - self.expansion_param
+                    top_expansion = top - self.expansion_param
+                    right_expansion = right + self.expansion_param
+                    bottom_expansion = bottom + self.expansion_param
                     if (0 <= left_expansion) and (right_expansion <= width) and (0 <= top_expansion) and (bottom_expansion <= height):
                         object_image = event_frame[top_expansion : bottom_expansion, left_expansion : right_expansion]
                     else:
@@ -237,7 +272,6 @@ class ContactDetectionNode(ImagePreviewNode):
                 if len(self.event_frame_list) > 4:
                     del self.event_frame_list[-1]
 
-               # self.action_index = (self.action_index + 1) % 4
             tile_img = cv2.hconcat([
                 color_img,
                 cv2.vconcat([
