@@ -4,6 +4,8 @@ RUN apt-get update && apt-get install -y \
     python3-pip \
     python3-colcon-common-extensions \
     xterm \
+    ros-humble-rviz2 \
+    tmux \
     && rm -rf /var/lib/apt/lists/*
 
 RUN pip3 install "numpy<2" mysql-connector-python pandas
