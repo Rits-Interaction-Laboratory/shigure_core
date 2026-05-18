@@ -77,6 +77,11 @@ DISPLAY=:1        # echo $DISPLAY で確認した値
 ROS_DOMAIN_ID=10   # 他システムと干渉しないよう任意の値に
 ```
 
+DockerコンテナからホストへのDisplay出力を許可
+```
+xhost +local:docker
+```
+
 起動 (初回)
 ```sh
 docker compose up --build
@@ -122,3 +127,19 @@ DBへの接続 <br>
 ```sh
 mysql -h 127.0.0.1 -P 3306 -u shigure -p
 ```
+
+### 7.Rvizの起動方法
+- Rvizのインストール (Dockerの場合はDockerfileに記載しているため不要)
+```
+sudo apt install ros-humble-rviz2
+```
+
+- コンテナのbashを起動し，rvizを起動
+```
+docker compose exec shigure_core bash
+ros2 run rviz2 rviz2
+```
+
+- RvizのGUIでFixed Frameをmarkerに指定 (=基準点の設定？)
+
+- addからTFを追加すると，グリッド線の画面に座標系の表示が現れる
