@@ -13,7 +13,7 @@ from rcl_interfaces.msg import ParameterDescriptor, ParameterType
 from rclpy.qos import QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import Image, CompressedImage, CameraInfo
 from shigure_core_msgs.msg import DetectedObjectList, DetectedObject, BoundingBox,PoseKeyPointsList
-from bboxes_ex_msgs.msg import BoundingBoxes
+from bboxes_ex_msgs.msg import BoundingBoxes, Segments
 
 
 
@@ -42,32 +42,38 @@ class YoloxObjectDetectionNode(ImagePreviewNode):
 			10
 		)
 		yolox_bbox_subscriber = message_filters.Subscriber(
-			self, 
+			self,
 			BoundingBoxes,
 			'/bounding_boxes',
 			qos_profile = shigure_qos
 		)
 		people_subscriber = message_filters.Subscriber(
-			self, 
-			 PoseKeyPointsList, 
-			'/shigure/people_detection', 
+			self,
+			 PoseKeyPointsList,
+			'/shigure/people_detection',
+			qos_profile=shigure_qos
+		)
+		segments_subscriber = message_filters.Subscriber(
+			self,
+			Segments,
+			'/Segments',
 			qos_profile=shigure_qos
 		)
 		color_subscriber = message_filters.Subscriber(
-			self, 
+			self,
 			CompressedImage,
-			'/rs/color/compressed', 
+			'/rs/color/compressed',
 			qos_profile = shigure_qos
 		)
 		depth_camera_info_subscriber = message_filters.Subscriber(
-			self, 
+			self,
 			CameraInfo,
-			'/rs/aligned_depth_to_color/cameraInfo', 
+			'/rs/aligned_depth_to_color/cameraInfo',
 			qos_profile=shigure_qos
 		)
-		
+
 		self.time_synchronizer = message_filters.TimeSynchronizer(
-			[yolox_bbox_subscriber,people_subscriber, color_subscriber, depth_camera_info_subscriber], 1000)
+			[yolox_bbox_subscriber, people_subscriber, segments_subscriber, color_subscriber, depth_camera_info_subscriber], 1000)
 		self.time_synchronizer.registerCallback(self.callback)
 		
 		self.yolox_object_detection_logic = YoloxObjectDetectionLogic()
@@ -89,13 +95,23 @@ class YoloxObjectDetectionNode(ImagePreviewNode):
 		self._colors = []
 		for i in range(255):
 			self._colors.append(tuple([random.randint(128, 192) for _ in range(3)]))
-		
-		
+
+		self._class_color_cache: dict = {}
+
 		self.object_index = 0
 		
-	def callback(self, yolox_bbox_src: BoundingBoxes,people: PoseKeyPointsList, color_img_src: CompressedImage, camera_info: CameraInfo):
+	def callback(self, yolox_bbox_src: BoundingBoxes, people: PoseKeyPointsList, segments_src: Segments, color_img_src: CompressedImage, camera_info: CameraInfo):
 		self.get_logger().info('Buffering start', once=True)
 		self.frame_count_up()
+
+		# 毎フレーム診断: bbox側とsegments側のクラス内訳
+		bbox_classes = [b.class_id for b in yolox_bbox_src.bounding_boxes]
+		seg_classes = [s.class_id for s in segments_src.segments]
+		self.get_logger().info(
+			f'[diag] bbox_classes={bbox_classes} seg_classes={seg_classes} '
+			f'frame_objs={len(self.frame_object_list)}'
+		)
+
 		color_img: np.ndarray = self.bridge.compressed_imgmsg_to_cv2(color_img_src)
 		height, width = color_img.shape[:2]
 		if not hasattr(self, 'object_list'):
@@ -154,8 +170,8 @@ class YoloxObjectDetectionNode(ImagePreviewNode):
 		# 	if not all([frame_object.is_finished() for frame_object in frame_object_list]):
 		# 		self.get_logger().warning('検知が終了していないオブジェクトを含んでいます')
 
-		if self.frame_object_list:		
-			detected_object_list = self.create_msg(self.frame_object_list, detected_object_list, frame)
+		if self.frame_object_list:
+			detected_object_list = self.create_msg(self.frame_object_list, detected_object_list, frame, segments_src, color_img.shape[:2])
 		
 		self.detection_publisher.publish(detected_object_list)
 
@@ -164,7 +180,24 @@ class YoloxObjectDetectionNode(ImagePreviewNode):
 
 			result_img = color_img.copy()
 			yolox_img = color_img.copy()
-			
+
+			# セグメンテーション結果を YOLO 検出側 (yolox_img) に重ねる
+			seg_overlay = yolox_img.copy()
+			for seg in segments_src.segments:
+				if len(seg.x_masks) == 0 or len(seg.x_masks) != len(seg.y_masks):
+					continue
+				# x_masks/y_masks は (row, col)=(y, x) 順で格納されているため入れ替え
+				pts = np.stack([np.asarray(seg.y_masks, dtype=np.int32),
+								np.asarray(seg.x_masks, dtype=np.int32)], axis=1).reshape(-1, 1, 2)
+				color = self._color_for_class(seg.class_id)
+				cv2.fillPoly(seg_overlay, [pts], color)
+				cv2.polylines(yolox_img, [pts], isClosed=True, color=color, thickness=2)
+				label = f"{seg.class_id} {seg.probability:.2f}"
+				label_y = max(int(seg.ymin) - 4, 12)
+				cv2.putText(yolox_img, label, (int(seg.xmin), label_y),
+							cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2, cv2.LINE_AA)
+			yolox_img = cv2.addWeighted(seg_overlay, 0.4, yolox_img, 0.6, 0)
+
 			#for s_item in start_item_list:
 				#bounding_box_src = s_item._bounding_box
 				#x, y, width, height = bounding_box_src.items
@@ -280,14 +313,78 @@ class YoloxObjectDetectionNode(ImagePreviewNode):
 			
 			
 				
-	def  create_msg(self, frame_object_list: List[FrameObject], detected_object_list: DetectedObjectList, frame: ColorImageFrame) -> DetectedObjectList:
+	def _color_for_class(self, class_id: str) -> tuple:
+		if class_id not in self._class_color_cache:
+			rng = np.random.default_rng(abs(hash(class_id)) % (2**32))
+			self._class_color_cache[class_id] = tuple(int(v) for v in rng.integers(64, 256, size=3))
+		return self._class_color_cache[class_id]
+
+	@staticmethod
+	def _rasterize_segment_to_bbox_mask(seg, img_h: int, img_w: int, x: int, y: int, width: int, height: int) -> np.ndarray:
+		# x_masks/y_masks は (row, col)=(y, x) 順で格納されているため入れ替えてポリゴン化する
+		pts = np.stack([np.asarray(seg.y_masks, dtype=np.int32),
+						np.asarray(seg.x_masks, dtype=np.int32)], axis=1)
+		full_mask = np.zeros((img_h, img_w), dtype=np.uint8)
+		cv2.fillPoly(full_mask, [pts], 255)
+		x1 = max(0, min(int(x), img_w - 1))
+		y1 = max(0, min(int(y), img_h - 1))
+		x2 = max(x1 + 1, min(int(x + width), img_w))
+		y2 = max(y1 + 1, min(int(y + height), img_h))
+		return full_mask[y1:y2, x1:x2]
+
+	@staticmethod
+	def _bbox_iou(a, b) -> float:
+		ax1, ay1, ax2, ay2 = a
+		bx1, by1, bx2, by2 = b
+		ix1 = max(ax1, bx1); iy1 = max(ay1, by1)
+		ix2 = min(ax2, bx2); iy2 = min(ay2, by2)
+		iw = max(0, ix2 - ix1); ih = max(0, iy2 - iy1)
+		inter = iw * ih
+		if inter == 0:
+			return 0.0
+		area_a = max(0, ax2 - ax1) * max(0, ay2 - ay1)
+		area_b = max(0, bx2 - bx1) * max(0, by2 - by1)
+		union = area_a + area_b - inter
+		return float(inter) / float(union) if union > 0 else 0.0
+
+	def _find_matching_segment(self, class_id: str, x: int, y: int, width: int, height: int, segments_src: Segments):
+		best_seg = None
+		best_iou = 0.0
+		bbox_a = (x, y, x + width, y + height)
+		for seg in segments_src.segments:
+			if seg.class_id != class_id:
+				continue
+			if len(seg.x_masks) == 0 or len(seg.x_masks) != len(seg.y_masks):
+				continue
+			iou = self._bbox_iou(bbox_a, (int(seg.xmin), int(seg.ymin), int(seg.xmax), int(seg.ymax)))
+			if iou > best_iou:
+				best_iou = iou
+				best_seg = seg
+		return best_seg if best_iou > 0.3 else None
+
+	def create_msg(self, frame_object_list: List[FrameObject], detected_object_list: DetectedObjectList, frame: ColorImageFrame, segments_src: Segments, img_shape) -> DetectedObjectList:
+		img_h, img_w = img_shape
 		for frame_object in frame_object_list:
 			action, bounding_box_src, size, mask_img, time, class_id= frame_object.item.items
 			x, y, width, height = bounding_box_src.items
-			
+
+			seg = self._find_matching_segment(class_id, x, y, width, height, segments_src)
+			if seg is not None:
+				bbox_mask = self._rasterize_segment_to_bbox_mask(seg, img_h, img_w, x, y, width, height)
+				self.get_logger().info(
+					f'[match] class={class_id} bbox=({x},{y},{width}x{height}) '
+					f'seg_classes={[s.class_id for s in segments_src.segments]}'
+				)
+			else:
+				bbox_mask = np.full((max(1, int(height)), max(1, int(width))), 255, dtype=np.uint8)
+				self.get_logger().warning(
+					f'[NO match] class={class_id} bbox=({x},{y},{width}x{height}) '
+					f'seg_classes={[s.class_id for s in segments_src.segments]}'
+				)
+
 			detected_object = DetectedObject()
 			detected_object.action = action.value
-			detected_object.mask = self.bridge.cv2_to_compressed_imgmsg(mask_img, 'png')
+			detected_object.mask = self.bridge.cv2_to_compressed_imgmsg(bbox_mask, 'png')
 			#print(detected_object.action)
 			bounding_box = BoundingBox()
 			bounding_box.x = float(x)
