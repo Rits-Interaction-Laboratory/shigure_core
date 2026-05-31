@@ -206,24 +206,26 @@ class ObjectTrackingNode(ImagePreviewNode):
                 valid = (eroded_mask > 0) & (depth_roi > 0)
                 if valid.any():
                     vals = depth_roi[valid]
-                    depth_min = float(vals.min())
-                    depth_max = float(vals.max())
                     p5, p50, p95 = np.percentile(vals, [5, 50, 95])
-                    depth_stats_log = f' p5={p5:.0f} median={p50:.0f} p95={p95:.0f}'
+                    depth_min = float(p5)
+                    depth_max = float(p95)
+                    depth_stats_log = f' p5={p5:.0f} median={p50:.0f} p95={p95:.0f} raw_min={vals.min():.0f} raw_max={vals.max():.0f}'
                     path_taken = f'eroded({valid.sum()}px)'
                 else:
                     valid_fallback = (seg_mask > 0) & (depth_roi > 0)
                     if valid_fallback.any():
-                        depth_min = float(depth_roi[valid_fallback].min())
-                        depth_max = float(depth_roi[valid_fallback].max())
+                        vals_fb = depth_roi[valid_fallback]
+                        depth_min = float(np.percentile(vals_fb, 5))
+                        depth_max = float(np.percentile(vals_fb, 95))
                         path_taken = f'mask_only({valid_fallback.sum()}px)'
 
             if depth_min is None or depth_max is None:
                 masked_depth_img = np.ma.masked_equal(depth_roi, 0.0, copy=False)
                 if masked_depth_img.count() == 0:
                     continue
-                depth_min = float(masked_depth_img.min())
-                depth_max = float(masked_depth_img.max())
+                vals_bb = masked_depth_img.compressed()
+                depth_min = float(np.percentile(vals_bb, 5))
+                depth_max = float(np.percentile(vals_bb, 95))
                 path_taken = f'bbox_fallback({masked_depth_img.count()}px)'
 
             self.get_logger().info(

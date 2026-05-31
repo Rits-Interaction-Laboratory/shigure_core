@@ -104,6 +104,60 @@ class RaycastHitDetectionNode(ImagePreviewNode):
         self.pos = PointStamped()
         #----------------------------------------------------------------------------------------------------
     
+    def _transform_cube_to_hololens_aabb(self, collider, trans):
+        """camera 座標系で AABB として定義された Cube(単位: mm)を、
+        hololens_origin 座標系における AABB(単位: m)に変換する。
+
+        手法: 8頂点を全て do_transform_point で変換し、変換後の点群から
+        hololens 軸並行の min/max を取って AABB を再構成する。
+        camera 軸 と hololens 軸 が非平行な場合、本来の OBB を覆う最小 AABB
+        になる(=寸法が若干大きめに出る)が、向きズレ・上下逆転・回転ズレは
+        この方法で全て解消する。
+
+        Returns: (x, y, z, width, height, depth) tuple in meters.
+        """
+        # mm→m に変換しつつ 8 隅を列挙
+        x0 = collider.x / 1000.0
+        y0 = collider.y / 1000.0
+        z0 = collider.z / 1000.0
+        w = collider.width / 1000.0
+        h = collider.height / 1000.0
+        d = collider.depth / 1000.0
+
+        corners_camera = (
+            (x0,     y0,     z0    ),
+            (x0 + w, y0,     z0    ),
+            (x0,     y0 + h, z0    ),
+            (x0 + w, y0 + h, z0    ),
+            (x0,     y0,     z0 + d),
+            (x0 + w, y0,     z0 + d),
+            (x0,     y0 + h, z0 + d),
+            (x0 + w, y0 + h, z0 + d),
+        )
+
+        pt = PointStamped()
+        xs, ys, zs = [], [], []
+        for cx, cy, cz in corners_camera:
+            pt.point.x = cx
+            pt.point.y = cy
+            pt.point.z = cz
+            transformed = tf2_geometry_msgs.do_transform_point(pt, trans)
+            xs.append(transformed.point.x)
+            ys.append(transformed.point.y)
+            zs.append(transformed.point.z)
+
+        aabb_x = min(xs)
+        aabb_y = min(ys)
+        aabb_z = min(zs)
+        return (
+            aabb_x,
+            aabb_y,
+            aabb_z,
+            max(xs) - aabb_x,
+            max(ys) - aabb_y,
+            max(zs) - aabb_z,
+        )
+
     def callback(self, object_list: TrackedObjectList, hit_point: PointStamped, color_img_src: CompressedImage, camera_info: CameraInfo):
         self.get_logger().info('Messages synchronized')
         self.get_logger().info('Received position: x=%f, y=%f, z=%f' % (hit_point.point.x, hit_point.point.y, hit_point.point.z))
@@ -120,17 +174,13 @@ class RaycastHitDetectionNode(ImagePreviewNode):
                 
                 #----------------------------------------------------------------------------------------------------
                 trans = self._tf_buffer.lookup_transform(self.to_frame_name, self.from_frame_name, rclpy.time.Time())
-                self.pos.point.x = tracked_object.collider.x / 1000
-                self.pos.point.y = tracked_object.collider.y / 1000
-                self.pos.point.z = tracked_object.collider.z / 1000
-
-                transformed_point = tf2_geometry_msgs.do_transform_point(self.pos, trans)
-                tracked_object.collider.x = transformed_point.point.x
-                tracked_object.collider.y = transformed_point.point.y
-                tracked_object.collider.z = transformed_point.point.z 
-                tracked_object.collider.width = tracked_object.collider.width / 1000
-                tracked_object.collider.height = tracked_object.collider.height / 1000
-                tracked_object.collider.depth = tracked_object.collider.depth / 4000
+                ax, ay, az, aw, ah, ad = self._transform_cube_to_hololens_aabb(tracked_object.collider, trans)
+                tracked_object.collider.x = ax
+                tracked_object.collider.y = ay
+                tracked_object.collider.z = az
+                tracked_object.collider.width = aw
+                tracked_object.collider.height = ah
+                tracked_object.collider.depth = ad
                 print({'collider.x': tracked_object.collider.x, 'collider.y': tracked_object.collider.y, 'collider.z': tracked_object.collider.z, 'width': tracked_object.collider.width,
                        'height': tracked_object.collider.height, 'depth': tracked_object.collider.depth})
                 #----------------------------------------------------------------------------------------------------
@@ -161,17 +211,13 @@ class RaycastHitDetectionNode(ImagePreviewNode):
 
         for tracked_object in object_list.tracked_object_list:
             trans = self._tf_buffer.lookup_transform(self.to_frame_name, self.from_frame_name, rclpy.time.Time())
-            self.pos.point.x = tracked_object.collider.x / 1000
-            self.pos.point.y = tracked_object.collider.y / 1000
-            self.pos.point.z = tracked_object.collider.z / 1000
-            transformed_point = tf2_geometry_msgs.do_transform_point(self.pos, trans)
-
-            tracked_object.collider.x = transformed_point.point.x
-            tracked_object.collider.y = transformed_point.point.y
-            tracked_object.collider.z = transformed_point.point.z
-            tracked_object.collider.width = tracked_object.collider.width / 1000
-            tracked_object.collider.height = tracked_object.collider.height / 1000
-            tracked_object.collider.depth = tracked_object.collider.depth / 4000
+            ax, ay, az, aw, ah, ad = self._transform_cube_to_hololens_aabb(tracked_object.collider, trans)
+            tracked_object.collider.x = ax
+            tracked_object.collider.y = ay
+            tracked_object.collider.z = az
+            tracked_object.collider.width = aw
+            tracked_object.collider.height = ah
+            tracked_object.collider.depth = ad
             
             #-------------------------------------------
             debug_msg = Point()

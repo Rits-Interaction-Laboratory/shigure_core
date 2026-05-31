@@ -41,8 +41,10 @@ class YoloxObjectDetectionLogic:
                 bool: 物体と思われるものの規定の物体でないものかどうか
             """
             #DEFAULT_OBJECTS = []
-            DEFAULT_OBJECTS = ['person','dog','cat','chair','laptop','tv','microwave','refrigerator','potted plant','cup','keyboard','couch','mouse','sink','dining table','skateboard',"book","banana","backpack","toy","backpack"]
-            if class_id == 'stuffed toy':
+            DEFAULT_OBJECTS = ['person','dog','cat','chair','laptop','tv','microwave','refrigerator','potted plant','cup','keyboard','couch','mouse','sink','dining table','skateboard','book','banana','backpack']
+            # ぬいぐるみ系は確信度が揺らぎやすいので閾値を下げる
+            # ('stuffed toy' は YOLOX 独自学習版のクラス名、'teddy bear' は YOLO11/COCO 標準名)
+            if class_id in ('teddy bear', 'stuffed toy'):
                 is_object: bool = probability > object_threshold
             else:
                 is_object: bool = probability > 0.30
@@ -233,7 +235,11 @@ class YoloxObjectDetectionLogic:
                                 x = np.clip(int(pixel_point.x), 0, img_width - 1)
                                 y = np.clip(int(pixel_point.y), 0, img_height - 1)
                                 
-                                POSE_PAIRS:List[List[int]] =  [ [1,0],[1,2],[1,5],[2,3],[3,4],[5,6],[6,7],[1,8],[8,9],[8,12],[9,10],[10,11],[11,22],[11,24],[12,13],[13,14],[14,19],[14,21],[15,0],[15,17],[16,0],[16,18],[19,20],[22,11],[22,23]]
+                                # 遮蔽判定は腕の骨格(肩-肘-手首)に限定する。
+                                # 胴体や脚・顔の骨格を含めると、人物が物体の前に立つだけで
+                                # 「物体が手で隠されている」と誤判定して TAKE_OUT が発火しなくなる。
+                                # 手首が未検出でも [2,3]/[5,6] の肩-肘で腕の指向は捉えられる。
+                                POSE_PAIRS:List[List[int]] = [[2,3], [3,4], [5,6], [6,7]]
                                 # Draw Skeleton
                                 for pair in POSE_PAIRS:
                                     partA:int  = pair[0]
@@ -291,7 +297,11 @@ class YoloxObjectDetectionLogic:
                                 x = np.clip(int(pixel_point.x), 0, img_width - 1)
                                 y = np.clip(int(pixel_point.y), 0, img_height - 1)
                                 
-                                POSE_PAIRS:List[List[int]] =  [ [1,0],[1,2],[1,5],[2,3],[3,4],[5,6],[6,7],[1,8],[8,9],[8,12],[9,10],[10,11],[11,22],[11,24],[12,13],[13,14],[14,19],[14,21],[15,0],[15,17],[16,0],[16,18],[19,20],[22,11],[22,23]]
+                                # 遮蔽判定は腕の骨格(肩-肘-手首)に限定する。
+                                # 胴体や脚・顔の骨格を含めると、人物が物体の前に立つだけで
+                                # 「物体が手で隠されている」と誤判定して TAKE_OUT が発火しなくなる。
+                                # 手首が未検出でも [2,3]/[5,6] の肩-肘で腕の指向は捉えられる。
+                                POSE_PAIRS:List[List[int]] = [[2,3], [3,4], [5,6], [6,7]]
                                 # Draw Skeleton
                                 for pair in POSE_PAIRS:
                                     partA:int  = pair[0]
