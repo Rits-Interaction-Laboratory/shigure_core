@@ -2,7 +2,7 @@ from typing import List
 
 import cv2
 import numpy as np
-from bboxes_ex_msgs.msg import BoundingBoxes
+from bboxes_ex_msgs.msg import BoundingBoxes, Segments
 from shigure_core_msgs.msg import PoseKeyPointsList
 
 from shigure_core.enum.detected_object_action_enum import DetectedObjectActionEnum
@@ -24,6 +24,7 @@ class YoloxVisualizer:
     def draw(
         color_img: np.ndarray,
         yolox_bboxes: BoundingBoxes,
+        segments: Segments,
         wait_item_list: List[TrackedObject],
         bring_in_list: List[TrackedObject],
         people: PoseKeyPointsList,
@@ -43,8 +44,24 @@ class YoloxVisualizer:
             cv2.rectangle(result_img, (x, y), (x + w, y + h), (255, 0, 102), thickness=3)
             cv2.putText(result_img, 'BRING', (x + 2, y + 20), cv2.FONT_HERSHEY_PLAIN, 1.5, (255, 0, 102), thickness=3)
 
+        # 左側ウィンドウ: YOLO11 の検出結果(2次元BBOX)を描画する
         for bbox in yolox_bboxes.bounding_boxes:
             cv2.rectangle(yolox_img, (bbox.xmin, bbox.ymin), (bbox.xmax, bbox.ymax), (102, 204, 51), thickness=3)
+
+        # 左側ウィンドウ: YOLO11 のセグメンテーション結果(マスク)を頂点を順々につなげて描画する
+        # x_masks = 物体領域の y 座標の頂点, y_masks = x 座標の頂点 (インデックスでペア)
+        for segment in segments.segments:
+            if len(segment.x_masks) < 2 or len(segment.x_masks) != len(segment.y_masks):
+                continue
+            polygon = np.array(
+                [[px, py] for px, py in zip(segment.y_masks, segment.x_masks)],
+                dtype=np.int32,
+            )
+            cv2.polylines(yolox_img, [polygon], isClosed=True, color=(0, 102, 255), thickness=2)
+            label_x = int(np.clip(segment.xmin, 0, img_width - 1))
+            label_y = int(np.clip(segment.ymin - 5, 0, img_height - 1))
+            cv2.putText(yolox_img, segment.class_id, (label_x, label_y),
+                        cv2.FONT_HERSHEY_PLAIN, 1.5, (0, 102, 255), thickness=2)
 
         for person in people.pose_key_points_list:
             for part in range(len(person.point_data)):

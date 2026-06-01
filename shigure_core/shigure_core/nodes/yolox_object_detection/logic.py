@@ -1,7 +1,8 @@
 from typing import List, Tuple
+import cv2
 import numpy as np
 from shigure_core_msgs.msg import PoseKeyPointsList
-from bboxes_ex_msgs.msg import BoundingBoxes
+from bboxes_ex_msgs.msg import Segments
 
 from shigure_core.enum.detected_object_action_enum import DetectedObjectActionEnum
 from shigure_core.nodes.common_model.timestamp import Timestamp
@@ -52,7 +53,7 @@ class YoloxObjectDetectionLogic:
     def wait_item_list(self) -> List[TrackedObject]:
         return [t for t in self._tracked_objects if t.state == TrackedState.WAITING]
 
-    def execute(self, yolox_bbox: BoundingBoxes, sec: int, nanosec: int, people: PoseKeyPointsList,
+    def execute(self, segments: Segments, sec: int, nanosec: int, people: PoseKeyPointsList,
                 color_img: np.ndarray, fhist_size: int, confirm_threshold: float, dismiss_threshold: float,
                 take_out_threshold: float, match_dist_threshold: int, probability_threshold: float,
                 stuffed_toy_threshold: float) -> None:
@@ -65,7 +66,7 @@ class YoloxObjectDetectionLogic:
         frame = ColorImageFrame(started_at, self._color_img_buffer[0], color_img)
         self._color_img_frames.add(frame)
 
-        detections = self._parse_detections(yolox_bbox, color_img, started_at, probability_threshold,
+        detections = self._parse_detections(segments, color_img, started_at, probability_threshold,
                                            stuffed_toy_threshold)
 
         matched: set = set()
@@ -236,23 +237,41 @@ class YoloxObjectDetectionLogic:
         return ""
     
     @staticmethod
-    def _parse_detections(yolox_bbox: BoundingBoxes, color_img: np.ndarray, started_at: Timestamp,
+    def _parse_detections(segments: Segments, color_img: np.ndarray, started_at: Timestamp,
                          probability_threshold: float, stuffed_toy_threshold: float) -> List[Detection]:
-        """上流ノードからの yolox_bbox を Detection のリストに変換する"""
+        """YOLO11 ノードからの Segments を Detection のリストに変換する.
+
+        Segment.x_masks には物体領域の y 座標の頂点が, Segment.y_masks には
+        x 座標の頂点が格納されており, インデックスでペアになっている.
+        """
         detections = []
-        for bbox in yolox_bbox.bounding_boxes:
-            x = bbox.xmin
-            y = bbox.ymin
-            width = bbox.xmax - x
-            height = bbox.ymax - y
-            class_id = bbox.class_id
-            probability = bbox.probability
-            if YoloxObjectDetectionLogic.is_unknown_object(class_id, probability, probability_threshold,
-                                                           stuffed_toy_threshold):
-                mask_img = np.zeros(color_img.shape[:2])
-                mask_img[y:y + height, x:x + width] = 255
-                mask_img = mask_img[y:y + height, x:x + width]
-                detections.append(Detection(BoundingBox(x, y, width, height), class_id, mask_img, started_at))
+        img_height, img_width = color_img.shape[:2]
+        for segment in segments.segments:
+            x = segment.xmin
+            y = segment.ymin
+            width = segment.xmax - x
+            height = segment.ymax - y
+            class_id = segment.class_id
+            probability = segment.probability
+            if not YoloxObjectDetectionLogic.is_unknown_object(class_id, probability, probability_threshold,
+                                                               stuffed_toy_threshold):
+                continue
+
+            # セグメンテーション結果からポリゴンマスクを生成する
+            full_mask = np.zeros((img_height, img_width), dtype=np.uint8)
+            if len(segment.x_masks) >= 3 and len(segment.x_masks) == len(segment.y_masks):
+                # x_masks = y座標, y_masks = x座標 (頂点はインデックスでペア)
+                polygon = np.array(
+                    [[px, py] for px, py in zip(segment.y_masks, segment.x_masks)],
+                    dtype=np.int32,
+                )
+                cv2.fillPoly(full_mask, [polygon], 255)
+            else:
+                # マスク頂点が無い場合は bbox 矩形で代替する
+                full_mask[y:y + height, x:x + width] = 255
+
+            mask_img = full_mask[y:y + height, x:x + width]
+            detections.append(Detection(BoundingBox(x, y, width, height), class_id, mask_img, started_at))
         return detections
 
     @staticmethod
@@ -266,12 +285,14 @@ class YoloxObjectDetectionLogic:
         :param stuffed_toy_threshold: 物体と判定するしきい値（max 1, ぬいぐるみ専用の閾値）
         :return: 物体と思われるものの規定の物体でないものかどうか
         """
+        # YOLO11 (COCO) のクラス名で記述した, 持ち込み/持ち出し判定の対象外とする物体
         DEFAULT_OBJECTS = [
             'person', 'dog', 'cat', 'chair', 'laptop', 'tv', 'microwave', 'refrigerator',
             'potted plant', 'cup', 'keyboard', 'couch', 'mouse', 'sink', 'dining table',
-            'skateboard', 'book', 'banana', 'backpack', 'toy',
+            'skateboard', 'book', 'banana', 'backpack',
         ]
-        if class_id == 'stuffed toy':
+        # YOLO11 ではぬいぐるみが 'teddy bear' として検出される (旧 YOLOX の 'stuffed toy')
+        if class_id == 'teddy bear':
             is_object = probability > stuffed_toy_threshold
         else:
             is_object = probability > probability_threshold

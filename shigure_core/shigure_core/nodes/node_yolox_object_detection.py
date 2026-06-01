@@ -8,7 +8,7 @@ from rcl_interfaces.msg import Parameter
 from rclpy.qos import QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import CompressedImage, CameraInfo
 from shigure_core_msgs.msg import DetectedObjectList, DetectedObject, BoundingBox, PoseKeyPointsList
-from bboxes_ex_msgs.msg import BoundingBoxes
+from bboxes_ex_msgs.msg import BoundingBoxes, Segments
 
 
 
@@ -32,9 +32,15 @@ class YoloxObjectDetectionNode(ImagePreviewNode):
 			10
 		)
 		yolox_bbox_subscriber = message_filters.Subscriber(
-			self, 
+			self,
 			BoundingBoxes,
 			'/bounding_boxes',
+			qos_profile = shigure_qos
+		)
+		segment_subscriber = message_filters.Subscriber(
+			self,
+			Segments,
+			'/Segments',
 			qos_profile = shigure_qos
 		)
 		people_subscriber = message_filters.Subscriber(
@@ -56,8 +62,9 @@ class YoloxObjectDetectionNode(ImagePreviewNode):
 			qos_profile=shigure_qos
 		)
 		
+	
 		self.time_synchronizer = message_filters.TimeSynchronizer(
-			[yolox_bbox_subscriber,people_subscriber, color_subscriber, depth_camera_info_subscriber], 1000)
+			[yolox_bbox_subscriber, segment_subscriber, people_subscriber, color_subscriber, depth_camera_info_subscriber], 1000)
 		self.time_synchronizer.registerCallback(self.callback)
 		
 		self.yolox_object_detection_logic = YoloxObjectDetectionLogic()
@@ -143,16 +150,16 @@ class YoloxObjectDetectionNode(ImagePreviewNode):
 				self.get_logger().info(f'BufferSize : {param.value}')
 		return SetParametersResult(successful=True)
 
-	def callback(self, yolox_bbox_src: BoundingBoxes, people: PoseKeyPointsList, color_img_src: CompressedImage, camera_info: CameraInfo):
+	def callback(self, yolox_bbox_src: BoundingBoxes, segments_src: Segments, people: PoseKeyPointsList, color_img_src: CompressedImage, camera_info: CameraInfo):
 		self.get_logger().info('Buffering start', once=True)
 		self.frame_count_up()
 		color_img: np.ndarray = self.bridge.compressed_imgmsg_to_cv2(color_img_src)
 		sec = color_img_src.header.stamp.sec
 		nano_sec = color_img_src.header.stamp.nanosec
 
-		# ロジックの実行 (yoloxの物体検出結果から，物体の持ち込み/移動/持ち出し<イベント>を判定する)
+		# ロジックの実行 (YOLO11のセグメンテーション結果から，物体の持ち込み/移動/持ち出し<イベント>を判定する)
 		self.yolox_object_detection_logic.execute(
-			yolox_bbox_src, sec, nano_sec, people, color_img,
+			segments_src, sec, nano_sec, people, color_img,
 			self.fhist_size, self.confirm_threshold, self.dismiss_threshold,
 			self.take_out_threshold, self.match_dist_threshold,
 			self.probability_threshold, self.stuffed_toy_threshold
@@ -173,7 +180,7 @@ class YoloxObjectDetectionNode(ImagePreviewNode):
 
 		if self.is_debug_mode:
 			YoloxVisualizer.draw(
-				color_img, yolox_bbox_src,
+				color_img, yolox_bbox_src, segments_src,
 				self.yolox_object_detection_logic.wait_item_list,
 				self.yolox_object_detection_logic.bring_in_list,
 				people, self.frame_object_list
