@@ -10,32 +10,14 @@ def generate_launch_description():
 
     return LaunchDescription([
         SetEnvironmentVariable(name='FASTRTPS_DEFAULT_PROFILES_FILE', value=str(rtps_path)),
+        # YOLO11 ベースの物体検出ノード。旧来の深度差分パイプライン
+        # (bg_subtraction -> subtraction_analysis -> object_detection) を置き換える。
         Node(
             package="shigure_core",
-            executable="bg_subtraction",
-            #prefix="gnome-terminal --tab -t 'bg_subtraction' -- bash -c 'echo '$FASTRTPS_DEFAULT_PROFILES_FILE';bash' --",
-            prefix="gnome-terminal --tab -t 'bg_subtraction' --",
+            executable="yolox_object_detection",
+            prefix="gnome-terminal --tab -t 'yolox_object_detection' --",
             parameters=[
-                {"is_debug_mode": False},
-                {"input_round":1500},
-                {"avg_round":1500},
-                {"sd_round":500},
-            ],
-        ),
-        Node(
-            package="shigure_core",
-            executable="subtraction_analysis",
-            prefix="gnome-terminal --tab -t 'subtraction_analysis' --",
-            parameters=[
-                {"is_debug_mode": False},
-            ],
-        ),
-        Node(
-            package="shigure_core",
-            executable="object_detection",
-            prefix="gnome-terminal --tab -t 'object_detection' --",
-            parameters=[
-                {"is_debug_mode": False},
+                {"is_debug_mode": True},
             ],
         ),
         Node(

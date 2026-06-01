@@ -71,6 +71,46 @@ class ObjectTrackingNode(ImagePreviewNode):
         for i in range(255):
             self._colors.append(tuple([random.randint(128, 192) for _ in range(3)]))
 
+    def _compute_depth_range(self, depth_img: np.ndarray, stay_object, left: int, top: int,
+                             right: int, bottom: int):
+        """3次元BBOXの奥行きに用いる深度範囲を求めます.
+
+        物体領域(セグメンテーションマスク)の縁から5pxより更に内部の深度値のうち,
+        分布の5%点を最小値, 95%点を最大値として返します. マスクが取得できない,
+        または内部に有効な深度が無い場合は bbox 内の深度最小/最大にフォールバックします.
+        """
+        depth_roi = depth_img[top:bottom, left:right]
+
+        mask_roi = None
+        try:
+            mask = self.bridge.compressed_imgmsg_to_cv2(stay_object.mask)
+            if mask is not None and mask.ndim == 2:
+                # マスクは bbox 左上を原点とする. depth_roi の大きさに合わせて切り出す
+                mask_roi = mask[0:depth_roi.shape[0], 0:depth_roi.shape[1]]
+        except Exception:
+            mask_roi = None
+
+        valid = None
+        if mask_roi is not None and mask_roi.shape == depth_roi.shape and mask_roi.any():
+            binary = (mask_roi > 0).astype(np.uint8)
+            # 縁から5pxより内部のみを残す (11x11カーネルで縁を5px収縮)
+            kernel = np.ones((11, 11), np.uint8)
+            interior_mask = cv2.erode(binary, kernel)
+            interior = (interior_mask > 0) & (depth_roi != 0.0)
+            if np.count_nonzero(interior) > 0:
+                valid = depth_roi[interior]
+
+        if valid is None or valid.size == 0:
+            # フォールバック: 従来通り bbox 内の有効深度の最小/最大を用いる
+            masked = np.ma.masked_equal(depth_roi, 0.0, copy=False)
+            if masked.count() == 0:
+                return 0.0, 0.0
+            return float(masked.min()), float(masked.max())
+
+        depth_min = float(np.percentile(valid, 5))
+        depth_max = float(np.percentile(valid, 95))
+        return depth_min, depth_max
+
     def callback(self, depth_src: CompressedImage, detected_object_list: DetectedObjectList,
                  camera_info: CameraInfo):
         self.frame_count_up()
@@ -107,10 +147,7 @@ class ObjectTrackingNode(ImagePreviewNode):
             right = min(int(bounding_box.x + bounding_box.width), width - 1)
             bottom = min(int(bounding_box.y + bounding_box.height), height - 1)
 
-            masked_depth_img = np.ma.masked_equal(depth_img[top:bottom, left:right], 0.0, copy=False)
-
-            depth_min = masked_depth_img.min()
-            depth_max = masked_depth_img.max()
+            depth_min, depth_max = self._compute_depth_range(depth_img, stay_object, left, top, right, bottom)
 
             s1 = np.asarray([[bounding_box.x, bounding_box.y, 1]]).T
             s2 = np.asarray([[bounding_box.x + bounding_box.width,
