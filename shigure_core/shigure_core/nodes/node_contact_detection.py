@@ -11,7 +11,7 @@ from rcl_interfaces.msg import ParameterDescriptor, ParameterType, SetParameters
 from rcl_interfaces.msg import Parameter
 from rclpy.qos import QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import CompressedImage, CameraInfo
-from shigure_core_msgs.msg import PoseKeyPointsList, TrackedObjectList, ContactedList, Contacted
+from shigure_core_msgs.msg import PoseKeyPointsList, TrackedObjectList, ContactedList, Contacted, Cube
 
 from shigure_core.enum.contact_action_enum import ContactActionEnum
 from shigure_core.enum.tracked_object_action_enum import TrackedObjectActionEnum
@@ -112,6 +112,24 @@ class ContactDetectionNode(ImagePreviewNode):
                 self.get_logger().info('ExpansionParam : ' + str(self.expansion_param))
         return SetParametersResult(successful=True)
 
+    @staticmethod
+    def _to_centered_cube(collider: Cube) -> Cube:
+        """角(min-corner)基準の collider を中心(center)基準の Cube に変換して返す.
+
+        shigure 内部の collider は (x,y,z)=最小角 + (width,height,depth)=寸法 で
+        表現されている(hit判定もこの前提)。一方 Unity は Cube を中心基準で配置する
+        ため、HoloLens へ送る object_cube だけ中心座標へ変換する。hit判定に使う
+        元の collider は変更しない。
+        """
+        centered = Cube()
+        centered.x = collider.x + collider.width / 2.0
+        centered.y = collider.y + collider.height / 2.0
+        centered.z = collider.z + collider.depth / 2.0
+        centered.width = collider.width
+        centered.height = collider.height
+        centered.depth = collider.depth
+        return centered
+
     def callback(self, object_list: TrackedObjectList, people: PoseKeyPointsList, color_img_src: CompressedImage, camera_info: CameraInfo):
         self.frame_count_up()
 
@@ -142,7 +160,7 @@ class ContactDetectionNode(ImagePreviewNode):
                 contacted.action = action.value
                 contacted.people_bounding_box = person.bounding_box
                 contacted.object_bounding_box = tracked_object.bounding_box
-                contacted.object_cube = tracked_object.collider
+                contacted.object_cube = self._to_centered_cube(tracked_object.collider)
                 publish_msg.contacted_list.append(contacted)
             else:
                 # TOUCHの場合はevent idを追加せずにpublish
@@ -152,7 +170,7 @@ class ContactDetectionNode(ImagePreviewNode):
                 contacted.action = action.value
                 contacted.people_bounding_box = person.bounding_box
                 contacted.object_bounding_box = tracked_object.bounding_box
-                contacted.object_cube = tracked_object.collider
+                contacted.object_cube = self._to_centered_cube(tracked_object.collider)
                 publish_msg.contacted_list.append(contacted)
 
             print(f'PeopleId: {person.people_id}, ObjectId: {tracked_object.object_id}, Action: {action.value}')
