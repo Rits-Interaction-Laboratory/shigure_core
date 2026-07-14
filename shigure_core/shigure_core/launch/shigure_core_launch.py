@@ -7,28 +7,89 @@ launch 引数:
   save_image:=true/false    true で people_tracking が追跡デバッグ画像を
                             /shigure/tracking_debug_image へ配信・保存し、Web表示(shigure_api)を起動（既定 false）。
   enable_profile:=true/false true で横顔プロフィール特徴を /profile_feature_add に配信（既定 false）。
+  terminal:=gnome-terminal/xterm/none
+                            各ノードを開く端末エミュレータ（既定 gnome-terminal）。
+                            Docker では xterm、ヘッドレス環境では none を指定する。
+  record:=true/false        true で DB 保存系ノード（pose_save / record_event）も起動する（既定 false）。
+  save_root_path:=<path>    record_event のイベント画像保存先（既定はノード側のデフォルト値）。
 
 例:
   ros2 launch shigure_core shigure_core_launch.py
   ros2 launch shigure_core shigure_core_launch.py debug_mode:=true save_image:=true
+  ros2 launch shigure_core shigure_core_launch.py terminal:=xterm record:=true  # Docker と同等の構成
 """
 
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
-from launch.conditions import IfCondition
-from launch.substitutions import LaunchConfiguration
+from launch.actions import DeclareLaunchArgument, OpaqueFunction
 from launch_ros.actions import Node
-from launch_ros.parameter_descriptions import ParameterValue
+
+
+def _to_bool(value: str) -> bool:
+    """launch引数の文字列をboolへ変換します."""
+    return value.lower() in ('true', '1', 'yes')
+
+
+def _make_prefix(terminal: str, title: str) -> str:
+    """端末エミュレータ種別からノード起動prefixを作ります."""
+    if terminal == 'gnome-terminal':
+        return f"gnome-terminal --tab -t '{title}' --"
+    if terminal == 'xterm':
+        return f"xterm -T '{title}' -e"
+    return ''
+
+
+def _setup_nodes(context):
+    """launch引数を解決してノード一覧を構築します."""
+    debug_mode = _to_bool(context.launch_configurations['debug_mode'])
+    save_image = _to_bool(context.launch_configurations['save_image'])
+    enable_profile = _to_bool(context.launch_configurations['enable_profile'])
+    record = _to_bool(context.launch_configurations['record'])
+    terminal = context.launch_configurations['terminal']
+    save_root_path = context.launch_configurations['save_root_path']
+
+    is_debug = {'is_debug_mode': debug_mode}
+
+    def make_node(executable, package='shigure_core', parameters=None):
+        kwargs = {}
+        prefix = _make_prefix(terminal, executable)
+        if prefix:
+            kwargs['prefix'] = prefix
+        if parameters:
+            kwargs['parameters'] = parameters
+        return Node(package=package, executable=executable, **kwargs)
+
+    nodes = [
+        make_node('yolox_object_detection', parameters=[is_debug]),
+        make_node('object_tracking', parameters=[is_debug]),
+        make_node('people_tracking', parameters=[
+            is_debug,
+            {'focal_length': 1.0},
+            {'save_image': save_image},
+            {'enable_profile_insightface': enable_profile},
+        ]),
+        # 顔認識（/face_recognition/results, /feature_info, /dictionary_update を配信）
+        # is_debug_mode=true のとき自動登録ユーザーの特徴/画像をディスク保存する。
+        make_node('people_recognition', parameters=[is_debug]),
+        make_node('contact_detection', parameters=[is_debug]),
+    ]
+
+    # Web API（save_image:=true のときのみ起動）
+    if save_image:
+        nodes.append(make_node('shigure_api', package='shigure_api'))
+
+    # DB 保存系（record:=true のときのみ起動）
+    if record:
+        nodes.append(make_node('pose_save'))
+        record_event_params = [is_debug]
+        if save_root_path:
+            record_event_params.append({'save_root_path': save_root_path})
+        nodes.append(make_node('record_event', parameters=record_event_params))
+
+    return nodes
 
 
 def generate_launch_description():
-    debug_mode = LaunchConfiguration('debug_mode')
-    save_image = LaunchConfiguration('save_image')
-    enable_profile = LaunchConfiguration('enable_profile')
-
-    # 全ノード共通で使う is_debug_mode パラメータ（launch 引数 debug_mode で制御）
-    is_debug = {"is_debug_mode": ParameterValue(debug_mode, value_type=bool)}
-
+    """launch定義を生成します."""
     return LaunchDescription([
         DeclareLaunchArgument(
             'debug_mode',
@@ -45,56 +106,20 @@ def generate_launch_description():
             default_value='false',
             description='true のとき横顔プロフィール特徴を /profile_feature_add に配信する（横顔学習）。',
         ),
-        Node(
-            package="shigure_core",
-            executable="yolox_object_detection",
-            prefix="gnome-terminal --tab -t 'yolox_object_detection' --",
-            parameters=[
-                is_debug,
-            ],
+        DeclareLaunchArgument(
+            'terminal',
+            default_value='gnome-terminal',
+            description='各ノードを開く端末エミュレータ（gnome-terminal / xterm / none）。',
         ),
-        Node(
-            package="shigure_core",
-            executable="object_tracking",
-            prefix="gnome-terminal --tab -t 'object_tracking' --",
-            parameters=[
-                is_debug,
-            ],
+        DeclareLaunchArgument(
+            'record',
+            default_value='false',
+            description='true のとき DB 保存系ノード（pose_save / record_event）も起動する。',
         ),
-        Node(
-            package="shigure_core",
-            executable="people_tracking",
-            prefix="gnome-terminal --tab -t 'people_tracking' --",
-            parameters=[
-                is_debug,
-                {"focal_length": 1.0},
-                {"save_image": ParameterValue(save_image, value_type=bool)},
-                {"enable_profile_insightface": ParameterValue(enable_profile, value_type=bool)},
-            ],
+        DeclareLaunchArgument(
+            'save_root_path',
+            default_value='',
+            description='record_event のイベント画像保存先（未指定ならノード側のデフォルト値）。',
         ),
-        # 顔認識（/face_recognition/results, /feature_info, /dictionary_update を配信）
-        # is_debug_mode=true のとき自動登録ユーザーの特徴/画像をディスク保存する。
-        Node(
-            package="shigure_core",
-            executable="people_recognition",
-            prefix="gnome-terminal --tab -t 'people_recognition' --",
-            parameters=[
-                is_debug,
-            ],
-        ),
-        Node(
-            package="shigure_core",
-            executable="contact_detection",
-            prefix="gnome-terminal --tab -t 'contact_detection' --",
-            parameters=[
-                is_debug,
-            ],
-        ),
-        # Web API（save_image:=true のときのみ起動）
-        Node(
-            package="shigure_api",
-            executable="shigure_api",
-            prefix="gnome-terminal --tab -t 'shigure_api' --",
-            condition=IfCondition(save_image),
-        ),
+        OpaqueFunction(function=_setup_nodes),
     ])

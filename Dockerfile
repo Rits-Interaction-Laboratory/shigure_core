@@ -37,4 +37,4 @@ RUN echo "source /opt/ros/humble/setup.bash" >> /root/.bashrc \
     && echo "source /ros2_ws/install/setup.bash" >> /root/.bashrc
 
 ENTRYPOINT ["/ros_entrypoint.sh"]
-CMD ["ros2", "launch", "shigure_core", "shigure_core_docker_launch.py"]
+CMD ["ros2", "launch", "shigure_core", "shigure_core_launch.py", "terminal:=xterm", "record:=true", "save_root_path:=/ros2_ws/events", "debug_mode:=true"]
