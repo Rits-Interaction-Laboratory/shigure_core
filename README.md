@@ -104,22 +104,34 @@ docker compose down -v
 
 ### 6. DBへの保存を行う場合
 
-DBの起動 <br>
+Dockerで起動した場合（手順5）、DB・record_event・pose_saveは`docker compose up`で自動的に立ち上がるため、以下の個別起動は不要。
+
+DBのみ起動する場合（プロジェクトルートで） <br>
 ```sh
-cd shigure_core/resource/db
-docker-compose up
+docker compose up -d db migrate
 ```
 
-record_event nodeの起動 <br>
-(パラメータ使用のためYMLファイルを読み込む。 <br>
+record_event nodeの起動（Dockerを使わない場合） <br>
+(パラメータをデフォルトから変更する場合はYMLファイルを読み込む。 <br>
 Sample YMLファイルの配置フォルダ : [/shigure_core/shigure_core/shigure_core/nodes/params/](/shigure_core/shigure_core/shigure_core/nodes/params/))
 ```sh
 ros2 run shigure_core record_event --ros-args --params-file <ROS2 workspace>/src/shigure_core/shigure_core/shigure_core/nodes/params/record_event_params.yml
 ```
 
-pose save nodeの起動 <br>
+pose save nodeの起動（Dockerを使わない場合） <br>
 ```sh
 ros2 run shigure_core pose_save
+```
+
+記録の開始 <br>
+(この信号を送るまでは骨格・イベントともDBに保存されない。本来はHoloLens 2から送信される信号) <br>
+```sh
+ros2 topic pub -1 /HL2/pose_record_signal std_msgs/msg/String "{data: 'Start'}"
+```
+
+記録の終了 <br>
+```sh
+ros2 topic pub -1 /HL2/pose_record_signal std_msgs/msg/String "{data: 'End'}"
 ```
 
 DBへの接続 <br>
