@@ -3,6 +3,8 @@ FROM osrf/ros:humble-desktop
 RUN apt-get update && apt-get install -y \
     python3-pip \
     python3-colcon-common-extensions \
+    build-essential \
+    python3-dev \
     xterm \
     ros-humble-rviz2 \
     tmux \
@@ -10,10 +12,26 @@ RUN apt-get update && apt-get install -y \
 
 RUN pip3 install "numpy<2" mysql-connector-python pandas
 
+# 顔認識(people_recognition)と Web API(shigure_api) の依存
+RUN pip3 install "numpy<2" \
+    insightface \
+    onnxruntime \
+    faiss-cpu \
+    scikit-learn \
+    pillow \
+    fastapi \
+    "uvicorn[standard]" \
+    pydantic
+
+# insightface のモデル(buffalo_s)をビルド時にダウンロードしておく
+# (初回起動時のダウンロード待ち・実行時のネットワーク依存をなくすため)
+RUN python3 -c "from insightface.app import FaceAnalysis; FaceAnalysis(name='buffalo_s', providers=['CPUExecutionProvider'])"
+
 WORKDIR /ros2_ws/src
 COPY bbox_ex_msgs/ bbox_ex_msgs/
 COPY shigure_core_msgs/ shigure_core_msgs/
 COPY shigure_core/ shigure_core/
+COPY shigure_api/ shigure_api/
 RUN git clone https://github.com/Rits-Interaction-Laboratory/openpose_ros2 \
     && rm -rf openpose_ros2/openpose_ros2
 RUN git clone https://github.com/Rits-Interaction-Laboratory/people_detection_ros2 \

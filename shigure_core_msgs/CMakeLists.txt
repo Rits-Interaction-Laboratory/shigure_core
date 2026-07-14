@@ -42,6 +42,15 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/HeaderString.msg"
   "msg/SelectObject.msg"
   "msg/SelectObjectList.msg"
+  "msg/FaceInfo.msg"
+  "msg/FaceRecognitionResult.msg"
+  "msg/RecInfo.msg"
+  "msg/PeopleFaceInfo.msg"
+  "msg/RecognitionHistory.msg"
+  "msg/DictionaryUpdate.msg"
+  "msg/FeatureInfo.msg"
+  "msg/DebugImage.msg"
+  "msg/ProfileFeatureAdd.msg"
   DEPENDENCIES builtin_interfaces std_msgs sensor_msgs
 )
 

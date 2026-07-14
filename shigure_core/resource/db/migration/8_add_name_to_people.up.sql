@@ -1,0 +1,2 @@
+ALTER TABLE `people`
+  ADD COLUMN `name` VARCHAR(100) NOT NULL DEFAULT '' AFTER `person_id`;

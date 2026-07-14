@@ -13,3 +13,20 @@ shigure_core/resource/db/Dockerfile_migration
 shigure_core/shigure_core/nodes/past_record_script/
 shigure_core/shigure_core/nodes/yolox_object_detection/logic.py_sample
 
+# ===== 顔認識データ（個人データ・絶対にコミットしない） =====
+# 顔画像・特徴ベクトル・PCAモデルなどの辞書データ一式。
+# 実データは既定で ~/.shigure/face_models（リポジトリ外）に置く運用。
+**/face_models/
+# 追跡デバッグ画像（save_image モードの保存先）
+**/debug_images/
+
+# ===== ビルド/実行時の生成物・キャッシュ =====
+# ROS2 colcon の生成物
+build/
+install/
+log/
+# Python バイトコードキャッシュ
+__pycache__/
+*.py[cod]
+*.egg-info/
+
