@@ -47,6 +47,9 @@ setup(
             'caputure_flow = shigure_core.nodes.capture_ros:main',
             'pointer_transform_listener = shigure_core.nodes.pointer_transform_listener:main',
             'node_raycast_hit_detection = shigure_core.nodes.node_raycast_hit_detection:main',
+            'face_models = shigure_core.nodes.node_face_models:main',
+            'people_recognition = shigure_core.nodes.node_people_recognition:main',
+            'rebuild_pca_model = shigure_core.util.pca_model:main',
         ],
     },
 )

@@ -1,3 +1,5 @@
+import glob
+import os
 import random
 import re
 from typing import List
@@ -12,11 +14,24 @@ from rclpy.qos import QoSProfile, ReliabilityPolicy
 from openpose_ros2_msgs.msg import PoseKeyPointsList as OpenPosePoseKeyPointsList
 from sensor_msgs.msg import CompressedImage, CameraInfo
 from shigure_core_msgs.msg import PoseKeyPointsList as ShigurePoseKeyPointsList, PoseKeyPoints
+from shigure_core_msgs.msg import FaceRecognitionResult, RecognitionHistory, PeopleFaceInfo, RecInfo, DebugImage
+from shigure_core_msgs.msg import ProfileFeatureAdd, DictionaryUpdate
 
 from shigure_core.nodes.node_image_preview import ImagePreviewNode
 from shigure_core.nodes.people_tracking.logic import PeopleTrackingLogic
 from shigure_core.nodes.people_tracking.tracking_info import TrackingInfo
 from shigure_core.util import compressed_depth_util, pose_key_points_util
+
+# 横顔プロフィール特徴の保存間隔（フレーム）。過剰保存を防ぐ。
+PROFILE_SAVE_INTERVAL_FRAMES = 3
+# 顔辞書(face_models)ディレクトリ。node_face_models / people_recognition と一致させる。
+# SHIGURE_FACE_MODELS_DIR 環境変数があれば最優先。無ければ固定の永続パス ~/.shigure/face_models。
+_env_face_models_dir = os.environ.get('SHIGURE_FACE_MODELS_DIR')
+DIRECTORY = (
+    os.path.expanduser(_env_face_models_dir)
+    if _env_face_models_dir
+    else os.path.expanduser('~/.shigure/face_models')
+)
 
 
 class PeopleTrackingNode(ImagePreviewNode):
@@ -27,10 +42,68 @@ class PeopleTrackingNode(ImagePreviewNode):
         # QoS Settings
         shigure_qos = QoSProfile(depth=10, reliability=ReliabilityPolicy.BEST_EFFORT)
 
+        # 顔認識結果(体ID→顔ID)の累積履歴。 {people_id: {face_id: {"score", "features_num", "total_features"}}}
+        self.recognition_history = {}
+
+        # 横顔プロフィール保存用の状態
+        self.confirmed_users = {}              # {people_id: 確定 user_name}（/dictionary_update で更新）
+        self.existing_users_at_startup = set()  # 起動時点で登録済みの user_name 集合
+        self._prev_tracked_people_ids = set()   # 直前フレームの追跡ID（消えたIDのクリーンアップ用）
+        self._profile_last_save_frame = {}      # {people_id: 最後に横顔保存したframe_count}
+
+        # 画像保存モード。true のとき追跡デバッグ画像を /shigure/tracking_debug_image に配信し、
+        # ローカルにも保存する（Web表示はこのモードでのみ利用可能）。launch の save_image 引数で切替。
+        self.declare_parameter('save_image', False,
+                               ParameterDescriptor(type=ParameterType.PARAMETER_BOOL,
+                                                   description='true のとき追跡デバッグ画像を配信・保存する（Web表示用）。'))
+        self.save_image: bool = self.get_parameter('save_image').get_parameter_value().bool_value
+
+        # 横顔プロフィール学習。true のとき確定人物の@profile顔特徴を /profile_feature_add へ配信する。
+        # 有効化には color 画像が必要なため、購読条件(is_debug_mode/save_image)にも含める。
+        self.declare_parameter('enable_profile_insightface', False,
+                               ParameterDescriptor(type=ParameterType.PARAMETER_BOOL,
+                                                   description='true のとき横顔プロフィール特徴を /profile_feature_add に配信する。'))
+        self.enable_profile_insightface: bool = \
+            self.get_parameter('enable_profile_insightface').get_parameter_value().bool_value
+        if self.enable_profile_insightface:
+            self._load_existing_users_at_startup()
+
         # publisher, subscriber
         self._publisher = self.create_publisher(
-            ShigurePoseKeyPointsList, 
-            '/shigure/people_detection', 
+            ShigurePoseKeyPointsList,
+            '/shigure/people_detection',
+            10
+        )
+        # 体IDごとの顔ID累積スコアを配信する。people_recognition が名前確定(辞書更新)に使用する
+        self._recognition_history_publisher = self.create_publisher(
+            RecognitionHistory,
+            '/shigure/recognition_history',
+            10
+        )
+        # 顔認識ノード(別ノード)の検出結果を購読し、頭部座標との対応付けで体IDに紐付ける
+        self.face_recognition_sub = self.create_subscription(
+            FaceRecognitionResult,
+            '/face_recognition/results',
+            self.face_recognition_callback,
+            10
+        )
+        # 追跡デバッグ画像(オーバーレイ)の配信先。save_image モード時のみ実際に配信する。
+        self._debug_image_publisher = self.create_publisher(
+            DebugImage,
+            '/shigure/tracking_debug_image',
+            10
+        )
+        # 横顔プロフィール特徴の配信先。people_recognition が購読して辞書へ追加する。
+        self._profile_feature_publisher = self.create_publisher(
+            ProfileFeatureAdd,
+            '/profile_feature_add',
+            10
+        )
+        # 名前確定通知。people_recognition が体ID→確定名を通知する。横顔保存の可否判定に使う。
+        self.dictionary_update_sub = self.create_subscription(
+            DictionaryUpdate,
+            '/dictionary_update',
+            self.update_recognition_history,
             10
         )
         depth_subscriber = message_filters.Subscriber(
@@ -52,15 +125,16 @@ class PeopleTrackingNode(ImagePreviewNode):
             qos_profile=shigure_qos
         )
 
-        if not self.is_debug_mode:
+        # color 画像が必要なのは、描画(is_debug_mode)・画像保存(save_image)・横顔保存(enable_profile_insightface)のいずれか。
+        if not self.is_debug_mode and not self.save_image and not self.enable_profile_insightface:
             self.time_synchronizer = message_filters.TimeSynchronizer(
                 [depth_subscriber, key_points_subscriber, depth_camera_info_subscriber], 30000)
             self.time_synchronizer.registerCallback(self.callback)
         else:
             color_subscriber = message_filters.Subscriber(
-                self, 
-                CompressedImage, 
-                '/rs/color/compressed', 
+                self,
+                CompressedImage,
+                '/rs/color/compressed',
                 qos_profile=shigure_qos
             )
             self.time_synchronizer = message_filters.TimeSynchronizer(
@@ -77,10 +151,14 @@ class PeopleTrackingNode(ImagePreviewNode):
         self.declare_parameter('neck_index', 1,
                                ParameterDescriptor(type=ParameterType.PARAMETER_INTEGER,
                                                    description='追跡基準点とする関節番号（OpenPoseインデックス）。'))
+        self.declare_parameter('face_name_score_threshold', 3.0,
+                               ParameterDescriptor(type=ParameterType.PARAMETER_DOUBLE,
+                                                   description='face_name を確定として publish する累積スコアのしきい値（コサイン類似度の累積和）。未満は未確定として空文字を publish する。'))
 
         self.threshold_distance: int = self.get_parameter('threshold_distance').get_parameter_value().integer_value
         self.threshold_person: float = self.get_parameter('threshold_person').get_parameter_value().double_value
         self.neck_index: int = self.get_parameter('neck_index').get_parameter_value().integer_value
+        self.face_name_score_threshold: float = self.get_parameter('face_name_score_threshold').get_parameter_value().double_value
 
         self.add_on_set_parameters_callback(self._on_set_parameters_people_tracking)
 
@@ -108,7 +186,202 @@ class PeopleTrackingNode(ImagePreviewNode):
             elif param.name == 'neck_index':
                 self.neck_index = param.value
                 self.get_logger().info('NeckIndex : ' + str(self.neck_index))
+            elif param.name == 'face_name_score_threshold':
+                self.face_name_score_threshold = param.value
+                self.get_logger().info('FaceNameScoreThreshold : ' + str(self.face_name_score_threshold))
+            elif param.name == 'save_image':
+                # 実行中の切替も反映するが、color購読は起動時に決まるため、保存/配信を実際に
+                # 行えるのは起動時から is_debug_mode か save_image が有効だった場合に限る。
+                self.save_image = param.value
+                self.get_logger().info('SaveImage : ' + str(self.save_image))
+            elif param.name == 'enable_profile_insightface':
+                # color購読は起動時に決まるため、起動時から有効だった場合のみ実際に横顔保存できる。
+                self.enable_profile_insightface = param.value
+                self.get_logger().info('EnableProfileInsightface : ' + str(self.enable_profile_insightface))
         return SetParametersResult(successful=True)
+
+    @staticmethod
+    def is_point_in_box(point, box):
+        """点(x, y)が矩形box=[x, y, w, h]の内側にあるか判定する."""
+        x, y = point
+        box_x, box_y, box_width, box_height = box
+        return box_x <= x <= box_x + box_width and box_y <= y <= box_y + box_height
+
+    def face_recognition_callback(self, msg: FaceRecognitionResult):
+        """
+        顔認識ノードの検出結果を受け取り、各顔と追跡中の人物(体ID)を頭部座標で対応付ける.
+
+        頭部キーポイント(OpenPoseインデックス0)が顔boxに入っていれば、その体IDに顔IDのスコアを
+        フレームをまたいで累積する。単発ではなく累積投票で確からしさを高める。
+        """
+        # 横顔プロフィール保存で参照するため、最新の顔検出結果を保持する。
+        self.current_face_data = msg
+        for face_info in msg.faces:
+            face_id = face_info.id
+            score = face_info.score
+            feature_num = face_info.feature_num
+            face_box = list(face_info.box)
+            # box は [x, y, w, h] を想定。異常な長さは対応付け不能なのでスキップする。
+            if len(face_box) != 4:
+                continue
+
+            for people_id, people in self.tracking_info.get_people_dict().items():
+                openpose_pose_key_points = people[-1]
+                if not openpose_pose_key_points.pose_key_points:
+                    continue
+                head = openpose_pose_key_points.pose_key_points[0]
+                head_point = (head.x, head.y)
+
+                if PeopleTrackingNode.is_point_in_box(head_point, face_box):
+                    bucket = self.recognition_history.setdefault(people_id, {})
+                    if face_id in bucket:
+                        bucket[face_id]['score'] += score
+                        bucket[face_id]['features_num'].append(feature_num)
+                        bucket[face_id]['total_features'] += 1
+                    else:
+                        bucket[face_id] = {
+                            'score': score,
+                            'features_num': [feature_num],
+                            'total_features': 1,
+                        }
+
+        self._recognition_history_publisher.publish(self.create_recognition_history_message())
+
+    def create_recognition_history_message(self) -> RecognitionHistory:
+        """内部の累積履歴(recognition_history)を RecognitionHistory メッセージへ変換する."""
+        recognition_history_msg = RecognitionHistory()
+        recognition_history_msg.users = []
+
+        for people_id, faces in self.recognition_history.items():
+            people_face_info = PeopleFaceInfo()
+            people_face_info.people_id = people_id
+            people_face_info.face_info = []
+            for face_id, data in faces.items():
+                rec_info = RecInfo()
+                rec_info.id = face_id
+                rec_info.features_num = data.get('features_num', [])
+                rec_info.total_features = data['total_features']
+                rec_info.accumulate_score = data['score']
+                people_face_info.face_info.append(rec_info)
+            recognition_history_msg.users.append(people_face_info)
+
+        return recognition_history_msg
+
+    def get_most_likely_face_id(self, people_id):
+        """体IDに対し、累積スコアが最大の顔ID(名前)とそのスコアを返す。履歴が無ければ(None, 0)を返す."""
+        faces = self.recognition_history.get(people_id)
+        if not faces:
+            return None, 0.0
+        most_likely_id, data = max(faces.items(), key=lambda item: item[1]['score'])
+        display_id = most_likely_id.replace('@profile', '')
+        return display_id, data['score']
+
+    def _cleanup_recognition_history(self):
+        """現在追跡していない体IDの顔認識履歴・確定名・横顔保存状態を破棄する."""
+        current_ids = set(self.tracking_info.get_people_dict().keys())
+        for people_id in list(self.recognition_history.keys()):
+            if people_id not in current_ids:
+                del self.recognition_history[people_id]
+        # 横顔プロフィール保存の状態も、追跡から外れた体IDについて破棄する。
+        lost_ids = self._prev_tracked_people_ids - current_ids
+        for people_id in lost_ids:
+            self.confirmed_users.pop(people_id, None)
+            self._profile_last_save_frame.pop(people_id, None)
+        self._prev_tracked_people_ids = current_ids
+
+    def _load_existing_users_at_startup(self):
+        """起動時点で登録済みの user_* を読み込む."""
+        user_dirs = glob.glob(os.path.join(DIRECTORY, 'user_*'))
+        self.existing_users_at_startup = {os.path.basename(path) for path in user_dirs}
+
+    def update_recognition_history(self, msg: DictionaryUpdate):
+        """people_recognition からの確定名通知(/dictionary_update)を受け、確定名を保持する."""
+        update_people_id = msg.people_id
+        new_user_name = msg.name
+        self.get_logger().info(f'Received user name: {new_user_name} in {update_people_id}')
+
+        if new_user_name != 'none':
+            self.confirmed_users[update_people_id] = new_user_name
+            if new_user_name.startswith('user_new'):
+                self.existing_users_at_startup.add(new_user_name)
+
+    def can_save_profile(self, people_id, user_name):
+        """骨格IDとユーザー名が confirmed_users で一致していれば横顔保存可."""
+        if not user_name or user_name == 'unknown' or not user_name.startswith('user'):
+            return False
+        return self.confirmed_users.get(people_id) == user_name
+
+    def _try_save_profile_feature(self, people_id, user_name, embedding, face_image=None):
+        """保存間隔(PROFILE_SAVE_INTERVAL_FRAMES)を守りつつ横顔特徴を配信する."""
+        last_frame = self._profile_last_save_frame.get(people_id, -PROFILE_SAVE_INTERVAL_FRAMES)
+        if self.frame_count - last_frame < PROFILE_SAVE_INTERVAL_FRAMES:
+            return
+        self._publish_profile_feature_add(user_name, embedding, face_image)
+        self._profile_last_save_frame[people_id] = self.frame_count
+
+    def _publish_profile_feature_add(self, user_name, embedding, face_image=None):
+        """横顔特徴(埋め込み＋任意で顔画像)を /profile_feature_add へ配信する."""
+        msg = ProfileFeatureAdd()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.user_id = user_name
+        msg.embedding = np.asarray(embedding, dtype=np.float32).reshape(-1).tolist()
+        if face_image is not None and face_image.size > 0:
+            msg.face_image = self.bridge.cv2_to_compressed_imgmsg(face_image)
+        self._profile_feature_publisher.publish(msg)
+        self.get_logger().info(f'Published profile feature add: user_id={user_name}')
+
+    def _process_profile_save(self, published_msg: ShigurePoseKeyPointsList, color_img=None):
+        """確定人物について、頭部と重なる @profile 顔の特徴を横顔として保存配信する."""
+        current_face_data = getattr(self, 'current_face_data', None)
+        if current_face_data is None:
+            return
+
+        people_dict = self.tracking_info.get_people_dict()
+        for pose_key_points in published_msg.pose_key_points_list:
+            people_id = pose_key_points.people_id
+            if people_id not in people_dict:
+                continue
+
+            confirmed_user_id = self.confirmed_users.get(people_id)
+            if not self.can_save_profile(people_id, confirmed_user_id or ''):
+                continue
+
+            openpose_pose_key_points = people_dict[people_id][-1]
+            if not openpose_pose_key_points.pose_key_points:
+                continue
+            head_point = openpose_pose_key_points.pose_key_points[0]
+            head = (head_point.x, head_point.y)
+
+            for face_info in current_face_data.faces:
+                if not face_info.id.endswith('@profile'):
+                    continue
+                face_box = list(face_info.box)
+                if len(face_box) != 4:
+                    continue
+                if not PeopleTrackingNode.is_point_in_box(head, face_box):
+                    continue
+                if not face_info.embedding:
+                    continue
+
+                embedding = np.asarray(face_info.embedding, dtype=np.float32)
+                face_crop = self._crop_face(color_img, face_box)
+                self._try_save_profile_feature(people_id, confirmed_user_id, embedding, face_crop)
+                break
+
+    @staticmethod
+    def _crop_face(color_img, box):
+        """color_img から box=[x, y, w, h] で顔領域を切り出す。範囲外は None."""
+        if color_img is None:
+            return None
+        height, width = color_img.shape[:2]
+        x, y, w, h = [int(v) for v in box]
+        left = max(0, x)
+        top = max(0, y)
+        right = min(width, x + w)
+        bottom = min(height, y + h)
+        if right <= left or bottom <= top:
+            return None
+        return color_img[top:bottom, left:right].copy()
 
     def callback(self, depth_src: CompressedImage, key_points_list: OpenPosePoseKeyPointsList, camera_info: CameraInfo):
         self.frame_count_up()
@@ -127,6 +400,9 @@ class PeopleTrackingNode(ImagePreviewNode):
             self.threshold_distance, self.threshold_person, self.neck_index
         )
 
+        # 追跡から外れた体IDの顔認識履歴を破棄（メモリ肥大・IDの使い回し対策）
+        self._cleanup_recognition_history()
+
         # publish
         publish_msg = ShigurePoseKeyPointsList()
         publish_msg.header = key_points_list.header
@@ -135,6 +411,10 @@ class PeopleTrackingNode(ImagePreviewNode):
             _, _, _, openpose_pose_key_points = people
             shigure_pose_key_points = pose_key_points_util.convert_openpose_to_shigure(openpose_pose_key_points,
                                                                                        depth_img, people_id, k)
+            # 顔認識で対応が取れた名前(顔ID)を付与する。しきい値未満は未確定として空のまま。
+            face_name, score = self.get_most_likely_face_id(people_id)
+            if face_name is not None and score >= self.face_name_score_threshold:
+                shigure_pose_key_points.face_name = face_name
             publish_msg.pose_key_points_list.append(shigure_pose_key_points)
         self._publisher.publish(publish_msg)
 
@@ -144,11 +424,35 @@ class PeopleTrackingNode(ImagePreviewNode):
                        camera_info: CameraInfo, color_src: CompressedImage):
         published_msg: ShigurePoseKeyPointsList = self.callback(depth_src, key_points_list, camera_info)
 
-        if not self.is_debug_mode:
+        color_img: np.ndarray = self.bridge.compressed_imgmsg_to_cv2(color_src)
+
+        # 横顔プロフィール保存（描画前の生画像から切り出すため、_draw_overlay より先に行う）
+        if self.enable_profile_insightface:
+            self._process_profile_save(published_msg, color_img)
+
+        # デバッグ表示も画像保存も不要なら描画はしない（ウィンドウは閉じる）
+        if not self.is_debug_mode and not self.save_image:
             cv2.destroyAllWindows()
             return
 
-        color_img: np.ndarray = self.bridge.compressed_imgmsg_to_cv2(color_src)
+        self._draw_overlay(color_img, published_msg)
+        self.print_fps(color_img)
+
+        # デバッグウィンドウ表示（is_debug_mode のときのみ）
+        if self.is_debug_mode:
+            cv2.namedWindow('people_tracking', cv2.WINDOW_NORMAL)
+            cv2.imshow('people_tracking', color_img)
+            cv2.waitKey(1)
+        else:
+            cv2.destroyAllWindows()
+
+        # 画像保存モード: 追跡デバッグ画像を配信・保存する（Web表示用）。負荷軽減のため5フレーム毎。
+        if self.save_image and self.frame_count % 5 == 0:
+            self._publish_tracking_debug_image(color_img)
+            self._save_tracking_debug_image(color_img)
+
+    def _draw_overlay(self, color_img: np.ndarray, published_msg: ShigurePoseKeyPointsList) -> None:
+        """追跡結果(バウンディングボックスとID/顔名ラベル)を color_img へ描画する."""
         height, width = color_img.shape[:2]
 
         pose_key_points: PoseKeyPoints
@@ -171,18 +475,41 @@ class PeopleTrackingNode(ImagePreviewNode):
 
             people_id_num = int(re.sub(".*_", "", people_id))
             color = self._colors[people_id_num % 255]
+            # 顔認識で名前が確定していれば名前を、無ければ体IDを表示する（オクルージョンによるID変化を吸収）
+            label = pose_key_points.face_name if pose_key_points.face_name else f'ID : {people_id_num}'
             cv2.circle(color_img, (x, y), 5, color, thickness=-1)
             cv2.rectangle(color_img, (left, top), (right, bottom), color, thickness=3)
-            text_w, text_h = cv2.getTextSize(f'ID : {people_id_num}',
+            text_w, text_h = cv2.getTextSize(label,
                                              cv2.FONT_HERSHEY_PLAIN, 1.5, 2)[0]
             cv2.rectangle(color_img, (left, top), (left + text_w, top - text_h), color, -1)
-            cv2.putText(color_img, f'ID : {people_id_num}', (left, top),
+            cv2.putText(color_img, label, (left, top),
                         cv2.FONT_HERSHEY_PLAIN, 1.5, (255, 255, 255), thickness=2)
 
-        self.print_fps(color_img)
-        cv2.namedWindow('people_tracking', cv2.WINDOW_NORMAL)
-        cv2.imshow('people_tracking', color_img)
-        cv2.waitKey(1)
+    def _publish_tracking_debug_image(self, color_img: np.ndarray) -> None:
+        """オーバーレイ画像を JPEG エンコードして /shigure/tracking_debug_image に配信する(Web表示用)."""
+        ok, buf = cv2.imencode('.jpg', color_img, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
+        if not ok:
+            return
+        msg = DebugImage()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.header.frame_id = str(self.frame_count)
+        msg.format = 'jpeg'
+        msg.data = buf.tobytes()
+        self._debug_image_publisher.publish(msg)
+
+    def _save_tracking_debug_image(self, color_img: np.ndarray) -> None:
+        """オーバーレイ画像をローカルの debug_images ディレクトリへ保存する."""
+        if not hasattr(self, '_debug_image_dir'):
+            # shigure_core パッケージ直下の debug_images/people_tracking を保存先とする。
+            base = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'debug_images')
+            self._debug_image_dir = os.path.abspath(os.path.join(base, 'people_tracking'))
+            os.makedirs(self._debug_image_dir, exist_ok=True)
+            self.get_logger().info(f'追跡デバッグ画像を保存: {self._debug_image_dir}')
+        cv2.imwrite(os.path.join(self._debug_image_dir, 'people_tracking_latest.jpg'), color_img)
+        cv2.imwrite(
+            os.path.join(self._debug_image_dir, f'people_tracking_{self.frame_count:06d}.jpg'),
+            color_img,
+        )
 
 
 def main(args=None):

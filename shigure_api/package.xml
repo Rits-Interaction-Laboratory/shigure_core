@@ -1,0 +1,22 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>shigure_api</name>
+  <version>0.0.1</version>
+  <description>FastAPI bridge for Shigure face recognition events (iOS / React Native)</description>
+  <maintainer email="is0436er@ed.ritsumei.ac.jp">Yukiho-YOSHIEDA</maintainer>
+  <license>MIT License</license>
+
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>shigure_core</exec_depend>
+  <exec_depend>shigure_core_msgs</exec_depend>
+
+  <test_depend>ament_copyright</test_depend>
+  <test_depend>ament_flake8</test_depend>
+  <test_depend>ament_pep257</test_depend>
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>
