@@ -21,7 +21,8 @@ def main() -> None:
         default=str(FACE_MODELS_DIR),
         help='Path to face_models directory',
     )
-    args = parser.parse_args()
+    # ros2 launch経由では --ros-args 等が付与されるため、未知の引数は無視する
+    args, _ = parser.parse_known_args()
 
     import shigure_api.config as config
     from shigure_api.app import hub, init_pca_builder, pca_hub, tracking_debug_hub
