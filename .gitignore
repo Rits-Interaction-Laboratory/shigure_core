@@ -4,6 +4,10 @@ events/*
 # 環境変数（マシンごとに異なる設定）
 .env
 
+# Claude Code の個人設定（チーム共有する CLAUDE.md / .claude/rules はコミットする）
+.claude/settings.local.json
+CLAUDE.local.md
+
 shigure_core/resource/db/Dockerfile.sample
 shigure_core/resource/db/Dockerfile_migration
 shigure_core/shigure_core/nodes/past_record_script/
