@@ -140,7 +140,33 @@ DBへの接続 <br>
 mysql -h 127.0.0.1 -P 3306 -u shigure -p
 ```
 
-### 7.Rvizの起動方法
+### 7. 顔認証のユーザー登録（名前付きの事前登録）
+
+カメラ(rs_camera)が起動している状態で、face_modelsノードを対話実行する。 <br>
+ユーザー名を入力すると顔を100枚キャプチャし、特徴・顔画像を保存する。
+
+Dockerの場合 <br>
+```sh
+docker compose exec shigure_core bash
+ros2 run shigure_core face_models
+# → "ユーザー名を入力してください:" に名前を入力
+```
+
+Dockerを使わない場合 <br>
+```sh
+ros2 run shigure_core face_models
+```
+
+保存先は `~/.shigure/face_models/user_<名前>/`。 <br>
+(Dockerの場合はホストの `~/.shigure` をマウントしているため、コンテナを作り直しても登録データは残る。 <br>
+環境変数 `SHIGURE_FACE_MODELS_DIR` で保存先を変更可能)
+
+> **注意** : people_recognitionノードは顔辞書を起動時に一度だけ読み込むため、登録後は再起動が必要。
+> ```sh
+> docker compose restart shigure_core
+> ```
+
+### 8.Rvizの起動方法
 - Rvizのインストール (Dockerの場合はDockerfileに記載しているため不要)
 ```
 sudo apt install ros-humble-rviz2
