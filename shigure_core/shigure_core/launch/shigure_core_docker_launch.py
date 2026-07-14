@@ -35,5 +35,19 @@ def generate_launch_description():
             parameters=[
                 {"is_debug_mode": True},
             ],
+        ),
+        Node(
+            package="shigure_core",
+            executable="pose_save",
+            prefix="xterm -T 'pose_save' -e",
+        ),
+        Node(
+            package="shigure_core",
+            executable="record_event",
+            prefix="xterm -T 'record_event' -e",
+            parameters=[
+                # コンテナ内パス。save_root_pathは~を展開しないため絶対パスで指定する
+                {"save_root_path": "/ros2_ws/events"},
+            ],
         )
     ])
