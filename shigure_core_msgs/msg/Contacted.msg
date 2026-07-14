@@ -1,5 +1,6 @@
 string event_id
 string people_id
+string face_name
 string object_id
 string action
 BoundingBox people_bounding_box

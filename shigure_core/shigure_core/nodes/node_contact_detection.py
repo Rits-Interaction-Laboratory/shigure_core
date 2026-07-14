@@ -156,6 +156,7 @@ class ContactDetectionNode(ImagePreviewNode):
                 contacted = Contacted()
                 contacted.event_id = self._id_manager.new_event_id()
                 contacted.people_id = person.people_id
+                contacted.face_name = person.face_name
                 contacted.object_id = tracked_object.object_id
                 contacted.action = action.value
                 contacted.people_bounding_box = person.bounding_box
@@ -166,6 +167,7 @@ class ContactDetectionNode(ImagePreviewNode):
                 # TOUCHの場合はevent idを追加せずにpublish
                 contacted = Contacted()
                 contacted.people_id = person.people_id
+                contacted.face_name = person.face_name
                 contacted.object_id = tracked_object.object_id
                 contacted.action = action.value
                 contacted.people_bounding_box = person.bounding_box
@@ -173,7 +175,8 @@ class ContactDetectionNode(ImagePreviewNode):
                 contacted.object_cube = self._to_centered_cube(tracked_object.collider)
                 publish_msg.contacted_list.append(contacted)
 
-            print(f'PeopleId: {person.people_id}, ObjectId: {tracked_object.object_id}, Action: {action.value}')
+            print(f'PeopleId: {person.people_id}, FaceName: {person.face_name or "-"}, '
+                  f'ObjectId: {tracked_object.object_id}, Action: {action.value}')
 
         self._publisher.publish(publish_msg)
 
@@ -210,15 +213,19 @@ class ContactDetectionNode(ImagePreviewNode):
                 cv2.circle(color_img, (x, y), 5, (255, 0, 0), thickness=-1)
                 cv2.circle(event_frame, (x, y), 5, (255, 0, 0), thickness=-1)
 
+                # 顔認証で名前が確定していれば名前を併記する(未確定時はface_nameは空文字)
+                people_label = f'ID : {re.sub(".*_", "", person.people_id)}'
+                if person.face_name:
+                    people_label = f'{people_label} ({person.face_name})'
+
                 cv2.rectangle(color_img, (left, top), (right, bottom), (255, 0, 0), thickness=3)
                 cv2.rectangle(event_frame, (left, top), (right, bottom), (255, 0, 0), thickness=3)
-                text_w, text_h = cv2.getTextSize(f'ID : {re.sub(".*_", "", person.people_id)}',
-                                                 cv2.FONT_HERSHEY_PLAIN, 1.5, 2)[0]
+                text_w, text_h = cv2.getTextSize(people_label, cv2.FONT_HERSHEY_PLAIN, 1.5, 2)[0]
                 cv2.rectangle(color_img, (left, top), (left + text_w, top - text_h), (255, 0, 0), -1)
                 cv2.rectangle(event_frame, (left, top), (left + text_w, top - text_h), (255, 0, 0), -1)
-                cv2.putText(color_img, f'ID : {re.sub(".*_", "", person.people_id)}', (left, top),
+                cv2.putText(color_img, people_label, (left, top),
                             cv2.FONT_HERSHEY_PLAIN, 1.5, (255, 255, 255), thickness=2)
-                cv2.putText(event_frame, f'ID : {re.sub(".*_", "", person.people_id)}', (left, top),
+                cv2.putText(event_frame, people_label, (left, top),
                             cv2.FONT_HERSHEY_PLAIN, 1.5, (255, 255, 255), thickness=2)
                 
 
