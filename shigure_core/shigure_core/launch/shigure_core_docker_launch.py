@@ -36,6 +36,16 @@ def generate_launch_description():
                 {"is_debug_mode": True},
             ],
         ),
+        # 顔認識。辞書はSHIGURE_FACE_MODELS_DIR未指定時 ~/.shigure/face_models
+        # (docker-composeでホストの~/.shigureをマウントして永続化している)
+        Node(
+            package="shigure_core",
+            executable="people_recognition",
+            prefix="xterm -T 'people_recognition' -e",
+            parameters=[
+                {"is_debug_mode": True},
+            ],
+        ),
         Node(
             package="shigure_core",
             executable="pose_save",

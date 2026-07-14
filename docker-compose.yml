@@ -7,6 +7,8 @@ services:
       - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-0}
     volumes:
       - /tmp/.X11-unix:/tmp/.X11-unix
+      # 顔辞書(登録ユーザーの特徴・画像)をホストと共有し、コンテナ再作成後も保持する
+      - ~/.shigure:/root/.shigure
     depends_on:
       db:
         condition: service_healthy
