@@ -1,0 +1,19 @@
+# Python依存（Docker・生環境共通。Dockerfileはこのファイルを参照する）
+# 生環境では: pip3 install -r requirements.txt
+
+# ROS2 Humble の cv_bridge 等が numpy 2系に未対応のため 2未満に固定
+numpy>=1.24,<2
+mysql-connector-python
+pandas
+
+# 顔認識 (people_recognition)
+insightface
+onnxruntime
+faiss-cpu
+scikit-learn
+Pillow>=9.0.0
+
+# Web API (shigure_api)
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+pydantic>=2.0.0
