@@ -141,7 +141,7 @@ class SubtractionAnalysisNode(ImagePreviewNode):
 
                 # db書き込み
                 # ------
-                EventRepository.insert_people(contacted.people_id, event_save_path, scene.event.people_bounding_box.width, scene.event.people_bounding_box.height)
+                EventRepository.insert_people(contacted.people_id, contacted.face_name, event_save_path, scene.event.people_bounding_box.width, scene.event.people_bounding_box.height)
                 EventRepository.insert_object(
                     contacted.object_id, 
                     event_save_path, 

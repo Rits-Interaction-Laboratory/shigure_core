@@ -7,11 +7,11 @@ from shigure_core.db.convert_format import ConvertMsg
 class EventRepository:
 
     @staticmethod
-    def insert_people(person_id: str, icon_path: str, icon_width: int, icon_height: int):
+    def insert_people(person_id: str, name: str, icon_path: str, icon_width: int, icon_height: int):
         ctx = mysql.connector.connect(**config)
         cur = ctx.cursor()
-        sql = f"INSERT INTO people(person_id, icon_path, icon_width, icon_height) VALUES ('{person_id}', '{icon_path}', '{icon_width}', '{icon_height}')"
-        cur.execute(sql)
+        sql = "INSERT INTO people(person_id, name, icon_path, icon_width, icon_height) VALUES (%s, %s, %s, %s, %s)"
+        cur.execute(sql, (person_id, name, icon_path, icon_width, icon_height))
         ctx.commit()
         ctx.close()
 
