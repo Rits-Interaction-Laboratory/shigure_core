@@ -5,6 +5,13 @@ from openpose_ros2_msgs.msg import PoseKeyPointsList, PoseKeyPoints, PoseKeyPoin
 
 from shigure_core.nodes.people_tracking.tracking_info import TrackingInfo
 
+# 深度欠損(0)を補完するときに参照する近傍ウィンドウの半径(px)。
+# RealSense の深度は首付近で頻繁に欠損する。欠損値(0)をそのまま透視逆変換すると
+# 3次元位置が原点(0,0,0)へ飛び、前フレームとの距離が threshold_distance を超えて
+# 「別人」と判定され追跡IDが振り直される（＝顔名の累積スコアがリセットされる）。
+DEPTH_SAMPLE_RADIUS = 4
+
+
 class PeopleTrackingLogic:
     """人物追跡ロジック."""
 
@@ -36,11 +43,39 @@ class PeopleTrackingLogic:
             a_inv = np.linalg.inv(k)
 
             # 透視逆変換して保存
-            depth = depth_img[y, x]
+            # 深度が欠損(0)のままだと m が (0, 0) となり位置が原点へ飛ぶため、
+            # 近傍の有効値で補完してから変換する。
+            depth = PeopleTrackingLogic.sample_depth(depth_img, x, y)
+            if depth <= 0:
+                # 近傍も全て欠損。このフレームでは位置を確定できないのでスキップする。
+                continue
             m = (depth * np.matmul(a_inv, s)).T
             current_people_list.append((m[0, 0], m[0, 1], depth, key_points))
 
         return PeopleTrackingLogic.tracking(current_people_list, tracking_info, threshold_distance)
+
+    @staticmethod
+    def sample_depth(depth_img: np.ndarray, x: int, y: int, radius: int = DEPTH_SAMPLE_RADIUS) -> float:
+        """
+        (x, y) の深度を返す. 欠損(0)の場合は近傍の有効値の中央値で補完する.
+
+        :param depth_img: 深度画像
+        :param x: 参照するx座標
+        :param y: 参照するy座標
+        :param radius: 補完に使う近傍ウィンドウの半径(px)
+        :return: 深度. 近傍も全て欠損している場合は 0.0
+        """
+        depth = float(depth_img[y, x])
+        if depth > 0:
+            return depth
+
+        height, width = depth_img.shape[:2]
+        window = depth_img[max(0, y - radius):min(height, y + radius + 1),
+                           max(0, x - radius):min(width, x + radius + 1)]
+        valid = window[window > 0]
+        if valid.size == 0:
+            return 0.0
+        return float(np.median(valid))
 
     @staticmethod
     def calculate_average_score(key_points: PoseKeyPoints) -> float:
