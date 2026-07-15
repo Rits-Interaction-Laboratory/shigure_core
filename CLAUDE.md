@@ -56,7 +56,7 @@ shigure_core/            # ament_python パッケージ（setup.py はここ）
 ├── resource/db/         # マイグレーション SQL・DB 用 docker-compose
 └── shigure_core/        # Python モジュール（同名ネスト）
     ├── nodes/           # node_<name>.py（Node層）+ <name>/（Logic層）
-    ├── launch/          # 用途別 launch 7種
+    ├── launch/          # launch（既定は shigure_core_launch.py、引数で構成変更）
     ├── db/              # MySQL アクセス層
     └── util/            # 深度画像・座標変換ユーティリティ
 ```
@@ -79,6 +79,7 @@ Node / Logic 層の分離・新ノード登録・動的パラメータ（reconfi
 
 ## 注意事項
 
-- launch ファイルは各ノードを gnome-terminal（Docker 版は xterm）の別ウィンドウで起動するため GUI 環境必須。ヘッドレス環境では `ros2 run` で個別起動する
+- launch は各ノードを端末エミュレータの別ウィンドウで起動する（`terminal:=gnome-terminal/xterm/none` で切替、Docker は xterm）。ヘッドレス環境は `terminal:=none`
+- Docker の launch 引数は docker-compose.yml の `command:` 経由で .env の `DEBUG_MODE` / `SAVE_IMAGE` / `ENABLE_PROFILE` から渡る
 - numpy 2 系は非対応（Dockerfile で `numpy<2` に固定）
 - ノードのしきい値類は Logic 層にハードコードされているものが多い。パラメータを探すときは node 層だけでなく `nodes/<name>/logic.py` も確認する

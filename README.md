@@ -1,183 +1,56 @@
 # Shigure Core
 ![Shigure Core](https://img.shields.io/badge/shigure-core-red)
 
-ROS2による室内シーン変遷ロギングシステム 
+ROS2 による室内シーン変遷ロギングシステム。
+カメラ映像から人物（顔認識による個人特定つき）と物体を追跡し、「**誰が・何を・どこへ**」動かしたか（持ち込み/持ち去りイベント）を MySQL に記録する。
 
 Wiki : https://github.com/Rits-Interaction-Laboratory/shigure_core/wiki
 
-## Requires
-* ROS2 Humble [公式インストール方法](https://docs.ros.org/en/humble/Installation.html)
-* Intel® RealSense™ D435
-* ROS2 Wrapper for Intel® RealSense™ Devices [公式リポジトリ](https://github.com/intel/ros2_intel_realsense)
-    * Rits-Interaction-Laboratory/rs_ros2_python [リポジトリ](https://github.com/Rits-Interaction-Laboratory/rs_ros2_python)
-* Rits-Interaction-Laboratory/openpose_ros2 [リポジトリ](https://github.com/Rits-Interaction-Laboratory/openpose_ros2)
-    * docker版 : Rits-Interaction-Laboratory/openpose_ros2_docker [リポジトリ](https://github.com/Rits-Interaction-Laboratory/openpose_ros2_docker)
-* Rits-Interaction-Laboratory/people_detection_ros2 [リポジトリ](https://github.com/Rits-Interaction-Laboratory/people_detection_ros2)
-    * docker版 : Rits-Interaction-Laboratory/people_detection_ros2_docker [リポジトリ](https://github.com/Rits-Interaction-Laboratory/people_detection_ros2_docker)
-* OpenCV
-* Docker
-* Docker Compose
-* (OPTIONAL) web_video_server [ROS wiki](https://wiki.ros.org/web_video_server) [インストール方法](https://github.com/RobotWebTools/web_video_server/issues/108)
+## システム構成
 
-
-## 起動方法
-
-### 1. RealSense nodeの起動
-
-Rits-Interaction-Laboratory/rs_ros2_python を利用
-
-```sh
-ros2 run rs_ros2_python rs_camera
+```
+[別PC] RealSense ─ /rs/color/compressed, /rs/aligned_depth_to_color/*
+[別PC] OpenPose  ─ /openpose/pose_key_points
+[別PC] YOLO11    ─ /bounding_boxes, /Segments
+        │
+        ▼ (本体PC)
+ yolox_object_detection → object_tracking ─┐
+ people_recognition（顔認識）               │
+        ▼                                  ▼
+ people_tracking ── /shigure/people_detection（people_id + face_name）
+        │                                  │
+        ▼                                  ▼
+ contact_detection ── /shigure/contacted（people_id + face_name + action）
+        ▼
+ record_event ── MySQL（people.name に顔名、event に持込/持去を保存）
+        │
+ shigure_api ── Web表示（顔画像 / 追跡オーバーレイ / PCA / 認識イベント）
 ```
 
-### 2. Openpose ROS2 nodeの起動
+## 必要なもの
 
-Rits-Interaction-Laboratory/openpose_ros2_dockerを利用
+- ROS2 Humble（[公式インストール方法](https://docs.ros.org/en/humble/Installation.html)）/ Docker + Docker Compose
+- Intel® RealSense™ D435 + [rs_ros2_python](https://github.com/Rits-Interaction-Laboratory/rs_ros2_python)
+- [openpose_ros2](https://github.com/Rits-Interaction-Laboratory/openpose_ros2)（[docker版](https://github.com/Rits-Interaction-Laboratory/openpose_ros2_docker)）
+- [people_detection_ros2](https://github.com/Rits-Interaction-Laboratory/people_detection_ros2)（[docker版](https://github.com/Rits-Interaction-Laboratory/people_detection_ros2_docker)）
+- (OPTIONAL) [web_video_server](https://wiki.ros.org/web_video_server)
 
-```sh
-docker run -it --gpus all --net host openpose_ros2_docker
-bash /run.bash
-```
+## ドキュメント
 
-### 3. People Detection ROS2 nodeの起動
+| ドキュメント | 内容 |
+| :--- | :--- |
+| [docs/setup-docker.md](docs/setup-docker.md) | **Docker でのセットアップ**（最短。全ノード + DB を一括起動） |
+| [docs/setup-native.md](docs/setup-native.md) | **生 ROS2 環境でのセットアップ**（GPU 推論・開発向け） |
+| [docs/usage.md](docs/usage.md) | **共通の使い方**：外部ノード起動 / 顔のユーザー登録 / 記録の開始・終了 / 動作確認 / トラブルシュート |
 
-Rits-Interaction-Laboratory/people_detection_ros2_dockerを利用
+## クイックスタート（Docker）
 
-```sh
-docker run -it --gpus all --net host people_detection_ros2_docker
-bash /run.bash
-```
-
-### 4. サブモジュール(bbox_ex_msgs)の用意
 ```sh
 git submodule update --init
-```
-
-### 5. shigure_core(本リポジトリ)の起動
-#### Dockerなし
-ビルド
-```sh
-colcon build
-. <ROS2 workspace>/install/setup.bash
-```
-
-実行(全ノードを実行)
-```sh
-ros2 launch shigure_core shigure_core_launch.py
-```
-#### Dockerあり
-.envの作成
-```sh
-cp .env.example .env
-```
-
-.envを編集
-```sh
-DISPLAY=:1        # echo $DISPLAY で確認した値
-ROS_DOMAIN_ID=10   # 他システムと干渉しないよう任意の値に
-```
-
-DockerコンテナからホストへのDisplay出力を許可
-```
+cp .env.example .env      # DISPLAY と ROS_DOMAIN_ID を設定
 xhost +local:docker
-```
-
-起動 (初回)
-```sh
 docker compose up --build
 ```
 
-起動 (2回目以降)
-```sh
-docker compose up
-```
-
-停止
-```sh
-docker compose down
-```
-
-DBデータも含めて完全リセットする場合
-```sh
-docker compose down -v
-```
-
-### 6. DBへの保存を行う場合
-
-Dockerで起動した場合（手順5）、DB・record_event・pose_saveは`docker compose up`で自動的に立ち上がるため、以下の個別起動は不要。
-
-DBのみ起動する場合（プロジェクトルートで） <br>
-```sh
-docker compose up -d db migrate
-```
-
-record_event nodeの起動（Dockerを使わない場合） <br>
-(パラメータをデフォルトから変更する場合はYMLファイルを読み込む。 <br>
-Sample YMLファイルの配置フォルダ : [/shigure_core/shigure_core/shigure_core/nodes/params/](/shigure_core/shigure_core/shigure_core/nodes/params/))
-```sh
-ros2 run shigure_core record_event --ros-args --params-file <ROS2 workspace>/src/shigure_core/shigure_core/shigure_core/nodes/params/record_event_params.yml
-```
-
-pose save nodeの起動（Dockerを使わない場合） <br>
-```sh
-ros2 run shigure_core pose_save
-```
-
-記録の開始 <br>
-(この信号を送るまでは骨格・イベントともDBに保存されない。本来はHoloLens 2から送信される信号) <br>
-```sh
-ros2 topic pub -1 /HL2/pose_record_signal std_msgs/msg/String "{data: 'Start'}"
-```
-
-記録の終了 <br>
-```sh
-ros2 topic pub -1 /HL2/pose_record_signal std_msgs/msg/String "{data: 'End'}"
-```
-
-DBへの接続 <br>
-(PW : `shigure`) <br>
-```sh
-mysql -h 127.0.0.1 -P 3306 -u shigure -p
-```
-
-### 7. 顔認証のユーザー登録（名前付きの事前登録）
-
-カメラ(rs_camera)が起動している状態で、face_modelsノードを対話実行する。 <br>
-ユーザー名を入力すると顔を100枚キャプチャし、特徴・顔画像を保存する。
-
-Dockerの場合 <br>
-```sh
-docker compose exec shigure_core bash
-ros2 run shigure_core face_models
-# → "ユーザー名を入力してください:" に名前を入力
-```
-
-Dockerを使わない場合 <br>
-```sh
-ros2 run shigure_core face_models
-```
-
-保存先は `~/.shigure/face_models/user_<名前>/`。 <br>
-(Dockerの場合はホストの `~/.shigure` をマウントしているため、コンテナを作り直しても登録データは残る。 <br>
-環境変数 `SHIGURE_FACE_MODELS_DIR` で保存先を変更可能)
-
-> **注意** : people_recognitionノードは顔辞書を起動時に一度だけ読み込むため、登録後は再起動が必要。
-> ```sh
-> docker compose restart shigure_core
-> ```
-
-### 8.Rvizの起動方法
-- Rvizのインストール (Dockerの場合はDockerfileに記載しているため不要)
-```
-sudo apt install ros-humble-rviz2
-```
-
-- コンテナのbashを起動し，rvizを起動
-```
-docker compose exec shigure_core bash
-ros2 run rviz2 rviz2
-```
-
-- RvizのGUIでFixed Frameをmarkerに指定 (=基準点の設定？)
-
-- addからTFを追加すると，グリッド線の画面に座標系の表示が現れる
+これで DB を含む全ノードが起動する。外部ノード（RealSense / OpenPose / YOLO11）の起動と、
+記録開始信号の送信は [docs/usage.md](docs/usage.md) を参照。

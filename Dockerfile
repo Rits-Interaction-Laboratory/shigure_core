@@ -10,18 +10,9 @@ RUN apt-get update && apt-get install -y \
     tmux \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip3 install "numpy<2" mysql-connector-python pandas
-
-# 顔認識(people_recognition)と Web API(shigure_api) の依存
-RUN pip3 install "numpy<2" \
-    insightface \
-    onnxruntime \
-    faiss-cpu \
-    scikit-learn \
-    pillow \
-    fastapi \
-    "uvicorn[standard]" \
-    pydantic
+# Python依存はルートのrequirements.txtで一元管理（生環境と共通）
+COPY requirements.txt /tmp/requirements.txt
+RUN pip3 install -r /tmp/requirements.txt
 
 # insightface のモデル(buffalo_s)をビルド時にダウンロードしておく
 # (初回起動時のダウンロード待ち・実行時のネットワーク依存をなくすため)
@@ -46,4 +37,4 @@ RUN echo "source /opt/ros/humble/setup.bash" >> /root/.bashrc \
     && echo "source /ros2_ws/install/setup.bash" >> /root/.bashrc
 
 ENTRYPOINT ["/ros_entrypoint.sh"]
-CMD ["ros2", "launch", "shigure_core", "shigure_core_docker_launch.py"]
+CMD ["ros2", "launch", "shigure_core", "shigure_core_launch.py", "terminal:=xterm", "record:=true", "save_root_path:=/ros2_ws/events", "debug_mode:=true"]
