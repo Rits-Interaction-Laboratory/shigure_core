@@ -125,21 +125,20 @@ class PeopleTrackingNode(ImagePreviewNode):
             qos_profile=shigure_qos
         )
 
-        # color 画像が必要なのは、描画(is_debug_mode)・画像保存(save_image)・横顔保存(enable_profile_insightface)のいずれか。
-        if not self.is_debug_mode and not self.save_image and not self.enable_profile_insightface:
-            self.time_synchronizer = message_filters.TimeSynchronizer(
-                [depth_subscriber, key_points_subscriber, depth_camera_info_subscriber], 30000)
-            self.time_synchronizer.registerCallback(self.callback)
-        else:
-            color_subscriber = message_filters.Subscriber(
-                self,
-                CompressedImage,
-                '/rs/color/compressed',
-                qos_profile=shigure_qos
-            )
-            self.time_synchronizer = message_filters.TimeSynchronizer(
-                [depth_subscriber, key_points_subscriber, depth_camera_info_subscriber, color_subscriber], 400000)
-            self.time_synchronizer.registerCallback(self.callback_debug)
+        # color 画像は描画(is_debug_mode)・画像保存(save_image)・横顔保存(enable_profile_insightface)
+        # のいずれかで必要になる。これらは ros2 param set で実行中に切り替えられるため、
+        # 起動時の値に関わらず常に color を購読して callback_debug を使う。
+        # （color/depth/cameraInfo は同一 RealSense 由来でタイムスタンプが揃うため 4 topic
+        # 同期でも取りこぼしは増えない。全フラグ無効の間は callback_debug 側で color を触らない。）
+        color_subscriber = message_filters.Subscriber(
+            self,
+            CompressedImage,
+            '/rs/color/compressed',
+            qos_profile=shigure_qos
+        )
+        self.time_synchronizer = message_filters.TimeSynchronizer(
+            [depth_subscriber, key_points_subscriber, depth_camera_info_subscriber, color_subscriber], 400000)
+        self.time_synchronizer.registerCallback(self.callback_debug)
 
         # ros params
         self.declare_parameter('threshold_distance', 1000,
@@ -423,6 +422,13 @@ class PeopleTrackingNode(ImagePreviewNode):
     def callback_debug(self, depth_src: CompressedImage, key_points_list: OpenPosePoseKeyPointsList,
                        camera_info: CameraInfo, color_src: CompressedImage):
         published_msg: ShigurePoseKeyPointsList = self.callback(depth_src, key_points_list, camera_info)
+
+        # 実行中に3フラグが全て無効なら color 画像は復号も保存もしない（CPU/ストレージ節約）。
+        # people_detection は上の callback で配信済み。ウィンドウは閉じておく
+        # （destroyAllWindows は waitKey と同じトピックコールバックスレッドから呼ぶ必要がある）。
+        if not self.is_debug_mode and not self.save_image and not self.enable_profile_insightface:
+            cv2.destroyAllWindows()
+            return
 
         color_img: np.ndarray = self.bridge.compressed_imgmsg_to_cv2(color_src)
 

@@ -1,8 +1,11 @@
+from typing import List
+
 import cv2
 import message_filters
 import numpy as np
 import rclpy
 from rclpy.qos import QoSProfile, ReliabilityPolicy
+from rcl_interfaces.msg import ParameterDescriptor, ParameterType, SetParametersResult, Parameter
 from sensor_msgs.msg import CompressedImage
 from shigure_core_msgs.msg import FaceRecognitionResult, FaceInfo, RecognitionHistory, DictionaryUpdate, FeatureInfo, ProfileFeatureAdd
 
@@ -54,6 +57,20 @@ class PeopleRecognitionNode(ImagePreviewNode):
         self.all_images = {}
         self.last_recognition_history = None  # 最後に受信したrecognition_history
 
+        # 顔登録データ(.npy/.jpg/pca_model)をディスクへ永続化するか。
+        # デバッグ窓表示用の is_debug_mode とは独立させる（表示だけしたい/保存だけしたいを分離）。
+        # 長期稼働のストレージ節約のため既定 false。実行中に切替可:
+        #   ros2 param set /people_recognition_node save_registration true
+        save_registration_descriptor = ParameterDescriptor(
+            type=ParameterType.PARAMETER_BOOL,
+            description='true のとき新規/更新した顔特徴・画像・PCAモデルをディスクへ保存する。')
+        self.declare_parameter('save_registration', False, save_registration_descriptor)
+        self.save_registration: bool = \
+            self.get_parameter('save_registration').get_parameter_value().bool_value
+        # 基底クラスの _on_set_parameters は上書きせず、専用コールバックを追加登録する。
+        self.add_on_set_parameters_callback(self._on_set_parameters_people_recognition)
+        self.get_logger().info('SaveRegistration : ' + str(self.save_registration))
+
         # QoS Settings
         shigure_qos = QoSProfile(depth=10, reliability=ReliabilityPolicy.BEST_EFFORT)
 
@@ -104,9 +121,17 @@ class PeopleRecognitionNode(ImagePreviewNode):
         # people_idとuser_idの対応付け用辞書
         self.user_id_map = {}
 
+    def _on_set_parameters_people_recognition(self, params: List[Parameter]) -> SetParametersResult:
+        """save_registration の実行時変更を反映する（他パラメータは基底コールバックが処理）。"""
+        for param in params:
+            if param.name == 'save_registration':
+                self.save_registration = param.value
+                self.get_logger().info('SaveRegistration : ' + str(self.save_registration))
+        return SetParametersResult(successful=True)
+
     def rebuild_pca_model_on_disk(self) -> None:
         """Rebuild pca_model.pkl from face_models (after new user saved to disk)."""
-        if not self.is_debug_mode:
+        if not self.save_registration:
             return
         result = build_pca_model(Path(DIRECTORY), Path(DIRECTORY) / 'pca_model.pkl')
         if result.success:
@@ -131,7 +156,7 @@ class PeopleRecognitionNode(ImagePreviewNode):
             f'total={len(self.profile_dictionary[user_name])}'
         )
 
-        if not self.is_debug_mode:
+        if not self.save_registration:
             return
 
         profile_dir = os.path.join(DIRECTORY, user_name, 'profile')
@@ -386,7 +411,7 @@ class PeopleRecognitionNode(ImagePreviewNode):
         self._ensure_profile_user_entry(user_name)
 
         user_dir = None
-        if self.is_debug_mode:
+        if self.save_registration:
             # 新しいディレクトリを作成
             user_dir = os.path.join(DIRECTORY, user_name)
             os.makedirs(user_dir, exist_ok=True)
@@ -398,7 +423,7 @@ class PeopleRecognitionNode(ImagePreviewNode):
                 continue
             feature = self.all_features[num]["feature"]
             self.dictionary[user_name].append(feature)
-            if self.is_debug_mode and user_dir is not None:
+            if self.save_registration and user_dir is not None:
                 # 保存処理
                 feature_path = os.path.join(user_dir, f"{user_name}_{num}.npy")
                 np.save(feature_path, feature)

@@ -106,17 +106,21 @@ ros2 run shigure_core face_models
 ### 4-3. 認識パイプラインを起動
 ```bash
 export ROS_DOMAIN_ID=10          # ← 全端末で必須。設定漏れだと他ノードと一切通信できない
-ros2 launch shigure_core shigure_core_launch.py debug_mode:=true save_image:=true
+# 初回の顔登録もしたい場合は save_registration:=true も付ける（下表参照）
+ros2 launch shigure_core shigure_core_launch.py debug_mode:=true save_image:=true save_registration:=true
 ```
-起動するノード：yolox_object_detection / object_tracking / people_tracking / people_recognition / contact_detection /（save_image時のみ）shigure_api。
+起動するノード：yolox_object_detection / object_tracking / people_tracking / people_recognition / contact_detection / shigure_api（常駐）。
 起動時に people_recognition が `~/.shigure/face_models` を辞書ロード → 事前登録者は即認識。
 
-launch 引数：
-| 引数 | 既定 | 効果 |
-|---|---|---|
-| `debug_mode` | false | 全ノードの cv2 デバッグ窓表示＋**people_recognition の自動登録ユーザーを .npy/.jpg でディスク保存** |
-| `save_image` | false | 追跡デバッグ画像を `/shigure/tracking_debug_image` へ配信・保存＋Web表示(shigure_api)を起動 |
-| `enable_profile` | false | 横顔プロフィール特徴を `/profile_feature_add` に配信（横顔学習） |
+launch 引数（いずれも**起動時の初期値**。稼働中は再起動なしに `ros2 param set` で切替可 → §6-1）：
+| 引数 | 既定 | 効果 | 対応するノードパラメータ |
+|---|---|---|---|
+| `debug_mode` | false | 全ノードの cv2 デバッグ窓を**表示のみ**（保存はしない） | `is_debug_mode` |
+| `save_image` | false | 追跡デバッグ画像を `/shigure/tracking_debug_image` へ配信・保存（Web表示 shigure_api は常駐で、この配信が表示ソース） | `save_image` |
+| `enable_profile` | false | 横顔プロフィール特徴を `/profile_feature_add` に配信（横顔学習） | `enable_profile_insightface` |
+| `save_registration` | false | **people_recognition の顔特徴・画像・PCAモデルを .npy/.jpg でディスク保存**（表示とは独立） | `save_registration` |
+
+> 💡 デバッグ窓を見たいだけなら `debug_mode:=true` のみでよい（顔データは保存されない）。顔登録データを溜めたいときだけ `save_registration:=true`。両者は独立に切り替えられる。
 
 ### 4-4. イベント記録ノードを起動（別端末・DBへ保存）
 
@@ -180,12 +184,42 @@ docker compose exec db mysql -ushigure -pshigure shigure \
   -e "SELECT * FROM event ORDER BY id DESC LIMIT 10;"
 ```
 
-### Web（save_image:=true のとき）
-`http://<このPCのIP>:8765` … `/users`(顔画像) / `/ws/tracking_debug`(全体画像) / `/ws/pca_plot`(PCA) / `/ws/events`(認識イベント)
+### Web
+shigure_api は常駐（`http://<このPCのIP>:8765`）… `/users`(顔画像) / `/ws/tracking_debug`(全体画像) / `/ws/pca_plot`(PCA) / `/ws/events`(認識イベント)。
+`/ws/tracking_debug` の全体画像は `save_image=true`（§6-1）の間だけ配信される。
 
 ---
 
 ## 6. 調整パラメータ
+
+### 6-1. 長期稼働時のストレージ制御（実行中に画像/特徴の保存を ON/OFF）
+
+半永久稼働では `save_registration` / `save_image` / `enable_profile` を有効にしたままだと画像・特徴が溜まり続けストレージを圧迫する。これらは **launch し直さずに `ros2 param set` で切替可能**。各ノードは起動時 false でもよい（people_tracking は起動時の値に関わらず color を常時購読するため、後から有効化しても効く）。
+
+```bash
+export ROS_DOMAIN_ID=10
+# --- 普段は全部 OFF（保存しない）にしておく ---
+ros2 param set /people_recognition_node save_registration          false  # 顔特徴/画像/PCAのディスク保存を停止
+ros2 param set /people_tracking_node    save_image                 false  # 追跡画像の配信/保存を停止
+ros2 param set /people_tracking_node    enable_profile_insightface false  # 横顔特徴の配信を停止
+
+# --- 顔登録したい・Webで様子を確認したいときだけ一時的に ON ---
+ros2 param set /people_recognition_node save_registration true
+ros2 param set /people_tracking_node    save_image        true
+
+# デバッグ窓の表示は保存とは独立。表示だけしたいとき（ディスクは汚さない）：
+ros2 param set /people_tracking_node    is_debug_mode true   # 骨格・追跡窓
+ros2 param set /contact_detection_node  is_debug_mode true   # 持込/持去窓
+
+# 現在値の確認
+ros2 param get /people_recognition_node save_registration
+```
+- `save_registration=false` でも**メモリ上の認識・辞書登録は継続**する（止まるのはディスク保存だけ。再起動でメモリ辞書は消える → §6-2 の注記も参照）。
+- `is_debug_mode`（デバッグ窓表示）と `save_registration`（顔データ保存）は**独立**。窓を見たいだけならディスクは一切汚れない。
+- shigure_api（Web）は常駐。`save_image=false` の間は全体画像が配信されず表示されないだけで、サーバはストレージを消費しない。
+- 上記 param 名は launch 引数名ではなく**ノードのパラメータ名**である点に注意（launch 引数 `enable_profile` → param `enable_profile_insightface`、`debug_mode` → param `is_debug_mode`。`save_image` / `save_registration` は引数名＝param名）。
+
+### 6-2. 認識・検出のしきい値
 
 ```bash
 # face_name を確定する累積スコア閾値（既定3.0、コサイン類似度の累積和。小さいほど早く名前が出る）
@@ -193,7 +227,7 @@ ros2 param set /people_tracking_node face_name_score_threshold 2.0
 ```
 - 自動登録（未登録者を `user_newN` として辞書追加）の発火特徴数：`node_people_recognition.py` の `MIN_FEATURES_FOR_NEW_USER`（既定20）。
 - 顔検出頻度を上げたい：同ファイルの `MIN_DET_SCORE`（既定0.8）を下げる。
-- 自動登録ユーザーの**ディスク保存は `debug_mode:=true`（is_debug_mode=True）時のみ**。false だとメモリ辞書のみで再起動で消える。
+- 自動登録ユーザーの**ディスク保存は `save_registration:=true` 時のみ**（デバッグ窓の `debug_mode` とは独立）。false だとメモリ辞書のみで再起動で消える。
 
 ---
 
