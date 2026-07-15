@@ -2,13 +2,14 @@ services:
   shigure_core:
     build: .
     network_mode: host
-    # launch引数は .env の DEBUG_MODE / SAVE_IMAGE / ENABLE_PROFILE で変更できる
+    # launch引数は .env の DEBUG_MODE / ENABLE_PROFILE / SAVE_IMAGE / SAVE_REGISTRATION で変更できる
     command: >
       ros2 launch shigure_core shigure_core_launch.py
       terminal:=xterm record:=true save_root_path:=/ros2_ws/events
       debug_mode:=${DEBUG_MODE:-true}
-      save_image:=${SAVE_IMAGE:-false}
       enable_profile:=${ENABLE_PROFILE:-false}
+      save_image:=${SAVE_IMAGE:-false}
+      save_registration:=${SAVE_REGISTRATION:-false}
     environment:
       - DISPLAY=${DISPLAY}
       - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-0}

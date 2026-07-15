@@ -51,15 +51,16 @@ class PeopleTrackingNode(ImagePreviewNode):
         self._prev_tracked_people_ids = set()   # 直前フレームの追跡ID（消えたIDのクリーンアップ用）
         self._profile_last_save_frame = {}      # {people_id: 最後に横顔保存したframe_count}
 
-        # 画像保存モード。true のとき追跡デバッグ画像を /shigure/tracking_debug_image に配信し、
-        # ローカルにも保存する（Web表示はこのモードでのみ利用可能）。launch の save_image 引数で切替。
+        # ローカル画像保存モード。true のとき追跡デバッグ画像をローカルディスクに保存する
+        # （手元で解析したい人向け）。shigure_api への配信(/shigure/tracking_debug_image)は
+        # このフラグとは無関係に常時行う。launch の save_image 引数で切替。
         self.declare_parameter('save_image', False,
                                ParameterDescriptor(type=ParameterType.PARAMETER_BOOL,
-                                                   description='true のとき追跡デバッグ画像を配信・保存する（Web表示用）。'))
+                                                   description='true のとき追跡デバッグ画像をローカルディスクに保存する（Web配信は常時）。'))
         self.save_image: bool = self.get_parameter('save_image').get_parameter_value().bool_value
 
         # 横顔プロフィール学習。true のとき確定人物の@profile顔特徴を /profile_feature_add へ配信する。
-        # 有効化には color 画像が必要なため、購読条件(is_debug_mode/save_image)にも含める。
+        # 有効化には color 画像が必要なため、購読条件(is_debug_mode/enable_profile_insightface)にも含める。
         self.declare_parameter('enable_profile_insightface', False,
                                ParameterDescriptor(type=ParameterType.PARAMETER_BOOL,
                                                    description='true のとき横顔プロフィール特徴を /profile_feature_add に配信する。'))
@@ -87,7 +88,7 @@ class PeopleTrackingNode(ImagePreviewNode):
             self.face_recognition_callback,
             10
         )
-        # 追跡デバッグ画像(オーバーレイ)の配信先。save_image モード時のみ実際に配信する。
+        # 追跡デバッグ画像(オーバーレイ)の配信先。5フレーム毎に現フレームを配信する（shigure_api のWeb表示用）。
         self._debug_image_publisher = self.create_publisher(
             DebugImage,
             '/shigure/tracking_debug_image',
@@ -125,21 +126,19 @@ class PeopleTrackingNode(ImagePreviewNode):
             qos_profile=shigure_qos
         )
 
-        # color 画像が必要なのは、描画(is_debug_mode)・画像保存(save_image)・横顔保存(enable_profile_insightface)のいずれか。
-        if not self.is_debug_mode and not self.save_image and not self.enable_profile_insightface:
-            self.time_synchronizer = message_filters.TimeSynchronizer(
-                [depth_subscriber, key_points_subscriber, depth_camera_info_subscriber], 30000)
-            self.time_synchronizer.registerCallback(self.callback)
-        else:
-            color_subscriber = message_filters.Subscriber(
-                self,
-                CompressedImage,
-                '/rs/color/compressed',
-                qos_profile=shigure_qos
-            )
-            self.time_synchronizer = message_filters.TimeSynchronizer(
-                [depth_subscriber, key_points_subscriber, depth_camera_info_subscriber, color_subscriber], 400000)
-            self.time_synchronizer.registerCallback(self.callback_debug)
+        # color 画像は Web配信(5フレーム毎)・描画(is_debug_mode)・横顔保存(enable_profile_insightface)
+        # で必要になる。Web配信は常時行うため、常に color を購読して callback_debug を使う。
+        # （color/depth/cameraInfo は同一 RealSense 由来でタイムスタンプが揃うため 4 topic
+        # 同期でも取りこぼしは増えない。color 不要なフレームは callback_debug 側で復号しない。）
+        color_subscriber = message_filters.Subscriber(
+            self,
+            CompressedImage,
+            '/rs/color/compressed',
+            qos_profile=shigure_qos
+        )
+        self.time_synchronizer = message_filters.TimeSynchronizer(
+            [depth_subscriber, key_points_subscriber, depth_camera_info_subscriber, color_subscriber], 400000)
+        self.time_synchronizer.registerCallback(self.callback_debug)
 
         # ros params
         self.declare_parameter('threshold_distance', 1000,
@@ -190,12 +189,10 @@ class PeopleTrackingNode(ImagePreviewNode):
                 self.face_name_score_threshold = param.value
                 self.get_logger().info('FaceNameScoreThreshold : ' + str(self.face_name_score_threshold))
             elif param.name == 'save_image':
-                # 実行中の切替も反映するが、color購読は起動時に決まるため、保存/配信を実際に
-                # 行えるのは起動時から is_debug_mode か save_image が有効だった場合に限る。
+                # ローカルディスク保存の有無のみを制御する（Web配信は常時で影響しない）。
                 self.save_image = param.value
                 self.get_logger().info('SaveImage : ' + str(self.save_image))
             elif param.name == 'enable_profile_insightface':
-                # color購読は起動時に決まるため、起動時から有効だった場合のみ実際に横顔保存できる。
                 self.enable_profile_insightface = param.value
                 self.get_logger().info('EnableProfileInsightface : ' + str(self.enable_profile_insightface))
         return SetParametersResult(successful=True)
@@ -424,15 +421,24 @@ class PeopleTrackingNode(ImagePreviewNode):
                        camera_info: CameraInfo, color_src: CompressedImage):
         published_msg: ShigurePoseKeyPointsList = self.callback(depth_src, key_points_list, camera_info)
 
+        # 現フレームを shigure_api(/ws/tracking_debug)へ配信するフレームか（負荷軽減のため5フレーム毎）。
+        # WebUI は常駐なので配信は常時行う。save_image=true のときは同じ画像をローカル保存もする。
+        publish_web = (self.frame_count % 5 == 0)
+
+        # color 画像が要るのは Web配信 / デバッグ窓表示 / 横顔保存 のいずれか。
+        # どれも不要なフレームは復号せずに抜ける（CPU節約）。people_detection は上の callback で配信済み。
+        # （destroyAllWindows は waitKey と同じトピックコールバックスレッドから呼ぶ必要がある。）
+        if not publish_web and not self.is_debug_mode and not self.enable_profile_insightface:
+            return
+
         color_img: np.ndarray = self.bridge.compressed_imgmsg_to_cv2(color_src)
 
         # 横顔プロフィール保存（描画前の生画像から切り出すため、_draw_overlay より先に行う）
         if self.enable_profile_insightface:
             self._process_profile_save(published_msg, color_img)
 
-        # デバッグ表示も画像保存も不要なら描画はしない（ウィンドウは閉じる）
-        if not self.is_debug_mode and not self.save_image:
-            cv2.destroyAllWindows()
+        # オーバーレイ描画が要るのは Web配信フレーム または デバッグ窓表示のとき。
+        if not publish_web and not self.is_debug_mode:
             return
 
         self._draw_overlay(color_img, published_msg)
@@ -446,10 +452,12 @@ class PeopleTrackingNode(ImagePreviewNode):
         else:
             cv2.destroyAllWindows()
 
-        # 画像保存モード: 追跡デバッグ画像を配信・保存する（Web表示用）。負荷軽減のため5フレーム毎。
-        if self.save_image and self.frame_count % 5 == 0:
+        # WebUI(shigure_api /ws/tracking_debug)へ現フレームのオーバーレイ画像を常時配信する。
+        # save_image=true のときのみ、同じ画像をローカルディスクにも保存する（手元解析用）。
+        if publish_web:
             self._publish_tracking_debug_image(color_img)
-            self._save_tracking_debug_image(color_img)
+            if self.save_image:
+                self._save_tracking_debug_image(color_img)
 
     def _draw_overlay(self, color_img: np.ndarray, published_msg: ShigurePoseKeyPointsList) -> None:
         """追跡結果(バウンディングボックスとID/顔名ラベル)を color_img へ描画する."""
@@ -498,7 +506,7 @@ class PeopleTrackingNode(ImagePreviewNode):
         self._debug_image_publisher.publish(msg)
 
     def _save_tracking_debug_image(self, color_img: np.ndarray) -> None:
-        """オーバーレイ画像をローカルの debug_images ディレクトリへ保存する."""
+        """オーバーレイ画像をローカルの debug_images ディレクトリへ保存する（save_image=true 時のみ）."""
         if not hasattr(self, '_debug_image_dir'):
             # shigure_core パッケージ直下の debug_images/people_tracking を保存先とする。
             base = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'debug_images')

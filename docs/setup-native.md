@@ -65,19 +65,24 @@ docker compose up -d db migrate
 ## 5. 認識パイプラインの起動
 
 ```sh
-ros2 launch shigure_core shigure_core_launch.py debug_mode:=true save_image:=true
+ros2 launch shigure_core shigure_core_launch.py debug_mode:=true
 ```
 
-起動するノード：yolox_object_detection / object_tracking / people_tracking / people_recognition / contact_detection /（save_image 時のみ）shigure_api
+起動するノード：yolox_object_detection / object_tracking / people_tracking / people_recognition / contact_detection / shigure_api（常駐）
 
-| launch 引数 | 既定 | 効果 |
-| :--- | :--- | :--- |
-| `debug_mode` | false | 全ノードの cv2 デバッグ窓表示＋people_recognition の自動登録ユーザーを .npy/.jpg でディスク保存 |
-| `save_image` | false | 追跡デバッグ画像を `/shigure/tracking_debug_image` へ配信・保存＋Web 表示(shigure_api)を起動 |
-| `enable_profile` | false | 横顔プロフィール特徴を `/profile_feature_add` に配信（横顔学習） |
-| `terminal` | gnome-terminal | 各ノードを開く端末（`gnome-terminal` / `xterm` / `none`）。ヘッドレス環境は `none` |
-| `record` | false | DB 保存系ノード（pose_save / record_event）も起動する（手順6の代わり） |
-| `save_root_path` | (ノード既定) | record_event のイベント画像保存先 |
+フラグ類（`debug_mode` / `enable_profile` / `save_image` / `save_registration`）は**起動時の初期値**で、稼働中は再起動なしに `ros2 param set` で切替可能（[usage.md の「実行中のモード切替」](usage.md#実行中のモード切替長期稼働時のストレージ制御)参照）。
+
+| launch 引数 | 既定 | 効果 | 対応ノードパラメータ |
+| :--- | :--- | :--- | :--- |
+| `debug_mode` | **true** | 全ノードの cv2 デバッグ窓を**表示のみ**（顔データ保存は伴わない）。窓が不要なら `debug_mode:=false` | `is_debug_mode` |
+| `enable_profile` | false | 横顔プロフィール特徴を `/profile_feature_add` に配信（横顔学習） | `enable_profile_insightface` |
+| `save_image` | false | 追跡デバッグ画像を**ローカルディスクに保存**（手元解析用。Web 配信は常時なので無関係） | `save_image` |
+| `save_registration` | false | people_recognition の新規/更新の顔特徴・画像・PCA モデルを .npy/.jpg でディスク保存（`is_debug_mode` とは独立） | `save_registration` |
+| `terminal` | gnome-terminal | 各ノードを開く端末（`gnome-terminal` / `xterm` / `none`）。ヘッドレス環境は `none` |  |
+| `record` | false | DB 保存系ノード（pose_save / record_event）も起動する（手順6の代わり） |  |
+| `save_root_path` | (ノード既定) | record_event のイベント画像保存先 |  |
+
+> 💡 デバッグ窓を見たいだけなら `debug_mode:=true` のみでよい（顔データは保存されない）。顔登録データを溜めたいときだけ `save_registration:=true`。両者は独立に切り替えられる。
 
 ## 6. 記録ノードの起動（別端末・DB へ保存）
 
