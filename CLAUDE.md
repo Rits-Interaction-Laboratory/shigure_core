@@ -80,6 +80,6 @@ Node / Logic 層の分離・新ノード登録・動的パラメータ（reconfi
 ## 注意事項
 
 - launch は各ノードを端末エミュレータの別ウィンドウで起動する（`terminal:=gnome-terminal/xterm/none` で切替、Docker は xterm）。ヘッドレス環境は `terminal:=none`
-- Docker の launch 引数は docker-compose.yml の `command:` 経由で .env の `DEBUG_MODE` / `SAVE_IMAGE` / `ENABLE_PROFILE` から渡る
+- Docker の launch 引数は docker-compose.yml の `command:` 経由で .env の `DEBUG_MODE` / `ENABLE_PROFILE` / `SAVE_IMAGE` / `SAVE_REGISTRATION` から渡る
 - numpy 2 系は非対応（Dockerfile で `numpy<2` に固定）
 - ノードのしきい値類は Logic 層にハードコードされているものが多い。パラメータを探すときは node 層だけでなく `nodes/<name>/logic.py` も確認する

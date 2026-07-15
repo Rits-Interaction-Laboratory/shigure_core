@@ -55,7 +55,7 @@ docker compose up           # 2回目以降（コード変更なし）
 | people_tracking / people_recognition | 人物追跡・顔認識 |
 | contact_detection | 接触イベント判定 |
 | pose_save / record_event | 骨格・イベントの DB 保存 |
-| shigure_api | Web API（`SAVE_IMAGE=true` のときのみ起動、ポート 8765） |
+| shigure_api | Web API（常駐、ポート 8765）。全体画像(現フレーム)は常時配信される |
 
 顔辞書はホストの `~/.shigure` をマウントしているため、コンテナを作り直しても登録ユーザーは残る。
 
@@ -63,11 +63,14 @@ docker compose up           # 2回目以降（コード変更なし）
 
 launch 引数は .env で変更できる（docker compose が起動時に launch へ渡す）：
 
+いずれも**起動時の初期値**で、稼働中は再起動なしに `ros2 param set` で切替可能（[usage.md の「実行中のモード切替」](usage.md#実行中のモード切替長期稼働時のストレージ制御)参照）。
+
 | 変数 | デフォルト | 効果 |
 | :--- | :--- | :--- |
-| `DEBUG_MODE` | true | cv2 デバッグ窓の表示・自動登録ユーザーのディスク保存 |
-| `SAVE_IMAGE` | false | 追跡デバッグ画像の配信 + Web API(shigure_api) の起動 |
+| `DEBUG_MODE` | true | cv2 デバッグ窓の**表示のみ**（顔データ保存は伴わない） |
 | `ENABLE_PROFILE` | false | 横顔プロフィール特徴の配信・学習 |
+| `SAVE_IMAGE` | false | 追跡デバッグ画像をローカルディスクに保存（手元解析用。Web 配信は常時なので無関係） |
+| `SAVE_REGISTRATION` | false | 自動登録ユーザーの顔特徴・画像・PCA モデルのディスク保存（`DEBUG_MODE` とは独立） |
 
 変更後は `docker compose up` で再作成すれば反映される（イメージ再ビルドは不要）。
 
