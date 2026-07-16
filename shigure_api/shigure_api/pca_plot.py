@@ -319,9 +319,14 @@ class PcaPlotStateBuilder:
                     continue
                 fns: Set[int] = set()
                 for face in user.face_info:
-                    if face.id.endswith('@profile'):
-                        continue
-                    if face.id != 'unknown':
+                    # 非正面(@profile)も含め、未認識(unknown)の顔だけを unlabeled 対象にする。
+                    # 登録ユーザーに一致した顔（'user_x' / 'user_x@profile'）は除外する。
+                    base_id = (
+                        face.id[: -len('@profile')]
+                        if face.id.endswith('@profile')
+                        else face.id
+                    )
+                    if base_id != 'unknown':
                         continue
                     fns.update(int(fn) for fn in face.features_num)
                 # 未確定 people を在室として記録し、その unlabeled 特徴番号を更新する。

@@ -401,15 +401,17 @@ class PeopleRecognitionNode(ImagePreviewNode):
 
             x, y, w, h = iface_face.bbox
             self.all_images[self.feature_num] = image[y:y + h, x:x + w].copy()
-
-            # 描画ノード用に特徴を配信
-            feat_msg = FeatureInfo()
-            feat_msg.feature_num = int(self.feature_num)
-            feat_msg.feature = embedding.astype(np.float32).tolist()
-            self.feature_pub.publish(feat_msg)
         else:
             user_id, score = self.matching(embedding, self.profile_dictionary, PROFILE_COSINE_THRESHOLD)
             face_id = f"{user_id}@profile" if user_id != "unknown" else "unknown@profile"
+
+        # 描画/PCAプロット用に特徴を配信する（正面・非正面を問わず全ての検出顔）。
+        # unlabeled プロットのリアルタイム表示は feature_info を元にするため、
+        # 非正面(@profile)顔でも配信して現フレームの点を出せるようにする。
+        feat_msg = FeatureInfo()
+        feat_msg.feature_num = int(self.feature_num)
+        feat_msg.feature = embedding.astype(np.float32).tolist()
+        self.feature_pub.publish(feat_msg)
 
         return face_id, score, box, embedding.astype(np.float32).tolist()
             

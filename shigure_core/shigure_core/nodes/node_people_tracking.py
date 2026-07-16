@@ -154,15 +154,20 @@ class PeopleTrackingNode(ImagePreviewNode):
         self.declare_parameter('face_name_score_threshold', 3.0,
                                ParameterDescriptor(type=ParameterType.PARAMETER_DOUBLE,
                                                    description='face_name を確定として publish する累積スコアのしきい値（コサイン類似度の累積和）。未満は未確定として空文字を publish する。'))
+        self.declare_parameter('tracking_max_age', 5,
+                               ParameterDescriptor(type=ParameterType.PARAMETER_INTEGER,
+                                                   description='人物を見失っても people_id を保持する最大フレーム数。'
+                                                               '再出現時に同じIDへ復帰させIDの振り直し（顔名累積のリセット）を抑制する。0で従来動作。'))
 
         self.threshold_distance: int = self.get_parameter('threshold_distance').get_parameter_value().integer_value
         self.threshold_person: float = self.get_parameter('threshold_person').get_parameter_value().double_value
         self.neck_index: int = self.get_parameter('neck_index').get_parameter_value().integer_value
         self.face_name_score_threshold: float = self.get_parameter('face_name_score_threshold').get_parameter_value().double_value
+        self.tracking_max_age: int = self.get_parameter('tracking_max_age').get_parameter_value().integer_value
 
         self.add_on_set_parameters_callback(self._on_set_parameters_people_tracking)
 
-        self.tracking_info = TrackingInfo()
+        self.tracking_info = TrackingInfo(max_age=self.tracking_max_age)
         self.people_tracking_logic = PeopleTrackingLogic()
 
         self._colors = []
@@ -196,6 +201,10 @@ class PeopleTrackingNode(ImagePreviewNode):
             elif param.name == 'enable_profile_insightface':
                 self.enable_profile_insightface = param.value
                 self.get_logger().info('EnableProfileInsightface : ' + str(self.enable_profile_insightface))
+            elif param.name == 'tracking_max_age':
+                self.tracking_max_age = param.value
+                self.tracking_info.set_max_age(param.value)
+                self.get_logger().info('TrackingMaxAge : ' + str(self.tracking_max_age))
         return SetParametersResult(successful=True)
 
     @staticmethod
@@ -293,8 +302,12 @@ class PeopleTrackingNode(ImagePreviewNode):
         return name + '?'        # 暫定：?付き（累積argmaxなのでlatchされる）
 
     def _cleanup_recognition_history(self):
-        """現在追跡していない体IDの顔認識履歴・確定名・横顔保存状態を破棄する."""
-        current_ids = set(self.tracking_info.get_people_dict().keys())
+        """現在追跡していない体IDの顔認識履歴・確定名・横顔保存状態を破棄する.
+
+        coasting（見失い中だが max_age 以内）の体IDは生存扱いにして履歴を残す。
+        こうしないと1フレームの取りこぼしで顔名累積が消えてしまう。
+        """
+        current_ids = self.tracking_info.get_alive_ids()
         for people_id in list(self.recognition_history.keys()):
             if people_id not in current_ids:
                 del self.recognition_history[people_id]
