@@ -31,7 +31,7 @@ PROFILE_COSINE_THRESHOLD = 0.4
 NORML2_THRESHOLD = 1.128
 LP_CONFIDENCE_THRESHOLD = 0.7
 FAISS_FALLBACK_MIN_VOTE_RATIO = 0.5
-MIN_DET_SCORE = 0.8
+MIN_DET_SCORE = 0.5  # 顔検出器(det_score)の採用しきい値の既定。param min_det_score で実行中変更可
 # 新規ユーザーとして辞書登録する最低特徴数（この数を超えたら dictionary_renew で登録判定）。
 MIN_FEATURES_FOR_NEW_USER = 20
 
@@ -67,9 +67,20 @@ class PeopleRecognitionNode(ImagePreviewNode):
         self.declare_parameter('save_registration', False, save_registration_descriptor)
         self.save_registration: bool = \
             self.get_parameter('save_registration').get_parameter_value().bool_value
+
+        # 顔検出器(det_score)の採用しきい値。低いほど小さい/遠い顔も拾うが誤検出は増える
+        # （誤検出は照合(COSINE_THRESHOLD)で unknown に落ちるため誤命名リスクは低い）。
+        min_det_score_descriptor = ParameterDescriptor(
+            type=ParameterType.PARAMETER_DOUBLE,
+            description='顔検出器の信頼度(det_score)の採用しきい値。これ未満の顔は照合対象外。')
+        self.declare_parameter('min_det_score', MIN_DET_SCORE, min_det_score_descriptor)
+        self.min_det_score: float = \
+            self.get_parameter('min_det_score').get_parameter_value().double_value
+
         # 基底クラスの _on_set_parameters は上書きせず、専用コールバックを追加登録する。
         self.add_on_set_parameters_callback(self._on_set_parameters_people_recognition)
         self.get_logger().info('SaveRegistration : ' + str(self.save_registration))
+        self.get_logger().info('MinDetScore : ' + str(self.min_det_score))
 
         # QoS Settings
         shigure_qos = QoSProfile(depth=10, reliability=ReliabilityPolicy.BEST_EFFORT)
@@ -127,6 +138,9 @@ class PeopleRecognitionNode(ImagePreviewNode):
             if param.name == 'save_registration':
                 self.save_registration = param.value
                 self.get_logger().info('SaveRegistration : ' + str(self.save_registration))
+            elif param.name == 'min_det_score':
+                self.min_det_score = param.value
+                self.get_logger().info('MinDetScore : ' + str(self.min_det_score))
         return SetParametersResult(successful=True)
 
     def rebuild_pca_model_on_disk(self) -> None:
@@ -346,8 +360,8 @@ class PeopleRecognitionNode(ImagePreviewNode):
             if x < 20 or y < 20 or x + w > cap_width -20 or y + h > cap_height -20:
                 continue  # 画面外の顔を無視
 
-            # 検出信頼度が低い顔は照合・辞書蓄積の対象外
-            if iface_face.det_score < MIN_DET_SCORE:
+            # 検出信頼度が低い顔は照合・辞書蓄積の対象外（param min_det_score で調整可）
+            if iface_face.det_score < self.min_det_score:
                 continue
 
             face_info = FaceInfo()

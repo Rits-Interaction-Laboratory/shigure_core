@@ -141,16 +141,28 @@ class SubtractionAnalysisNode(ImagePreviewNode):
 
                 # db書き込み
                 # ------
-                EventRepository.insert_people(contacted.people_id, contacted.face_name, event_save_path, scene.event.people_bounding_box.width, scene.event.people_bounding_box.height)
+                EventRepository.insert_people(
+                    contacted.people_id,
+                    contacted.face_name,
+                    event_save_path,
+                    scene.event.people_bounding_box.width,
+                    scene.event.people_bounding_box.height,
+                    bbox_x=scene.event.people_bounding_box.x,
+                    bbox_y=scene.event.people_bounding_box.y,
+                )
                 EventRepository.insert_object(
-                    contacted.object_id, 
-                    event_save_path, 
-                    contacted.object_cube.x, 
-                    contacted.object_cube.y, 
-                    contacted.object_cube.z, 
-                    contacted.object_cube.width, 
-                    contacted.object_cube.height, 
-                    contacted.object_cube.depth, 
+                    contacted.object_id,
+                    event_save_path,
+                    contacted.object_cube.x,
+                    contacted.object_cube.y,
+                    contacted.object_cube.z,
+                    contacted.object_cube.width,
+                    contacted.object_cube.height,
+                    contacted.object_cube.depth,
+                    bbox_x=scene.event.object_bounding_box.x,
+                    bbox_y=scene.event.object_bounding_box.y,
+                    bbox_width=scene.event.object_bounding_box.width,
+                    bbox_height=scene.event.object_bounding_box.height,
                 )
 
                 frame_id = str(camera_info.header.frame_id)

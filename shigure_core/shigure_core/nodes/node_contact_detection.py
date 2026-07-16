@@ -152,11 +152,14 @@ class ContactDetectionNode(ImagePreviewNode):
             
             #print(action.value)
 
+            # DB/HoloLens へ流す face_name は「確定名」のみ。暫定('?'付き)は保存・送信しない。
+            confirmed_face_name = '' if person.face_name.endswith('?') else person.face_name
+
             if action != ContactActionEnum.TOUCH:
                 contacted = Contacted()
                 contacted.event_id = self._id_manager.new_event_id()
                 contacted.people_id = person.people_id
-                contacted.face_name = person.face_name
+                contacted.face_name = confirmed_face_name
                 contacted.object_id = tracked_object.object_id
                 contacted.action = action.value
                 contacted.people_bounding_box = person.bounding_box
@@ -167,7 +170,7 @@ class ContactDetectionNode(ImagePreviewNode):
                 # TOUCHの場合はevent idを追加せずにpublish
                 contacted = Contacted()
                 contacted.people_id = person.people_id
-                contacted.face_name = person.face_name
+                contacted.face_name = confirmed_face_name
                 contacted.object_id = tracked_object.object_id
                 contacted.action = action.value
                 contacted.people_bounding_box = person.bounding_box
@@ -213,20 +216,21 @@ class ContactDetectionNode(ImagePreviewNode):
                 cv2.circle(color_img, (x, y), 5, (255, 0, 0), thickness=-1)
                 cv2.circle(event_frame, (x, y), 5, (255, 0, 0), thickness=-1)
 
-                # 顔認証で名前が確定していれば名前を併記する(未確定時はface_nameは空文字)
-                people_label = f'ID : {re.sub(".*_", "", person.people_id)}'
-                if person.face_name:
-                    people_label = f'{people_label} ({person.face_name})'
+                # 顔と骨格の結合状態で枠色とラベルを決める（people_tracking と統一）:
+                #   確定('user_xxx')  → 青 ＋ 名前
+                #   暫定('user_xxx?') → 赤 ＋ 名前?
+                #   未結合('')        → 灰 ＋ 'ID : n'
+                p_color, people_label = self.get_person_box_color_label(person)
 
-                cv2.rectangle(color_img, (left, top), (right, bottom), (255, 0, 0), thickness=3)
-                cv2.rectangle(event_frame, (left, top), (right, bottom), (255, 0, 0), thickness=3)
-                text_w, text_h = cv2.getTextSize(people_label, cv2.FONT_HERSHEY_PLAIN, 1.5, 2)[0]
-                cv2.rectangle(color_img, (left, top), (left + text_w, top - text_h), (255, 0, 0), -1)
-                cv2.rectangle(event_frame, (left, top), (left + text_w, top - text_h), (255, 0, 0), -1)
-                cv2.putText(color_img, people_label, (left, top),
-                            cv2.FONT_HERSHEY_PLAIN, 1.5, (255, 255, 255), thickness=2)
-                cv2.putText(event_frame, people_label, (left, top),
-                            cv2.FONT_HERSHEY_PLAIN, 1.5, (255, 255, 255), thickness=2)
+                cv2.rectangle(color_img, (left, top), (right, bottom), p_color, thickness=3)
+                cv2.rectangle(event_frame, (left, top), (right, bottom), p_color, thickness=3)
+                text_w, text_h = cv2.getTextSize(people_label, cv2.FONT_HERSHEY_PLAIN, 2.5, 3)[0]
+                cv2.rectangle(color_img, (left, top - text_h - 6), (left + text_w, top), p_color, -1)
+                cv2.rectangle(event_frame, (left, top - text_h - 6), (left + text_w, top), p_color, -1)
+                cv2.putText(color_img, people_label, (left, top - 4),
+                            cv2.FONT_HERSHEY_PLAIN, 2.5, (255, 255, 255), thickness=3)
+                cv2.putText(event_frame, people_label, (left, top - 4),
+                            cv2.FONT_HERSHEY_PLAIN, 2.5, (255, 255, 255), thickness=3)
                 
 
             # すべての物体領域を書く
@@ -258,7 +262,19 @@ class ContactDetectionNode(ImagePreviewNode):
                         object_image = event_frame[top_expansion : bottom_expansion, left_expansion : right_expansion]
                     else:
                         object_image = event_frame[top : bottom, left : right]
+                    # 拡大表示のサイズ(左上に3倍で貼られる)を控えておく
+                    thumb_h = min(object_image.shape[0] * 3, height)
+                    thumb_w = min(object_image.shape[1] * 3, width)
                     event_frame = self.overlay_image(overlapping_img=object_image, underlying_img=event_frame, shift=(0, 0), resize_scale=(3, 3), is_frame_line=True)
+
+                    # ③ 物体拡大画像の右側に大きな矢印を描画する。
+                    # 右上は時系列キャプション(latest等)を置くので、矢印は少し下げて被りを避ける。
+                    obj_action = ContactActionEnum.value_of(tracked_object.action)
+                    if obj_action is not None:
+                        icon_size = int(np.clip(min(thumb_h, thumb_w) * 0.6, 80, 200))
+                        icx = int(np.clip(thumb_w - icon_size * 0.55, icon_size, width - icon_size // 2 - 5))
+                        icy = int(np.clip(icon_size * 0.5 + 130, 0, max(thumb_h - icon_size * 0.5, icon_size)))
+                        ContactDetectionNode.draw_action_icon(event_frame, obj_action, (icx, icy), size=icon_size)
             print("----------------------")
 
             for hand, object_item in result_list:
@@ -274,13 +290,18 @@ class ContactDetectionNode(ImagePreviewNode):
 
                 color = self.get_color_from_action(action)
 
+                # who: 名前があれば併記（暫定は'?'付きのまま表示）。無ければ体ID。
+                who = person.face_name if person.face_name else f'ID:{re.sub(".*_", "", person.people_id)}'
+
                 # Actionの表示
                 pixel_point = person.point_data[index].pixel_point
                 x = np.clip(int(pixel_point.x), 0, width - 1)
                 y = np.clip(int(pixel_point.y), 0, height - 1)
                 cv2.putText(color_img, f'Action : {action.value}', (x - 40, y - 10), cv2.FONT_HERSHEY_PLAIN, 1.5, color, thickness=2)
-                cv2.rectangle(event_frame, (0, height - 100), (width//4 + 40, height), (0,0,0), -1)
-                cv2.putText(event_frame, f'{action.value}', (20, height - 30), cv2.FONT_HERSHEY_SIMPLEX, 2.5, color, thickness=5)
+                # 右ウィンドウ下部: 下部全幅の黒帯 + 大きな「action : who」（矢印は物体画像の右上に別途描画）
+                cv2.rectangle(event_frame, (0, height - 130), (width, height), (0, 0, 0), -1)
+                cv2.putText(event_frame, f'{action.value} : {who}', (20, height - 40),
+                            cv2.FONT_HERSHEY_SIMPLEX, 2.2, color, thickness=5)
 
             if len(result_list) > 0:
                 cv2.putText(color_img, 'Detected', (0, 10), cv2.FONT_HERSHEY_PLAIN, 1, (0, 0, 255))
@@ -297,11 +318,13 @@ class ContactDetectionNode(ImagePreviewNode):
                 if len(self.event_frame_list) > 4:
                     del self.event_frame_list[-1]
 
+            # 各サムネイル上部に時系列キャプション（current=最新 / oldest=最古の有効枠）を焼く。
+            tiles = self._captioned_event_tiles()
             tile_img = cv2.hconcat([
                 color_img,
                 cv2.vconcat([
-                cv2.hconcat([self.event_frame_list[0], self.event_frame_list[1]]),
-                cv2.hconcat([self.event_frame_list[2], self.event_frame_list[3]])
+                cv2.hconcat([tiles[0], tiles[1]]),
+                cv2.hconcat([tiles[2], tiles[3]])
                 ])
             ])
             cv2.namedWindow('contact_detection', cv2.WINDOW_NORMAL)
@@ -313,6 +336,20 @@ class ContactDetectionNode(ImagePreviewNode):
             print(f'[{datetime.datetime.now()}] fps : {self.fps}', end='\r')
 
     @staticmethod
+    def get_person_box_color_label(person) -> Tuple[Tuple[int, int, int], str]:
+        """
+        人物の顔結合状態から (枠色BGR, ラベル文字列) を返す（people_tracking と統一）.
+
+        確定('user_xxx')→青+名前 / 暫定('user_xxx?')→赤+名前? / 未結合('')→灰+'ID : n'
+        """
+        face_name = person.face_name
+        if not face_name:
+            return (160, 160, 160), f'ID : {re.sub(".*_", "", person.people_id)}'  # 灰
+        if face_name.endswith('?'):
+            return (0, 0, 255), face_name        # 赤：暫定
+        return (255, 0, 0), face_name            # 青：確定
+
+    @staticmethod
     def get_color_from_action(action: ContactActionEnum) -> Tuple[int, int, int]:
         if action == ContactActionEnum.BRING_IN:
             return 128, 255, 255
@@ -321,6 +358,80 @@ class ContactDetectionNode(ImagePreviewNode):
         if action == ContactActionEnum.OBJ_MOVE:
             return 125, 255, 255
         return 255, 128, 255
+
+    def _captioned_event_tiles(self) -> list:
+        """
+        右ウィンドウ用の4枚に時系列キャプションを付けたコピーを返す（④）.
+
+        新しい順に latest / 2nd / 3rd / oldest を、有効(非黒)な枠にだけ大きく焼く。
+        （有効が2枚なら latest,oldest ／3枚なら latest,2nd,oldest 等、両端を latest/oldest にする）
+        未使用（黒）の枠にはキャプションを付けない。元画像は破壊しない。
+        """
+        tiles = [t.copy() for t in self.event_frame_list[:4]]
+        # 有効（黒でない）枠のインデックスを新しい順に集める
+        valid = [i for i, t in enumerate(self.event_frame_list[:4]) if t.any()]
+
+        def caption(idx, text):
+            img = tiles[idx]
+            tw, th = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 1.5, 3)[0]
+            # 物体ID(左上)と被らないよう、キャプションは各画像の右上に置く。
+            x0 = max(0, img.shape[1] - tw - 24)
+            cv2.rectangle(img, (x0, 0), (img.shape[1], th + 22), (0, 0, 0), -1)
+            cv2.putText(img, text, (x0 + 12, th + 10), cv2.FONT_HERSHEY_SIMPLEX, 1.5,
+                        (0, 255, 255), thickness=3)
+
+        n = len(valid)
+        ordinal = {1: '2nd', 2: '3rd'}       # 中間枠の順位表記（最大4枚なので2nd/3rdのみ）
+        for rank, idx in enumerate(valid):
+            if rank == 0:
+                label = 'latest'
+            elif rank == n - 1:
+                label = 'oldest'
+            else:
+                label = ordinal.get(rank, f'{rank + 1}th')
+            caption(idx, label)
+        return tiles
+
+    @staticmethod
+    def draw_action_icon(img: np.ndarray, action: ContactActionEnum,
+                         center: Tuple[int, int], size: int = 46) -> None:
+        """
+        イベント種別を一目で分かる太い図で描く（③）.
+
+        take_out=上向き矢印(赤) / bring_in=下向き矢印(緑) / obj_move=左右両向き矢印(橙) /
+        touch=丸+中心点(黄)。cv2 の線描画のみでフォント非依存。太さ・矢じりは size に比例。
+        """
+        cx, cy = center
+        h = size // 2
+        w = size // 3
+        th = max(4, size // 8)     # 太さ（サイズに比例。大きいほど太い）
+        tip = max(10, size // 4)   # 矢じりの長さ（サイズに比例）
+
+        def arrow(color, up: bool):
+            # 縦の軸
+            y_tail = cy + h if up else cy - h
+            y_head = cy - h if up else cy + h
+            cv2.line(img, (cx, y_tail), (cx, y_head), color, th, cv2.LINE_AA)
+            # 矢じり
+            dy = -tip if up else tip
+            cv2.line(img, (cx, y_head), (cx - w, y_head - dy), color, th, cv2.LINE_AA)
+            cv2.line(img, (cx, y_head), (cx + w, y_head - dy), color, th, cv2.LINE_AA)
+
+        if action == ContactActionEnum.TAKE_OUT:
+            arrow((0, 0, 255), up=True)          # 上向き・赤（持ち出し）
+        elif action == ContactActionEnum.BRING_IN:
+            arrow((0, 200, 0), up=False)         # 下向き・緑（持ち込み）
+        elif action == ContactActionEnum.OBJ_MOVE:
+            color = (0, 128, 255)                # 橙（移動）：左右両向き
+            cv2.line(img, (cx - h, cy), (cx + h, cy), color, th, cv2.LINE_AA)
+            cv2.line(img, (cx - h, cy), (cx - h + tip, cy - w), color, th, cv2.LINE_AA)
+            cv2.line(img, (cx - h, cy), (cx - h + tip, cy + w), color, th, cv2.LINE_AA)
+            cv2.line(img, (cx + h, cy), (cx + h - tip, cy - w), color, th, cv2.LINE_AA)
+            cv2.line(img, (cx + h, cy), (cx + h - tip, cy + w), color, th, cv2.LINE_AA)
+        else:  # TOUCH
+            color = (0, 255, 255)                # 黄（タッチ）：丸＋中心点
+            cv2.circle(img, (cx, cy), h, color, th, cv2.LINE_AA)
+            cv2.circle(img, (cx, cy), 4, color, thickness=-1)
 
 
 def main(args=None):

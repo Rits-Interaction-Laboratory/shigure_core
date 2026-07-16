@@ -6,23 +6,16 @@ import asyncio
 import queue
 import time
 from contextlib import asynccontextmanager
+from datetime import datetime
 from pathlib import Path
 from typing import AsyncIterator, Dict, List, Set
 
 from fastapi import FastAPI, Header, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
+from shigure_api.config import API_KEY, FACE_MODELS_DIR, PCA_REDRAW_EVERY, PCA_TRAJECTORY_MAX_POINTS, default_pca_model_path, PRESENCE_TICK_SEC, PRESENCE_TIMEOUT_SEC
+from shigure_api.events import ContactCandidate, UserEvent, UserSummary, contact_row_to_model, user_event_to_dict, cumulative_scores_to_dict
 
-from shigure_api.config import (
-    API_KEY,
-    FACE_MODELS_DIR,
-    PCA_REDRAW_EVERY,
-    PCA_TRAJECTORY_MAX_POINTS,
-    PRESENCE_TICK_SEC,
-    PRESENCE_TIMEOUT_SEC,
-    default_pca_model_path,
-)
-from shigure_api.events import UserEvent, UserSummary, cumulative_scores_to_dict, user_event_to_dict
 from shigure_api.feature_images import find_face_image_path, load_face_thumbnail
 from shigure_api.pca_plot import PcaPlotHub, PcaPlotStateBuilder
 from shigure_api.tracking_debug import TrackingDebugHub
@@ -242,6 +235,31 @@ def create_app() -> FastAPI:
     ) -> dict:
         _verify_api_key(x_api_key)
         return {'events': hub.recent_events(limit=limit)}
+
+    @app.get('/contacts', response_model=List[ContactCandidate])
+    def list_contacts(
+        date_from: datetime = Query(alias='from', description='時間窓の開始 (ISO8601)'),
+        date_to: datetime = Query(alias='to', description='時間窓の終了 (ISO8601)'),
+        action: str | None = Query(default=None, description='bring_in / take_out で絞り込む'),
+        x_api_key: str | None = Header(default=None, alias='X-API-Key'),
+    ) -> List[ContactCandidate]:
+        """指定時間窓の接触イベントを人物名・2D bbox付きで返す。
+
+        object_search_system が「時刻+bbox」で SAM2 物体に人物を帰属させるための照会口。
+        IoU 判定は呼び出し側の責務なので、ここでは候補を絞らず時間窓で返すだけにする。
+        """
+        _verify_api_key(x_api_key)
+        if date_from > date_to:
+            raise HTTPException(status_code=400, detail='from must be earlier than to')
+        try:
+            # shigure_core / mysql-connector を import 時点で要求しないよう遅延 import する
+            from shigure_core.db.event_repository import EventRepository
+
+            rows = EventRepository.select_contacts(date_from, date_to, action)
+        except Exception as exc:
+            # DB 断でも API 全体は落とさない（顔認識イベント配信は継続させる）
+            raise HTTPException(status_code=503, detail=f'DB query failed: {exc}') from exc
+        return [contact_row_to_model(row) for row in rows]
 
     @app.get('/api/users/{user_id}/features/{feature_num}/face')
     def get_feature_face(
