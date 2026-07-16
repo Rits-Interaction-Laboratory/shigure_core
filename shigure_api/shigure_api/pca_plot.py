@@ -309,6 +309,30 @@ class PcaPlotStateBuilder:
             people = self.present_people_ids_locked()
             return frozenset(users) | frozenset(f'people:{p}' for p in people)
 
+    def on_people_tracking(self, msg) -> None:
+        """骨格追跡(/shigure/people_detection)から在室を更新する。
+
+        顔が検出されなくても、確定済みユーザーは同じ骨格(people_id)が
+        追跡されている限りプロットを維持する。
+        """
+        now = time.monotonic()
+        with self._lock:
+            for pose in msg.pose_key_points_list:
+                people_id = pose.people_id
+                # 辞書確定済み: 骨格が残っている限り在室（顔認識不要）。
+                if people_id in self._confirmed_people:
+                    self._present_last_seen[self._confirmed_people[people_id]] = now
+                    continue
+                # pose 側の確定名（末尾?なし）も在室扱い。
+                face_name = (pose.face_name or '').strip()
+                if (
+                    face_name
+                    and not face_name.endswith('?')
+                    and face_name.startswith('user')
+                    and face_name not in ('none', 'unknown')
+                ):
+                    self._present_last_seen[face_name] = now
+
     def on_recognition_history(self, msg) -> None:
         now = time.monotonic()
         with self._lock:
@@ -316,6 +340,9 @@ class PcaPlotStateBuilder:
             for user in msg.users:
                 people_id = user.people_id
                 if people_id in self._confirmed_people:
+                    # 確定済み: 骨格が認識履歴に残っている間も在室を更新（people_detection の補助）。
+                    user_id = self._confirmed_people[people_id]
+                    self._present_last_seen[user_id] = now
                     continue
                 fns: Set[int] = set()
                 for face in user.face_info:
@@ -339,6 +366,8 @@ class PcaPlotStateBuilder:
         promoted: List[int] = []
         with self._lock:
             self._confirmed_people[people_id] = name
+            # 確定直後から在室扱い（骨格追跡が来るまでの空白を埋める）。
+            self._present_last_seen[name] = time.monotonic()
             # 確定した people は未確定の在室追跡から外す（未確定プロットとしては消す）。
             self._present_people_last_seen.pop(people_id, None)
             self._people_feature_nums.pop(people_id, None)

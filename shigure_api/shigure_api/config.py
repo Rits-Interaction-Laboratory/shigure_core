@@ -37,6 +37,10 @@ FEATURE_INFO_TOPIC = os.environ.get('SHIGURE_FEATURE_INFO_TOPIC', '/feature_info
 RECOGNITION_HISTORY_TOPIC = os.environ.get(
     'SHIGURE_RECOGNITION_HISTORY_TOPIC', '/shigure/recognition_history'
 )
+# 骨格追跡結果。顔が検出されなくても追跡中の people_id / face_name が毎フレーム届く。
+PEOPLE_DETECTION_TOPIC = os.environ.get(
+    'SHIGURE_PEOPLE_DETECTION_TOPIC', '/shigure/people_detection'
+)
 TRACKING_DEBUG_IMAGE_TOPIC = os.environ.get(
     'SHIGURE_TRACKING_DEBUG_IMAGE_TOPIC', '/shigure/tracking_debug_image'
 )
