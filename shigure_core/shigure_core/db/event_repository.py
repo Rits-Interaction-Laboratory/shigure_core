@@ -130,6 +130,44 @@ class EventRepository:
         return pose_id
 
     @staticmethod
+    def select_contacts(date_from, date_to, action: str = None):
+        """指定時間窓の接触イベントを、人物名と2D bbox付きで返す。
+
+        object_search_system が「時刻+bbox」でSAM2物体と人物を突き合わせるための照会用。
+        IoU判定は呼び出し側で行うため、ここでは候補を返すだけにする。
+        人物bboxの幅・高さは icon_width/icon_height を流用している（insert_people 参照）。
+        """
+        ctx = mysql.connector.connect(**config)
+        cur = ctx.cursor(dictionary=True)
+
+        sql = (
+            "SELECT e.id AS shigure_event_id, e.action, e.created_at, "
+            "p.person_id, p.name AS face_name, "
+            "p.bbox_x AS people_bbox_x, p.bbox_y AS people_bbox_y, "
+            "p.icon_width AS people_bbox_width, p.icon_height AS people_bbox_height, "
+            "o.object_id, "
+            "o.bbox_x AS object_bbox_x, o.bbox_y AS object_bbox_y, "
+            "o.bbox_width AS object_bbox_width, o.bbox_height AS object_bbox_height "
+            "FROM event e "
+            "JOIN people p ON e.people_id = p.id "
+            "JOIN object o ON e.object_id = o.id "
+            "WHERE e.created_at >= %s AND e.created_at <= %s"
+        )
+        params = [date_from, date_to]
+
+        if action:
+            sql += " AND e.action = %s"
+            params.append(action)
+
+        sql += " ORDER BY e.created_at ASC"
+
+        cur.execute(sql, tuple(params))
+        rows = cur.fetchall()
+        ctx.close()
+
+        return rows
+
+    @staticmethod
     def select_with_count(page: int):
         ctx = mysql.connector.connect(**config)
         cur = ctx.cursor()
