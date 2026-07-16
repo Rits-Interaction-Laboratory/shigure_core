@@ -31,7 +31,7 @@ PROFILE_COSINE_THRESHOLD = 0.4
 NORML2_THRESHOLD = 1.128
 LP_CONFIDENCE_THRESHOLD = 0.7
 FAISS_FALLBACK_MIN_VOTE_RATIO = 0.5
-MIN_DET_SCORE = 0.5  # 顔検出器(det_score)の採用しきい値の既定。param min_det_score で実行中変更可
+MIN_DET_SCORE = 0.4  # 顔検出器(det_score)の採用しきい値の既定。param min_det_score で実行中変更可
 # 新規ユーザーとして辞書登録する最低特徴数（この数を超えたら dictionary_renew で登録判定）。
 MIN_FEATURES_FOR_NEW_USER = 20
 
