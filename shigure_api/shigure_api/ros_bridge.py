@@ -22,6 +22,7 @@ from shigure_api.config import (
     FACE_RECOGNITION_TOPIC,
     FEATURE_INFO_TOPIC,
     PCA_REBUILD_ON_NEW_USER,
+    PRESENCE_TICK_SEC,
     RECOGNITION_DEBOUNCE_SEC,
     RECOGNITION_HISTORY_TOPIC,
     RECOGNITION_SCORE_THRESHOLD,
@@ -57,6 +58,8 @@ class RosEventBridge(Node):
         self._on_score = on_score
         self._recognition_last_sent: Dict[str, float] = {}
         self._recognition_frame_count: Dict[str, int] = {}
+        # PCAプロットに反映済みの在室ユーザー集合（変化検知用）。
+        self._pca_present_published: frozenset = frozenset()
         self._lock = threading.Lock()
 
         shigure_qos = QoSProfile(depth=10, reliability=ReliabilityPolicy.BEST_EFFORT)
@@ -88,6 +91,8 @@ class RosEventBridge(Node):
             self.get_logger().info(
                 f'PCA plot listening on {FEATURE_INFO_TOPIC} and {RECOGNITION_HISTORY_TOPIC}'
             )
+            # 在室ユーザーの変化（登場/退室）を定期的に検知し、PCAプロットを再配信する。
+            self.create_timer(PRESENCE_TICK_SEC, self._on_pca_presence_tick)
             self._publish_pca_state()
 
         if self._on_tracking_debug is not None:
@@ -150,7 +155,15 @@ class RosEventBridge(Node):
     def _publish_pca_state(self) -> None:
         if self._pca_builder is None:
             return
+        self._pca_present_published = self._pca_builder.presence_signature()
         self._emit_pca(state_to_dict(self._pca_builder.build_state()))
+
+    def _on_pca_presence_tick(self) -> None:
+        """在室（確定ユーザー＋未確定people）が変化していたら、退室者を除いた最新のPCAプロットを再配信する。"""
+        if self._pca_builder is None:
+            return
+        if self._pca_builder.presence_signature() != self._pca_present_published:
+            self._publish_pca_state()
 
     def _publish_unlabeled_update(self) -> None:
         if self._pca_builder is None:
@@ -194,6 +207,9 @@ class RosEventBridge(Node):
             key = event.user_id
             # 累積スコアはデバウンスと独立に、5フレームごとに加算する。
             self.maybe_accumulate_score(key, float(face.score))
+            # PCAプロットの在室判定用に、認識フレームごとに在室をマークする。
+            if self._pca_builder is not None:
+                self._pca_builder.mark_present(key)
             # フロントへの認識通知は従来どおり30秒デバウンスで間引く。
             with self._lock:
                 last = self._recognition_last_sent.get(key, 0.0)
