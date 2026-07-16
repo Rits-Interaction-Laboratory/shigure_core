@@ -371,6 +371,14 @@ class PcaPlotStateBuilder:
                 for fn, pt in sorted(self._unlabeled.items())
                 if fn in present_fns
             ]
+            # デバッグ: FeatureInfo 到着ごと（5フレーム毎）の点数。顔が映っている間に出る。
+            print(
+                f'[pca][B:unlabeled_update] seq={self._sequence} '
+                f'unlabeled_total={len(self._unlabeled)} present_fns={len(present_fns)} '
+                f'unlabeled_shown={len(unlabeled)} '
+                f'present_people={sorted(self._present_people_last_seen.keys())}',
+                flush=True,
+            )
             return PcaUnlabeledUpdate(
                 timestamp=_now_iso(),
                 sequence=self._sequence,
@@ -397,6 +405,20 @@ class PcaPlotStateBuilder:
             ]
             # 今映っているユーザーのプロット（dictionary / labeled_new）だけを含める。
             present = self.present_user_ids_locked()
+            dict_shown = sum(1 for k in self._dictionary if k in present)
+            labeled_shown = sum(1 for k in self._labeled_new if k in present)
+            # デバッグ: 点の生成有無と在室フィルタ通過後の件数を並べて出す。
+            # unlabeled_total>0 かつ unlabeled_shown==0 なら「点はあるがフィルタで全除外」。
+            print(
+                f'[pca][A:build_state] seq={self._sequence} '
+                f'unlabeled_total={len(self._unlabeled)} present_fns={len(present_fns)} '
+                f'unlabeled_shown={len(unlabeled)} '
+                f'dict_total={len(self._dictionary)} dict_shown={dict_shown} '
+                f'labeled_total={len(self._labeled_new)} labeled_shown={labeled_shown} '
+                f'present_users={sorted(present)} '
+                f'present_people={sorted(self._present_people_last_seen.keys())}',
+                flush=True,
+            )
             return PcaPlotState(
                 timestamp=_now_iso(),
                 sequence=self._sequence,
