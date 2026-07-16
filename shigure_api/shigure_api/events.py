@@ -20,7 +20,6 @@ class UserEvent(BaseModel):
     user_id: str
     people_id: Optional[str] = None
     score: Optional[float] = None
-    cumulative_score: Optional[float] = None
     message: str
     timestamp: str = Field(default_factory=lambda: _now_iso())
 
@@ -135,10 +134,23 @@ def user_event_to_dict(event: UserEvent) -> Dict[str, Any]:
     return event.model_dump()
 
 
-def cumulative_scores_to_dict(scores: Dict[str, float]) -> Dict[str, Any]:
-    """全ユーザーの累積スコアマップを配信用の辞書に変換する。"""
+def recognition_scores_to_dict(msg) -> Dict[str, Any]:
+    """RecognitionHistory を people_id ごとの候補累積スコアへ変換する。
+
+    出力の scores は「今映っている各 people_id → 候補face_id → その累積スコア」の
+    入れ子マップになる（例: {"1": {"user_new1": 10.0, "user_new2": 1.0}}）。
+    accumulate_score は people_tracking 側で認識のたびに加算された累積値。
+    """
+    scores: Dict[str, Dict[str, float]] = {}
+    for user in msg.users:
+        candidates: Dict[str, float] = {}
+        for rec in user.face_info:
+            if not rec.id or rec.id == 'none':
+                continue
+            candidates[rec.id] = round(float(rec.accumulate_score), 4)
+        scores[user.people_id] = candidates
     return {
         'type': 'cumulative_scores',
-        'scores': {user_id: round(value, 4) for user_id, value in scores.items()},
+        'scores': scores,
         'timestamp': _now_iso(),
     }

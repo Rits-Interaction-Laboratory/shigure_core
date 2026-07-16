@@ -44,8 +44,8 @@ def main() -> None:
     def on_tracking_debug(payload: dict) -> None:
         tracking_debug_hub.enqueue(payload)
 
-    def on_score(user_id: str, score: float) -> None:
-        hub.enqueue_score(user_id, score)
+    def on_recognition_scores(payload: dict) -> None:
+        hub.enqueue_recognition_scores(payload)
 
     ros_thread = threading.Thread(
         target=run_ros_bridge,
@@ -54,7 +54,7 @@ def main() -> None:
             'pca_builder': pca_builder,
             'on_pca_payload': on_pca_payload,
             'on_tracking_debug': on_tracking_debug,
-            'on_score': on_score,
+            'on_recognition_scores': on_recognition_scores,
         },
         name='shigure_ros_bridge',
         daemon=True,

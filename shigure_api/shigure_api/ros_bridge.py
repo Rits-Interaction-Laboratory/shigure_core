@@ -26,10 +26,9 @@ from shigure_api.config import (
     RECOGNITION_DEBOUNCE_SEC,
     RECOGNITION_HISTORY_TOPIC,
     RECOGNITION_SCORE_THRESHOLD,
-    SCORE_ACCUMULATE_EVERY,
     TRACKING_DEBUG_IMAGE_TOPIC,
 )
-from shigure_api.events import event_from_dictionary_update, event_from_face_recognition
+from shigure_api.events import event_from_dictionary_update, event_from_face_recognition, recognition_scores_to_dict
 from shigure_api.pca_plot import (
     PcaPlotStateBuilder,
     segment_closed_to_dict,
@@ -48,16 +47,15 @@ class RosEventBridge(Node):
         pca_builder: Optional[PcaPlotStateBuilder] = None,
         on_pca_payload: Optional[Callable[[dict], None]] = None,
         on_tracking_debug: Optional[Callable[[dict], None]] = None,
-        on_score: Optional[Callable[[str, float], None]] = None,
+        on_recognition_scores: Optional[Callable[[dict], None]] = None,
     ):
         super().__init__('shigure_api_bridge')
         self._on_event = on_event
         self._pca_builder = pca_builder
         self._on_pca_payload = on_pca_payload
         self._on_tracking_debug = on_tracking_debug
-        self._on_score = on_score
+        self._on_recognition_scores = on_recognition_scores
         self._recognition_last_sent: Dict[str, float] = {}
-        self._recognition_frame_count: Dict[str, int] = {}
         # PCAプロットに反映済みの在室ユーザー集合（変化検知用）。
         self._pca_present_published: frozenset = frozenset()
         self._lock = threading.Lock()
@@ -82,6 +80,15 @@ class RosEventBridge(Node):
                 self._on_feature_info,
                 shigure_qos,
             )
+            self.get_logger().info(
+                f'PCA plot listening on {FEATURE_INFO_TOPIC}'
+            )
+            # 在室ユーザーの変化（登場/退室）を定期的に検知し、PCAプロットを再配信する。
+            self.create_timer(PRESENCE_TICK_SEC, self._on_pca_presence_tick)
+            self._publish_pca_state()
+
+        # RecognitionHistory は PCAプロットと累積スコア配信の両方で使う。
+        if self._pca_builder is not None or self._on_recognition_scores is not None:
             self.create_subscription(
                 RecognitionHistory,
                 RECOGNITION_HISTORY_TOPIC,
@@ -89,11 +96,8 @@ class RosEventBridge(Node):
                 10,
             )
             self.get_logger().info(
-                f'PCA plot listening on {FEATURE_INFO_TOPIC} and {RECOGNITION_HISTORY_TOPIC}'
+                f'Recognition history listening on {RECOGNITION_HISTORY_TOPIC}'
             )
-            # 在室ユーザーの変化（登場/退室）を定期的に検知し、PCAプロットを再配信する。
-            self.create_timer(PRESENCE_TICK_SEC, self._on_pca_presence_tick)
-            self._publish_pca_state()
 
         if self._on_tracking_debug is not None:
             self.create_subscription(
@@ -132,22 +136,13 @@ class RosEventBridge(Node):
         except Exception as exc:
             self.get_logger().error(f'Failed to emit tracking debug image: {exc}')
 
-    def emit_score(self, user_id: str, score: float) -> None:
-        if self._on_score is None:
+    def emit_recognition_scores(self, payload: dict) -> None:
+        if self._on_recognition_scores is None:
             return
         try:
-            self._on_score(user_id, score)
+            self._on_recognition_scores(payload)
         except Exception as exc:
-            self.get_logger().error(f'Failed to emit score: {exc}')
-
-    def maybe_accumulate_score(self, user_id: str, score: float) -> None:
-        """閾値以上で認識されたフレームを数え、SCORE_ACCUMULATE_EVERY 回ごとに1回だけ加算する。"""
-        if self._on_score is None:
-            return
-        count = self._recognition_frame_count.get(user_id, 0) + 1
-        self._recognition_frame_count[user_id] = count
-        if count % SCORE_ACCUMULATE_EVERY == 0:
-            self.emit_score(user_id, score)
+            self.get_logger().error(f'Failed to emit recognition scores: {exc}')
 
     def _on_tracking_debug_image(self, msg: DebugImage) -> None:
         self._emit_tracking_debug(debug_image_msg_to_payload(msg))
@@ -205,8 +200,6 @@ class RosEventBridge(Node):
             if event is None:
                 continue
             key = event.user_id
-            # 累積スコアはデバウンスと独立に、5フレームごとに加算する。
-            self.maybe_accumulate_score(key, float(face.score))
             # PCAプロットの在室判定用に、認識フレームごとに在室をマークする。
             if self._pca_builder is not None:
                 self._pca_builder.mark_present(key)
@@ -229,9 +222,10 @@ class RosEventBridge(Node):
             self._publish_unlabeled_update()
 
     def _on_recognition_history(self, msg: RecognitionHistory) -> None:
-        if self._pca_builder is None:
-            return
-        self._pca_builder.on_recognition_history(msg)
+        # 今映っている people_id ごとの候補累積スコアをフロントへ配信する。
+        self.emit_recognition_scores(recognition_scores_to_dict(msg))
+        if self._pca_builder is not None:
+            self._pca_builder.on_recognition_history(msg)
 
     def clear_debounce(self, user_id: Optional[str] = None) -> None:
         with self._lock:
@@ -248,7 +242,7 @@ def run_ros_bridge(
     pca_builder: Optional[PcaPlotStateBuilder] = None,
     on_pca_payload: Optional[Callable[[dict], None]] = None,
     on_tracking_debug: Optional[Callable[[dict], None]] = None,
-    on_score: Optional[Callable[[str, float], None]] = None,
+    on_recognition_scores: Optional[Callable[[dict], None]] = None,
 ) -> None:
     rclpy.init()
     node = RosEventBridge(
@@ -256,7 +250,7 @@ def run_ros_bridge(
         pca_builder=pca_builder,
         on_pca_payload=on_pca_payload,
         on_tracking_debug=on_tracking_debug,
-        on_score=on_score,
+        on_recognition_scores=on_recognition_scores,
     )
     try:
         while rclpy.ok() and not stop_event.is_set():
