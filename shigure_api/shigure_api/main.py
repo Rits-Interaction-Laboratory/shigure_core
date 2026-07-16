@@ -44,6 +44,9 @@ def main() -> None:
     def on_tracking_debug(payload: dict) -> None:
         tracking_debug_hub.enqueue(payload)
 
+    def on_score(user_id: str, score: float) -> None:
+        hub.enqueue_score(user_id, score)
+
     ros_thread = threading.Thread(
         target=run_ros_bridge,
         args=(on_event, stop_event),
@@ -51,6 +54,7 @@ def main() -> None:
             'pca_builder': pca_builder,
             'on_pca_payload': on_pca_payload,
             'on_tracking_debug': on_tracking_debug,
+            'on_score': on_score,
         },
         name='shigure_ros_bridge',
         daemon=True,
