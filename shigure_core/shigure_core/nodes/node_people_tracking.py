@@ -43,6 +43,7 @@ class PeopleTrackingNode(ImagePreviewNode):
         shigure_qos = QoSProfile(depth=10, reliability=ReliabilityPolicy.BEST_EFFORT)
 
         # 顔認識結果(体ID→顔ID)の累積履歴。 {people_id: {face_id: {"score", "features_num", "total_features"}}}
+        # 暫定名・確定名ともこの累積のargmaxから決める（案B: latch。get_most_likely_face_id 参照）。
         self.recognition_history = {}
 
         # 横顔プロフィール保存用の状態
@@ -273,6 +274,24 @@ class PeopleTrackingNode(ImagePreviewNode):
         display_id = most_likely_id.replace('@profile', '')
         return display_id, data['score']
 
+    def resolve_face_name(self, people_id):
+        """
+        体IDに対する face_name を決める.
+
+        累積スコアが閾値以上なら確定名（例 'user_nakamura'）を返す。
+        未確定でも現フレームの暫定Top1があれば末尾に '?' を付けた暫定名（例 'user_nakamura?'）を返す。
+        どちらも無ければ空文字を返す。
+        """
+        # 暫定・確定とも累積(recognition_history)のargmaxを使う（案B: latch）。
+        # 累積は追跡が続く限り残るため、顔が見えなくなっても・別人が一瞬映っても、
+        # 累積で勝っている人物の名前が保持され続ける（instantaneousな上書きで消えない）。
+        name, score = self.get_most_likely_face_id(people_id)
+        if name is None or name.startswith('unknown'):
+            return ''
+        if score >= self.face_name_score_threshold:
+            return name          # 確定：?なし
+        return name + '?'        # 暫定：?付き（累積argmaxなのでlatchされる）
+
     def _cleanup_recognition_history(self):
         """現在追跡していない体IDの顔認識履歴・確定名・横顔保存状態を破棄する."""
         current_ids = set(self.tracking_info.get_people_dict().keys())
@@ -408,10 +427,9 @@ class PeopleTrackingNode(ImagePreviewNode):
             _, _, _, openpose_pose_key_points = people
             shigure_pose_key_points = pose_key_points_util.convert_openpose_to_shigure(openpose_pose_key_points,
                                                                                        depth_img, people_id, k)
-            # 顔認識で対応が取れた名前(顔ID)を付与する。しきい値未満は未確定として空のまま。
-            face_name, score = self.get_most_likely_face_id(people_id)
-            if face_name is not None and score >= self.face_name_score_threshold:
-                shigure_pose_key_points.face_name = face_name
+            # 顔認識で対応が取れた名前を付与する。
+            # 確定(累積≥閾値)なら 'user_xxx'、未確定でも暫定Top1があれば 'user_xxx?'、無ければ空。
+            shigure_pose_key_points.face_name = self.resolve_face_name(people_id)
             publish_msg.pose_key_points_list.append(shigure_pose_key_points)
         self._publisher.publish(publish_msg)
 
@@ -482,16 +500,50 @@ class PeopleTrackingNode(ImagePreviewNode):
                 bounding_box.y + bounding_box.height) if bounding_box.y + bounding_box.height < height else height - 1
 
             people_id_num = int(re.sub(".*_", "", people_id))
-            color = self._colors[people_id_num % 255]
-            # 顔認識で名前が確定していれば名前を、無ければ体IDを表示する（オクルージョンによるID変化を吸収）
-            label = pose_key_points.face_name if pose_key_points.face_name else f'ID : {people_id_num}'
+            # face_name の状態で枠色とラベルを決める（ミスリード防止のため色を厳密に固定）:
+            #   確定('user_xxx')   → 青枠(255,0,0)  ＋ 名前
+            #   暫定('user_xxx?')  → 赤枠(0,0,255)  ＋ 名前?
+            #   未認識('')         → 灰枠(160,160,160) ＋ 'ID : n'（体IDの色は使わない）
+            face_name = pose_key_points.face_name
+            if not face_name:
+                color = (160, 160, 160)  # 灰：顔と未結合
+                label = f'ID : {people_id_num}'
+            elif face_name.endswith('?'):
+                color = (0, 0, 255)      # 赤(BGR)：暫定
+                label = face_name
+            else:
+                color = (255, 0, 0)      # 青(BGR)：確定
+                label = face_name
             cv2.circle(color_img, (x, y), 5, color, thickness=-1)
             cv2.rectangle(color_img, (left, top), (right, bottom), color, thickness=3)
             text_w, text_h = cv2.getTextSize(label,
-                                             cv2.FONT_HERSHEY_PLAIN, 1.5, 2)[0]
-            cv2.rectangle(color_img, (left, top), (left + text_w, top - text_h), color, -1)
-            cv2.putText(color_img, label, (left, top),
-                        cv2.FONT_HERSHEY_PLAIN, 1.5, (255, 255, 255), thickness=2)
+                                             cv2.FONT_HERSHEY_PLAIN, 2.5, 3)[0]
+            cv2.rectangle(color_img, (left, top - text_h - 6), (left + text_w, top), color, -1)
+            cv2.putText(color_img, label, (left, top - 4),
+                        cv2.FONT_HERSHEY_PLAIN, 2.5, (255, 255, 255), thickness=3)
+
+        # ① 認識中の顔box（people_recognition の検出結果）を描画する。
+        self._draw_face_boxes(color_img)
+
+    def _draw_face_boxes(self, color_img: np.ndarray) -> None:
+        """現フレームの顔検出box(/face_recognition/results)を描画する（①）."""
+        face_data = getattr(self, 'current_face_data', None)
+        if face_data is None:
+            return
+        height, width = color_img.shape[:2]
+        for face_info in face_data.faces:
+            box = list(face_info.box)
+            if len(box) != 4:
+                continue
+            fx, fy, fw, fh = [int(v) for v in box]
+            left = max(0, fx)
+            top = max(0, fy)
+            right = min(width - 1, fx + fw)
+            bottom = min(height - 1, fy + fh)
+            # 顔ID(faiss最近傍Top1)が実名なら緑、unknownなら灰の細枠。
+            fid = face_info.id.replace('@profile', '')
+            face_color = (128, 128, 128) if fid.startswith('unknown') else (0, 200, 0)
+            cv2.rectangle(color_img, (left, top), (right, bottom), face_color, thickness=2)
 
     def _publish_tracking_debug_image(self, color_img: np.ndarray) -> None:
         """オーバーレイ画像を JPEG エンコードして /shigure/tracking_debug_image に配信する(Web表示用)."""
