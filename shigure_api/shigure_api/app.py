@@ -5,15 +5,16 @@ from __future__ import annotations
 import asyncio
 import queue
 from contextlib import asynccontextmanager
+from datetime import datetime
 from pathlib import Path
-from typing import AsyncIterator, List, Set
+from typing import AsyncIterator, List, Optional, Set
 
 from fastapi import FastAPI, Header, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
-
 from shigure_api.config import API_KEY, FACE_MODELS_DIR, PCA_REDRAW_EVERY, PCA_TRAJECTORY_MAX_POINTS, default_pca_model_path
-from shigure_api.events import UserEvent, UserSummary, user_event_to_dict
+from shigure_api.events import ContactCandidate, UserEvent, UserSummary, contact_row_to_model, user_event_to_dict
+
 from shigure_api.feature_images import find_face_image_path, load_face_thumbnail
 from shigure_api.pca_plot import PcaPlotHub, PcaPlotStateBuilder
 from shigure_api.tracking_debug import TrackingDebugHub
@@ -25,9 +26,11 @@ class EventHub:
     def __init__(self) -> None:
         self._clients: Set[WebSocket] = set()
         self._lock = asyncio.Lock()
-        self._thread_queue: queue.Queue[UserEvent] = queue.Queue()
+        self._thread_queue: queue.Queue[object] = queue.Queue()
         self._history: List[UserEvent] = []
         self._history_limit = 100
+        # 直近の累積スコア配信（cumulative_scores）。新規接続時のスナップショット用。
+        self._latest_recognition_scores: Optional[dict] = None
         self._loop: asyncio.AbstractEventLoop | None = None
 
     async def start(self) -> None:
@@ -38,22 +41,40 @@ class EventHub:
         """Thread-safe enqueue from ROS callback thread."""
         self._thread_queue.put_nowait(event)
 
+    def enqueue_recognition_scores(self, payload: dict) -> None:
+        """Thread-safe: RecognitionHistory 由来の累積スコア配信を投入する（ROSスレッドから）。"""
+        self._thread_queue.put_nowait(payload)
+
+    async def handle_event(self, event: UserEvent) -> List[dict]:
+        self._history.append(event)
+        if len(self._history) > self._history_limit:
+            self._history = self._history[-self._history_limit:]
+        return [user_event_to_dict(event)]
+
+    async def broadcast(self, payloads: List[dict]) -> None:
+        async with self._lock:
+            dead: List[WebSocket] = []
+            for ws in self._clients:
+                try:
+                    for payload in payloads:
+                        await ws.send_json(payload)
+                except Exception:
+                    dead.append(ws)
+            for ws in dead:
+                self._clients.discard(ws)
+
     async def _broadcast_loop(self) -> None:
         while True:
-            event = await asyncio.to_thread(self._thread_queue.get)
-            self._history.append(event)
-            if len(self._history) > self._history_limit:
-                self._history = self._history[-self._history_limit:]
-            payload = user_event_to_dict(event)
-            async with self._lock:
-                dead: List[WebSocket] = []
-                for ws in self._clients:
-                    try:
-                        await ws.send_json(payload)
-                    except Exception:
-                        dead.append(ws)
-                for ws in dead:
-                    self._clients.discard(ws)
+            item = await asyncio.to_thread(self._thread_queue.get)
+            if isinstance(item, dict):
+                # ROS由来の完成済みペイロード（cumulative_scores 等）はそのまま配信する。
+                if item.get('type') == 'cumulative_scores':
+                    self._latest_recognition_scores = item
+                payloads = [item]
+            else:
+                payloads = await self.handle_event(item)
+            if payloads:
+                await self.broadcast(payloads)
 
     async def connect(self, websocket: WebSocket) -> None:
         await websocket.accept()
@@ -61,6 +82,8 @@ class EventHub:
             self._clients.add(websocket)
         for item in self.recent_events(limit=20):
             await websocket.send_json(item)
+        if self._latest_recognition_scores is not None:
+            await websocket.send_json(self._latest_recognition_scores)
 
     async def disconnect(self, websocket: WebSocket) -> None:
         async with self._lock:
@@ -169,6 +192,31 @@ def create_app() -> FastAPI:
     ) -> dict:
         _verify_api_key(x_api_key)
         return {'events': hub.recent_events(limit=limit)}
+
+    @app.get('/contacts', response_model=List[ContactCandidate])
+    def list_contacts(
+        date_from: datetime = Query(alias='from', description='時間窓の開始 (ISO8601)'),
+        date_to: datetime = Query(alias='to', description='時間窓の終了 (ISO8601)'),
+        action: str | None = Query(default=None, description='bring_in / take_out で絞り込む'),
+        x_api_key: str | None = Header(default=None, alias='X-API-Key'),
+    ) -> List[ContactCandidate]:
+        """指定時間窓の接触イベントを人物名・2D bbox付きで返す。
+
+        object_search_system が「時刻+bbox」で SAM2 物体に人物を帰属させるための照会口。
+        IoU 判定は呼び出し側の責務なので、ここでは候補を絞らず時間窓で返すだけにする。
+        """
+        _verify_api_key(x_api_key)
+        if date_from > date_to:
+            raise HTTPException(status_code=400, detail='from must be earlier than to')
+        try:
+            # shigure_core / mysql-connector を import 時点で要求しないよう遅延 import する
+            from shigure_core.db.event_repository import EventRepository
+
+            rows = EventRepository.select_contacts(date_from, date_to, action)
+        except Exception as exc:
+            # DB 断でも API 全体は落とさない（顔認識イベント配信は継続させる）
+            raise HTTPException(status_code=503, detail=f'DB query failed: {exc}') from exc
+        return [contact_row_to_model(row) for row in rows]
 
     @app.get('/api/users/{user_id}/features/{feature_num}/face')
     def get_feature_face(

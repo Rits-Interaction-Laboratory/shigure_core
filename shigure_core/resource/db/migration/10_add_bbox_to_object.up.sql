@@ -1,0 +1,5 @@
+ALTER TABLE `object`
+  ADD COLUMN `bbox_x` FLOAT NULL DEFAULT NULL AFTER `depth`,
+  ADD COLUMN `bbox_y` FLOAT NULL DEFAULT NULL AFTER `bbox_x`,
+  ADD COLUMN `bbox_width` FLOAT NULL DEFAULT NULL AFTER `bbox_y`,
+  ADD COLUMN `bbox_height` FLOAT NULL DEFAULT NULL AFTER `bbox_width`;

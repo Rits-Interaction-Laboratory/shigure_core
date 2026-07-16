@@ -7,20 +7,28 @@ from shigure_core.db.convert_format import ConvertMsg
 class EventRepository:
 
     @staticmethod
-    def insert_people(person_id: str, name: str, icon_path: str, icon_width: int, icon_height: int):
+    def insert_people(person_id: str, name: str, icon_path: str, icon_width: int, icon_height: int,
+                      bbox_x: float = None, bbox_y: float = None):
+        # bbox_x/bbox_y は接触時の人物2D bboxの左上原点。幅・高さは icon_width/icon_height を流用する。
         ctx = mysql.connector.connect(**config)
         cur = ctx.cursor()
-        sql = "INSERT INTO people(person_id, name, icon_path, icon_width, icon_height) VALUES (%s, %s, %s, %s, %s)"
-        cur.execute(sql, (person_id, name, icon_path, icon_width, icon_height))
+        sql = ("INSERT INTO people(person_id, name, icon_path, icon_width, icon_height, bbox_x, bbox_y) "
+               "VALUES (%s, %s, %s, %s, %s, %s, %s)")
+        cur.execute(sql, (person_id, name, icon_path, icon_width, icon_height, bbox_x, bbox_y))
         ctx.commit()
         ctx.close()
 
     @staticmethod
-    def insert_object(object_id: str, icon_path: str, x: float, y: float, z: float, width: float, height: float, depth: float):
+    def insert_object(object_id: str, icon_path: str, x: float, y: float, z: float, width: float, height: float, depth: float,
+                      bbox_x: float = None, bbox_y: float = None, bbox_width: float = None, bbox_height: float = None):
+        # x/y/z/width/height/depth は3次元コライダー。bbox_* は接触時の物体2D bbox（別物なので別カラム）。
         ctx = mysql.connector.connect(**config)
         cur = ctx.cursor()
-        sql = f"INSERT INTO object(object_id, icon_path, x, y, z, width, height, depth) VALUES ('{object_id}', '{icon_path}', '{x}', '{y}', '{z}', '{width}', '{height}', '{depth}')"
-        cur.execute(sql)
+        sql = ("INSERT INTO object(object_id, icon_path, x, y, z, width, height, depth, "
+               "bbox_x, bbox_y, bbox_width, bbox_height) "
+               "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)")
+        cur.execute(sql, (object_id, icon_path, x, y, z, width, height, depth,
+                          bbox_x, bbox_y, bbox_width, bbox_height))
         ctx.commit()
         ctx.close()
 
@@ -120,6 +128,44 @@ class EventRepository:
         ctx.close()
 
         return pose_id
+
+    @staticmethod
+    def select_contacts(date_from, date_to, action: str = None):
+        """指定時間窓の接触イベントを、人物名と2D bbox付きで返す。
+
+        object_search_system が「時刻+bbox」でSAM2物体と人物を突き合わせるための照会用。
+        IoU判定は呼び出し側で行うため、ここでは候補を返すだけにする。
+        人物bboxの幅・高さは icon_width/icon_height を流用している（insert_people 参照）。
+        """
+        ctx = mysql.connector.connect(**config)
+        cur = ctx.cursor(dictionary=True)
+
+        sql = (
+            "SELECT e.id AS shigure_event_id, e.action, e.created_at, "
+            "p.person_id, p.name AS face_name, "
+            "p.bbox_x AS people_bbox_x, p.bbox_y AS people_bbox_y, "
+            "p.icon_width AS people_bbox_width, p.icon_height AS people_bbox_height, "
+            "o.object_id, "
+            "o.bbox_x AS object_bbox_x, o.bbox_y AS object_bbox_y, "
+            "o.bbox_width AS object_bbox_width, o.bbox_height AS object_bbox_height "
+            "FROM event e "
+            "JOIN people p ON e.people_id = p.id "
+            "JOIN object o ON e.object_id = o.id "
+            "WHERE e.created_at >= %s AND e.created_at <= %s"
+        )
+        params = [date_from, date_to]
+
+        if action:
+            sql += " AND e.action = %s"
+            params.append(action)
+
+        sql += " ORDER BY e.created_at ASC"
+
+        cur.execute(sql, tuple(params))
+        rows = cur.fetchall()
+        ctx.close()
+
+        return rows
 
     @staticmethod
     def select_with_count(page: int):

@@ -6,6 +6,7 @@ import asyncio
 import pickle
 import queue
 import threading
+import time
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -13,6 +14,7 @@ from typing import Any, Dict, List, Literal, Optional, Set, Tuple
 
 from pydantic import BaseModel
 
+from shigure_api.config import PRESENCE_TIMEOUT_SEC
 from shigure_api.feature_images import feature_num_from_stem
 
 Point2D = Tuple[float, float]
@@ -151,10 +153,17 @@ class PcaPlotStateBuilder:
         *,
         redraw_every: int = 5,
         trajectory_max_points: int = 50,
+        presence_timeout: float = PRESENCE_TIMEOUT_SEC,
     ) -> None:
         self._lock = threading.Lock()
         self._redraw_every = max(1, redraw_every)
         self._trajectory_max_points = max(2, trajectory_max_points)
+        # 今映っているユーザーのみプロットするための在室追跡（user_id -> 最終認識時刻）。
+        self._presence_timeout = max(0.0, presence_timeout)
+        self._present_last_seen: Dict[str, float] = {}
+        # 未確定ユーザー（people_id 単位）の在室追跡と、その people が持つ unlabeled 特徴番号。
+        self._present_people_last_seen: Dict[str, float] = {}
+        self._people_feature_nums: Dict[str, Set[int]] = {}
         self._sequence = 0
         self._feature_counter = 0
         self._face_models_dir = face_models_dir
@@ -248,9 +257,108 @@ class PcaPlotStateBuilder:
         with self._lock:
             self._labeled_new.pop(user_id, None)
 
+    def mark_present(self, user_id: str) -> None:
+        """ユーザーが認識されたことを記録する（在室扱いにする）。認識フレームごとに呼ぶ。"""
+        if not user_id or user_id in ('none', 'unknown'):
+            return
+        with self._lock:
+            self._present_last_seen[user_id] = time.monotonic()
+
+    def present_user_ids_locked(self) -> Set[str]:
+        """在室タイムアウトを超えたユーザーを除去し、今映っている user_id 集合を返す（要ロック済み）。"""
+        now = time.monotonic()
+        expired = [
+            user_id
+            for user_id, seen in self._present_last_seen.items()
+            if now - seen > self._presence_timeout
+        ]
+        for user_id in expired:
+            self._present_last_seen.pop(user_id, None)
+        return set(self._present_last_seen.keys())
+
+    def present_user_ids(self) -> Set[str]:
+        """今映っている user_id 集合を返す（退室分は除去済み）。"""
+        with self._lock:
+            return self.present_user_ids_locked()
+
+    def present_people_ids_locked(self) -> Set[str]:
+        """在室タイムアウトを超えた未確定 people を除去し、今映っている people_id 集合を返す（要ロック済み）。"""
+        now = time.monotonic()
+        expired = [
+            people_id
+            for people_id, seen in self._present_people_last_seen.items()
+            if now - seen > self._presence_timeout
+        ]
+        for people_id in expired:
+            self._present_people_last_seen.pop(people_id, None)
+            self._people_feature_nums.pop(people_id, None)
+        return set(self._present_people_last_seen.keys())
+
+    def present_unlabeled_fns_locked(self) -> Set[int]:
+        """今映っている未確定 people が持つ unlabeled 特徴番号の集合を返す（要ロック済み）。"""
+        present_people = self.present_people_ids_locked()
+        fns: Set[int] = set()
+        for people_id in present_people:
+            fns |= self._people_feature_nums.get(people_id, set())
+        return fns
+
+    def presence_signature(self) -> frozenset:
+        """確定ユーザーと未確定 people を合わせた在室シグネチャ（変化検知用）。"""
+        with self._lock:
+            users = self.present_user_ids_locked()
+            people = self.present_people_ids_locked()
+            return frozenset(users) | frozenset(f'people:{p}' for p in people)
+
+    def on_people_tracking(self, msg) -> None:
+        """骨格追跡(/shigure/people_detection)から在室を更新する。
+
+        顔が検出されなくても、確定済みユーザーは同じ骨格(people_id)が
+        追跡されている限りプロットを維持する。
+        """
+        now = time.monotonic()
+        with self._lock:
+            for pose in msg.pose_key_points_list:
+                people_id = pose.people_id
+                # 辞書確定済み: 骨格が残っている限り在室（顔認識不要）。
+                if people_id in self._confirmed_people:
+                    self._present_last_seen[self._confirmed_people[people_id]] = now
+                    continue
+                # pose 側の確定名（末尾?なし）も在室扱い。
+                face_name = (pose.face_name or '').strip()
+                if (
+                    face_name
+                    and not face_name.endswith('?')
+                    and face_name.startswith('user')
+                    and face_name not in ('none', 'unknown')
+                ):
+                    self._present_last_seen[face_name] = now
+
     def on_recognition_history(self, msg) -> None:
+        now = time.monotonic()
         with self._lock:
             self._latest_history = msg
+            for user in msg.users:
+                people_id = user.people_id
+                if people_id in self._confirmed_people:
+                    # 確定済み: 骨格が認識履歴に残っている間も在室を更新（people_detection の補助）。
+                    user_id = self._confirmed_people[people_id]
+                    self._present_last_seen[user_id] = now
+                    continue
+                fns: Set[int] = set()
+                for face in user.face_info:
+                    # 非正面(@profile)も含め、未認識(unknown)の顔だけを unlabeled 対象にする。
+                    # 登録ユーザーに一致した顔（'user_x' / 'user_x@profile'）は除外する。
+                    base_id = (
+                        face.id[: -len('@profile')]
+                        if face.id.endswith('@profile')
+                        else face.id
+                    )
+                    if base_id != 'unknown':
+                        continue
+                    fns.update(int(fn) for fn in face.features_num)
+                # 未確定 people を在室として記録し、その unlabeled 特徴番号を更新する。
+                self._present_people_last_seen[people_id] = now
+                self._people_feature_nums[people_id] = fns
 
     def on_dictionary_update(self, people_id: str, name: str) -> Optional[PcaSegmentClosed]:
         if not name or name == 'none':
@@ -258,6 +366,11 @@ class PcaPlotStateBuilder:
         promoted: List[int] = []
         with self._lock:
             self._confirmed_people[people_id] = name
+            # 確定直後から在室扱い（骨格追跡が来るまでの空白を埋める）。
+            self._present_last_seen[name] = time.monotonic()
+            # 確定した people は未確定の在室追跡から外す（未確定プロットとしては消す）。
+            self._present_people_last_seen.pop(people_id, None)
+            self._people_feature_nums.pop(people_id, None)
             if self._latest_history is not None:
                 for user in self._latest_history.users:
                     if user.people_id != people_id:
@@ -286,10 +399,20 @@ class PcaPlotStateBuilder:
     def build_unlabeled_update(self) -> PcaUnlabeledUpdate:
         with self._lock:
             self._sequence += 1
+            present_fns = self.present_unlabeled_fns_locked()
             unlabeled = [
                 PcaPlotPoint(feature_num=fn, x=pt[0], y=pt[1])
                 for fn, pt in sorted(self._unlabeled.items())
+                if fn in present_fns
             ]
+            # デバッグ: FeatureInfo 到着ごと（5フレーム毎）の点数。顔が映っている間に出る。
+            print(
+                f'[pca][B:unlabeled_update] seq={self._sequence} '
+                f'unlabeled_total={len(self._unlabeled)} present_fns={len(present_fns)} '
+                f'unlabeled_shown={len(unlabeled)} '
+                f'present_people={sorted(self._present_people_last_seen.keys())}',
+                flush=True,
+            )
             return PcaUnlabeledUpdate(
                 timestamp=_now_iso(),
                 sequence=self._sequence,
@@ -306,16 +429,39 @@ class PcaPlotStateBuilder:
     def build_state(self) -> PcaPlotState:
         with self._lock:
             self._sequence += 1
+            # 未確定 people の在室（＋その unlabeled 特徴番号）を先に確定させる。
+            present_fns = self.present_unlabeled_fns_locked()
             trajectories = self._build_trajectories_pre_confirm()
             unlabeled = [
                 PcaPlotPoint(feature_num=fn, x=pt[0], y=pt[1])
                 for fn, pt in sorted(self._unlabeled.items())
+                if fn in present_fns
             ]
+            # 今映っているユーザーのプロット（dictionary / labeled_new）だけを含める。
+            present = self.present_user_ids_locked()
+            dict_shown = sum(1 for k in self._dictionary if k in present)
+            labeled_shown = sum(1 for k in self._labeled_new if k in present)
+            # デバッグ: 点の生成有無と在室フィルタ通過後の件数を並べて出す。
+            # unlabeled_total>0 かつ unlabeled_shown==0 なら「点はあるがフィルタで全除外」。
+            print(
+                f'[pca][A:build_state] seq={self._sequence} '
+                f'unlabeled_total={len(self._unlabeled)} present_fns={len(present_fns)} '
+                f'unlabeled_shown={len(unlabeled)} '
+                f'dict_total={len(self._dictionary)} dict_shown={dict_shown} '
+                f'labeled_total={len(self._labeled_new)} labeled_shown={labeled_shown} '
+                f'present_users={sorted(present)} '
+                f'present_people={sorted(self._present_people_last_seen.keys())}',
+                flush=True,
+            )
             return PcaPlotState(
                 timestamp=_now_iso(),
                 sequence=self._sequence,
-                dictionary={k: list(v) for k, v in self._dictionary.items()},
-                labeled_new={k: list(v) for k, v in self._labeled_new.items()},
+                dictionary={
+                    k: list(v) for k, v in self._dictionary.items() if k in present
+                },
+                labeled_new={
+                    k: list(v) for k, v in self._labeled_new.items() if k in present
+                },
                 unlabeled=unlabeled,
                 trajectories_pre_confirm=trajectories,
             )
@@ -327,6 +473,9 @@ class PcaPlotStateBuilder:
         for user in self._latest_history.users:
             people_id = user.people_id
             if people_id in self._confirmed_people:
+                continue
+            # 退室（在室タイムアウト超過）した未確定 people の軌跡は出さない。
+            if people_id not in self._present_people_last_seen:
                 continue
             feature_nums: List[int] = []
             for face in user.face_info:

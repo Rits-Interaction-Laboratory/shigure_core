@@ -93,10 +93,13 @@ class FaceCaptureNode(Node):
                 self.save_face_data(face_crop, iface_face.embedding)
 
     def save_face_data(self, face_image, feature_vector):
-        # 保存するファイル名を設定
+        # 保存するファイル名を設定。命名は '{user_id}_{num}'（= 'user_{name}_{num}'）に統一する。
+        # （自動登録(people_recognition)や shigure_api の feature_num パースと同じ規則にして
+        #   PCAプロット等の不整合を防ぐ。ディレクトリ名は 'user_{name}'）
         self.feature_count += 1
-        img_filename = os.path.join(self.save_directory, f"{self.name}{self.feature_count}.jpg")
-        npy_filename = os.path.join(self.save_directory, f"{self.name}{self.feature_count}.npy")
+        user_id = os.path.basename(self.save_directory)  # 'user_{name}'
+        img_filename = os.path.join(self.save_directory, f"{user_id}_{self.feature_count}.jpg")
+        npy_filename = os.path.join(self.save_directory, f"{user_id}_{self.feature_count}.npy")
 
         # 顔画像を保存 (JPEG)
         cv2.imwrite(img_filename, face_image)

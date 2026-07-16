@@ -85,16 +85,19 @@ class PeopleTrackingLogic:
 
     @staticmethod
     def tracking(current_people_list: list, tracking_info: TrackingInfo, threshold_distance: int) -> TrackingInfo:
-        previous_people_dict = tracking_info.get_people_dict()
+        # マッチ候補は「前フレーム可視 ＋ 直近で見失った coasting」。
+        # coasting を候補に含めることで、数フレーム見失った人物が再出現しても
+        # 同じ people_id へ復帰でき、IDの振り直し（顔名累積のリセット）を抑制する。
+        match_pool = tracking_info.get_match_pool()
         current_people_dict = {}
-        if len(previous_people_dict) == 0:
+        if len(match_pool) == 0:
             for people in current_people_list:
                 current_people_dict[tracking_info.new_people_id()] = people
-            tracking_info.update_people_dict(current_people_dict)
+            tracking_info.commit(current_people_dict)
             return tracking_info
 
         linked_list = []
-        for people_id, previous_people in previous_people_dict.items():
+        for people_id, previous_people in match_pool.items():
             previous_x, previous_y, previous_z, _ = previous_people
             for current_people in current_people_list:
                 current_x, current_y, current_z, key_point = current_people
@@ -111,15 +114,18 @@ class PeopleTrackingLogic:
                     linked_list.append((people_id, current_people, current_diff_sum))
 
         linked_list = sorted(linked_list, key=itemgetter(2))
+        remaining = list(current_people_list)
         for people_id, people, _ in linked_list:
-            if people_id not in current_people_dict.keys() and people in current_people_list:
+            if people_id not in current_people_dict.keys() and people in remaining:
                 current_people_dict[people_id] = people
-                current_people_list.remove(people)
+                remaining.remove(people)
 
         # 余った人物は新規登録
-        for people in current_people_list:
+        for people in remaining:
             current_people_dict[tracking_info.new_people_id()] = people
 
-        tracking_info.update_people_dict(current_people_dict)
+        # commit が可視(current_people_dict)を反映し、未マッチの候補を age++ して
+        # max_age 以内なら coasting に残す（超えたら破棄＝完全ロスト）。
+        tracking_info.commit(current_people_dict)
 
         return tracking_info
