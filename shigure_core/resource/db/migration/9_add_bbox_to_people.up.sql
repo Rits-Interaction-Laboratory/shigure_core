@@ -1,0 +1,3 @@
+ALTER TABLE `people`
+  ADD COLUMN `bbox_x` FLOAT NULL DEFAULT NULL AFTER `icon_height`,
+  ADD COLUMN `bbox_y` FLOAT NULL DEFAULT NULL AFTER `bbox_x`;

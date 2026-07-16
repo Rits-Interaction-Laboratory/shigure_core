@@ -7,20 +7,28 @@ from shigure_core.db.convert_format import ConvertMsg
 class EventRepository:
 
     @staticmethod
-    def insert_people(person_id: str, name: str, icon_path: str, icon_width: int, icon_height: int):
+    def insert_people(person_id: str, name: str, icon_path: str, icon_width: int, icon_height: int,
+                      bbox_x: float = None, bbox_y: float = None):
+        # bbox_x/bbox_y は接触時の人物2D bboxの左上原点。幅・高さは icon_width/icon_height を流用する。
         ctx = mysql.connector.connect(**config)
         cur = ctx.cursor()
-        sql = "INSERT INTO people(person_id, name, icon_path, icon_width, icon_height) VALUES (%s, %s, %s, %s, %s)"
-        cur.execute(sql, (person_id, name, icon_path, icon_width, icon_height))
+        sql = ("INSERT INTO people(person_id, name, icon_path, icon_width, icon_height, bbox_x, bbox_y) "
+               "VALUES (%s, %s, %s, %s, %s, %s, %s)")
+        cur.execute(sql, (person_id, name, icon_path, icon_width, icon_height, bbox_x, bbox_y))
         ctx.commit()
         ctx.close()
 
     @staticmethod
-    def insert_object(object_id: str, icon_path: str, x: float, y: float, z: float, width: float, height: float, depth: float):
+    def insert_object(object_id: str, icon_path: str, x: float, y: float, z: float, width: float, height: float, depth: float,
+                      bbox_x: float = None, bbox_y: float = None, bbox_width: float = None, bbox_height: float = None):
+        # x/y/z/width/height/depth は3次元コライダー。bbox_* は接触時の物体2D bbox（別物なので別カラム）。
         ctx = mysql.connector.connect(**config)
         cur = ctx.cursor()
-        sql = f"INSERT INTO object(object_id, icon_path, x, y, z, width, height, depth) VALUES ('{object_id}', '{icon_path}', '{x}', '{y}', '{z}', '{width}', '{height}', '{depth}')"
-        cur.execute(sql)
+        sql = ("INSERT INTO object(object_id, icon_path, x, y, z, width, height, depth, "
+               "bbox_x, bbox_y, bbox_width, bbox_height) "
+               "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)")
+        cur.execute(sql, (object_id, icon_path, x, y, z, width, height, depth,
+                          bbox_x, bbox_y, bbox_width, bbox_height))
         ctx.commit()
         ctx.close()
 
