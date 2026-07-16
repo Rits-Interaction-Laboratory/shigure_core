@@ -14,6 +14,7 @@ from shigure_core_msgs.msg import (
     DictionaryUpdate,
     FaceRecognitionResult,
     FeatureInfo,
+    PoseKeyPointsList,
     RecognitionHistory,
 )
 
@@ -22,6 +23,7 @@ from shigure_api.config import (
     FACE_RECOGNITION_TOPIC,
     FEATURE_INFO_TOPIC,
     PCA_REBUILD_ON_NEW_USER,
+    PEOPLE_DETECTION_TOPIC,
     PRESENCE_TICK_SEC,
     RECOGNITION_DEBOUNCE_SEC,
     RECOGNITION_HISTORY_TOPIC,
@@ -80,8 +82,15 @@ class RosEventBridge(Node):
                 self._on_feature_info,
                 shigure_qos,
             )
+            # 骨格追跡: 顔が検出されなくても、確定ユーザーの在室を people_id で維持する。
+            self.create_subscription(
+                PoseKeyPointsList,
+                PEOPLE_DETECTION_TOPIC,
+                self._on_people_detection,
+                shigure_qos,
+            )
             self.get_logger().info(
-                f'PCA plot listening on {FEATURE_INFO_TOPIC}'
+                f'PCA plot listening on {FEATURE_INFO_TOPIC} and {PEOPLE_DETECTION_TOPIC}'
             )
             # 在室ユーザーの変化（登場/退室）を定期的に検知し、PCAプロットを再配信する。
             self.create_timer(PRESENCE_TICK_SEC, self._on_pca_presence_tick)
@@ -226,6 +235,12 @@ class RosEventBridge(Node):
         self.emit_recognition_scores(recognition_scores_to_dict(msg))
         if self._pca_builder is not None:
             self._pca_builder.on_recognition_history(msg)
+
+    def _on_people_detection(self, msg: PoseKeyPointsList) -> None:
+        """骨格追跡フレームごとに確定ユーザーの在室を更新する（顔検出不要）。"""
+        if self._pca_builder is None:
+            return
+        self._pca_builder.on_people_tracking(msg)
 
     def clear_debounce(self, user_id: Optional[str] = None) -> None:
         with self._lock:
