@@ -19,6 +19,13 @@ FACE_MODELS_DIR = _default_face_models_dir()
 
 RECOGNITION_SCORE_THRESHOLD = float(os.environ.get('SHIGURE_RECOGNITION_SCORE_THRESHOLD', '0.4'))
 RECOGNITION_DEBOUNCE_SEC = float(os.environ.get('SHIGURE_RECOGNITION_DEBOUNCE_SEC', '30'))
+# 累積スコアは、閾値以上で認識されたフレームをこの回数数えるごとに1回だけ加算する。
+SCORE_ACCUMULATE_EVERY = int(os.environ.get('SHIGURE_SCORE_ACCUMULATE_EVERY', '5'))
+# 累積スコアは「今映っているユーザー」のみを配信する。最後に認識されてから
+# この秒数を超えたユーザーは退室とみなし、スコアをリセットして配信対象から外す。
+PRESENCE_TIMEOUT_SEC = float(os.environ.get('SHIGURE_PRESENCE_TIMEOUT_SEC', '1'))
+# 退室判定を行う定期チェックの間隔（秒）。
+PRESENCE_TICK_SEC = float(os.environ.get('SHIGURE_PRESENCE_TICK_SEC', '1'))
 
 API_HOST = os.environ.get('SHIGURE_API_HOST', '0.0.0.0')
 API_PORT = int(os.environ.get('SHIGURE_API_PORT', '8765'))

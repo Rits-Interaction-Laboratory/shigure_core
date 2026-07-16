@@ -20,6 +20,7 @@ class UserEvent(BaseModel):
     user_id: str
     people_id: Optional[str] = None
     score: Optional[float] = None
+    cumulative_score: Optional[float] = None
     message: str
     timestamp: str = Field(default_factory=lambda: _now_iso())
 
@@ -132,3 +133,12 @@ def event_from_face_recognition(face_id: str, score: float) -> Optional[UserEven
 
 def user_event_to_dict(event: UserEvent) -> Dict[str, Any]:
     return event.model_dump()
+
+
+def cumulative_scores_to_dict(scores: Dict[str, float]) -> Dict[str, Any]:
+    """全ユーザーの累積スコアマップを配信用の辞書に変換する。"""
+    return {
+        'type': 'cumulative_scores',
+        'scores': {user_id: round(value, 4) for user_id, value in scores.items()},
+        'timestamp': _now_iso(),
+    }

@@ -4,20 +4,31 @@ from __future__ import annotations
 
 import asyncio
 import queue
+import time
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import AsyncIterator, List, Set
+from typing import AsyncIterator, Dict, List, Set
 
 from fastapi import FastAPI, Header, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
+from shigure_api.config import API_KEY, FACE_MODELS_DIR, PCA_REDRAW_EVERY, PCA_TRAJECTORY_MAX_POINTS, default_pca_model_path, PRESENCE_TICK_SEC, PRESENCE_TIMEOUT_SEC
+from shigure_api.events import ContactCandidate, UserEvent, UserSummary, contact_row_to_model, user_event_to_dict, cumulative_scores_to_dict
 
-from shigure_api.config import API_KEY, FACE_MODELS_DIR, PCA_REDRAW_EVERY, PCA_TRAJECTORY_MAX_POINTS, default_pca_model_path
-from shigure_api.events import ContactCandidate, UserEvent, UserSummary, contact_row_to_model, user_event_to_dict
 from shigure_api.feature_images import find_face_image_path, load_face_thumbnail
 from shigure_api.pca_plot import PcaPlotHub, PcaPlotStateBuilder
 from shigure_api.tracking_debug import TrackingDebugHub
+
+
+class _ScoreUpdate:
+    """累積スコア加算要求（ブロードキャストキュー内でイベントと区別するための内部型）。"""
+
+    __slots__ = ('user_id', 'score')
+
+    def __init__(self, user_id: str, score: float) -> None:
+        self.user_id = user_id
+        self.score = score
 
 
 class EventHub:
@@ -26,35 +37,86 @@ class EventHub:
     def __init__(self) -> None:
         self._clients: Set[WebSocket] = set()
         self._lock = asyncio.Lock()
-        self._thread_queue: queue.Queue[UserEvent] = queue.Queue()
+        self._thread_queue: queue.Queue[object] = queue.Queue()
         self._history: List[UserEvent] = []
         self._history_limit = 100
+        # 今映っているユーザーの累積スコアのみを保持する（退室でエントリごと削除）。
+        self._cumulative_scores: Dict[str, float] = {}
+        # ユーザーごとの最終認識時刻（time.monotonic()）。在室判定に使う。
+        self._last_seen: Dict[str, float] = {}
         self._loop: asyncio.AbstractEventLoop | None = None
 
     async def start(self) -> None:
         self._loop = asyncio.get_running_loop()
         asyncio.create_task(self._broadcast_loop())
+        asyncio.create_task(self.presence_loop())
 
     def enqueue(self, event: UserEvent) -> None:
         """Thread-safe enqueue from ROS callback thread."""
         self._thread_queue.put_nowait(event)
 
+    def enqueue_score(self, user_id: str, score: float) -> None:
+        """Thread-safe: ユーザーごとの累積スコアに加算する要求を投入する（ROSスレッドから）。"""
+        self._thread_queue.put_nowait(_ScoreUpdate(user_id, float(score)))
+
+    async def handle_score_update(self, update: '_ScoreUpdate') -> List[dict]:
+        if not update.user_id or update.user_id in ('none', 'unknown'):
+            return []
+        total = self._cumulative_scores.get(update.user_id, 0.0) + update.score
+        self._cumulative_scores[update.user_id] = total
+        self._last_seen[update.user_id] = time.monotonic()
+        return [cumulative_scores_to_dict(self._cumulative_scores)]
+
+    async def handle_event(self, event: UserEvent) -> List[dict]:
+        self._history.append(event)
+        if len(self._history) > self._history_limit:
+            self._history = self._history[-self._history_limit:]
+        # 累積スコアの加算は5フレームごとの専用経路で行うため、ここでは現在値を反映するのみ。
+        if event.user_id in self._cumulative_scores:
+            event.cumulative_score = self._cumulative_scores[event.user_id]
+        return [user_event_to_dict(event)]
+
+    def prune_absent(self) -> bool:
+        """在室タイムアウトを超えたユーザーを削除する。削除があれば True。"""
+        now = time.monotonic()
+        expired = [
+            user_id
+            for user_id, seen in self._last_seen.items()
+            if now - seen > PRESENCE_TIMEOUT_SEC
+        ]
+        for user_id in expired:
+            self._cumulative_scores.pop(user_id, None)
+            self._last_seen.pop(user_id, None)
+        return bool(expired)
+
+    async def broadcast(self, payloads: List[dict]) -> None:
+        async with self._lock:
+            dead: List[WebSocket] = []
+            for ws in self._clients:
+                try:
+                    for payload in payloads:
+                        await ws.send_json(payload)
+                except Exception:
+                    dead.append(ws)
+            for ws in dead:
+                self._clients.discard(ws)
+
     async def _broadcast_loop(self) -> None:
         while True:
-            event = await asyncio.to_thread(self._thread_queue.get)
-            self._history.append(event)
-            if len(self._history) > self._history_limit:
-                self._history = self._history[-self._history_limit:]
-            payload = user_event_to_dict(event)
-            async with self._lock:
-                dead: List[WebSocket] = []
-                for ws in self._clients:
-                    try:
-                        await ws.send_json(payload)
-                    except Exception:
-                        dead.append(ws)
-                for ws in dead:
-                    self._clients.discard(ws)
+            item = await asyncio.to_thread(self._thread_queue.get)
+            if isinstance(item, _ScoreUpdate):
+                payloads = await self.handle_score_update(item)
+            else:
+                payloads = await self.handle_event(item)
+            if payloads:
+                await self.broadcast(payloads)
+
+    async def presence_loop(self) -> None:
+        """定期的に退室ユーザーを除去し、変化があれば最新の在室スコアを配信する。"""
+        while True:
+            await asyncio.sleep(PRESENCE_TICK_SEC)
+            if self.prune_absent():
+                await self.broadcast([cumulative_scores_to_dict(self._cumulative_scores)])
 
     async def connect(self, websocket: WebSocket) -> None:
         await websocket.accept()
@@ -62,6 +124,9 @@ class EventHub:
             self._clients.add(websocket)
         for item in self.recent_events(limit=20):
             await websocket.send_json(item)
+        self.prune_absent()
+        if self._cumulative_scores:
+            await websocket.send_json(cumulative_scores_to_dict(self._cumulative_scores))
 
     async def disconnect(self, websocket: WebSocket) -> None:
         async with self._lock:
