@@ -360,6 +360,26 @@ class PcaPlotStateBuilder:
         with self._lock:
             self._present_last_seen[user_id] = time.monotonic()
 
+    def _forget_user_plot_locked(self, user_id: str) -> None:
+        """退出した確定ユーザーの蓄積プロットを破棄する（再登場時に前回分を再表示しない）。"""
+        self._labeled_new.pop(user_id, None)
+        self._pending_labeled.pop(user_id, None)
+        owned = [fn for fn, uid in self._feature_to_user.items() if uid == user_id]
+        for fn in owned:
+            self._feature_to_user.pop(fn, None)
+            self._promoted_feature_nums.discard(fn)
+            self._feature_map.pop(fn, None)
+            self._raw_features.pop(fn, None)
+            self._unlabeled.pop(fn, None)
+        # 確定関係も解除し、再入室時は改めてリアルタイム点だけ積む。
+        stale_people = [
+            people_id
+            for people_id, name in self._confirmed_people.items()
+            if name == user_id
+        ]
+        for people_id in stale_people:
+            self._confirmed_people.pop(people_id, None)
+
     def present_user_ids_locked(self) -> Set[str]:
         """在室タイムアウトを超えたユーザーを除去し、今映っている user_id 集合を返す（要ロック済み）。"""
         now = time.monotonic()
@@ -370,6 +390,8 @@ class PcaPlotStateBuilder:
         ]
         for user_id in expired:
             self._present_last_seen.pop(user_id, None)
+            # 退出したら蓄積プロットを捨て、再登場時に前回分が復活しないようにする。
+            self._forget_user_plot_locked(user_id)
         return set(self._present_last_seen.keys())
 
     def present_user_ids(self) -> Set[str]:
