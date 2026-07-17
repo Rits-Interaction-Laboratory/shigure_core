@@ -533,22 +533,23 @@ class PcaPlotStateBuilder:
         return newly_colored
 
     def _best_display_face_locked(self, user) -> Tuple[Optional[str], float]:
-        """people_tracking.get_most_likely_face_id と同じ規則で Top1 を返す。"""
+        """people_tracking.get_most_likely_face_id と同じ規則で Top1 を返す。
+
+        @profile 顔は除外する。unknown@profile が大量に積まれて正面顔の確定を
+        ブロックするのを防ぐため。
+        """
         best_id: Optional[str] = None
         best_score = -1.0
         for face in user.face_info:
             face_id = (face.id or '').strip()
             if not face_id or face_id == 'none':
                 continue
+            if face_id.endswith('@profile'):
+                continue
             score = float(getattr(face, 'accumulate_score', 0.0) or 0.0)
-            display_id = (
-                face_id[: -len('@profile')]
-                if face_id.endswith('@profile')
-                else face_id
-            )
             if score > best_score:
                 best_score = score
-                best_id = display_id
+                best_id = face_id
         if best_id is None:
             return None, 0.0
         return best_id, best_score
