@@ -237,9 +237,26 @@ class PcaPlotStateBuilder:
             return True, has_labeled
 
     def tick_labeled_drip(self) -> bool:
-        """タイマー用: pending の点を labeled_new へ移す。配信が必要なら True。"""
+        """タイマー用: pending の点を labeled_new へ少しずつ移す。配信が必要なら True。"""
         with self._lock:
             return self._drain_pending_labeled_locked(self._redraw_every)
+
+    def flush_pending_labeled(self, user_id: str) -> bool:
+        """確定時用: 指定ユーザーの pending を全部 labeled_new へ移す（即色付け）。"""
+        if not user_id:
+            return False
+        with self._lock:
+            queue = self._pending_labeled.pop(user_id, None)
+            if not queue:
+                return bool(self._labeled_new.get(user_id))
+            existing = {p.feature_num for p in self._labeled_new[user_id]}
+            moved = False
+            for point in queue:
+                if point.feature_num not in existing:
+                    self._labeled_new[user_id].append(point)
+                    existing.add(point.feature_num)
+                    moved = True
+            return moved or bool(self._labeled_new.get(user_id))
 
     def _labeled_feature_nums_locked(self, user_id: str) -> Set[int]:
         fns = {p.feature_num for p in self._labeled_new.get(user_id, [])}
@@ -257,7 +274,7 @@ class PcaPlotStateBuilder:
         return True
 
     def _enqueue_pending_labeled_locked(self, user_id: str, point: PcaPlotPoint) -> None:
-        """確定時の一括点を pending に積む（即 labeled_new には入れない）。"""
+        """確定時に色付け候補を pending へ積む（flush_pending_labeled で一括反映）。"""
         if point.feature_num in self._labeled_feature_nums_locked(user_id):
             return
         self._pending_labeled[user_id].append(point)
@@ -523,7 +540,7 @@ class PcaPlotStateBuilder:
                             promoted.append(fn_int)
                             pt = self._feature_map.get(fn_int)
                             if pt is not None:
-                                # 一気に labeled_new へは入れず、pending 経由で増分表示する。
+                                # 確定コール側で flush するため pending に積む。
                                 self._enqueue_pending_labeled_locked(
                                     name,
                                     PcaPlotPoint(

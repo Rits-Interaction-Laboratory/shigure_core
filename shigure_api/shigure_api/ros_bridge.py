@@ -202,14 +202,15 @@ class RosEventBridge(Node):
                         self.get_logger().info(
                             f'PCA model rebuilt after new user: {event.user_id}'
                         )
-                # 座標再計算後のフルステート。新ユーザー点は pending 経由で増分される。
+                # 確定瞬間は pending を全部色付けしてから配信する。
+                self._pca_builder.flush_pending_labeled(event.user_id)
                 self._publish_pca_state()
                 self._publish_labeled_update()
             elif event is not None and event.type == 'user_confirmed':
-                # ディスク一括 reload はせず、pending→labeled_new の増分で点を出す。
+                # 確定瞬間: 溜まっていた点を一括で色付け。以降の新点は増分で追加。
+                self._pca_builder.flush_pending_labeled(event.user_id)
                 self._publish_pca_state()
-                if self._pca_builder.tick_labeled_drip():
-                    self._publish_labeled_update()
+                self._publish_labeled_update()
 
     def _on_face_recognition(self, msg: FaceRecognitionResult) -> None:
         now = time.monotonic()
