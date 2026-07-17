@@ -247,9 +247,17 @@ class RosEventBridge(Node):
     def _on_recognition_history(self, msg: RecognitionHistory) -> None:
         # 今映っている people_id ごとの候補累積スコアをフロントへ配信する。
         self.emit_recognition_scores(recognition_scores_to_dict(msg))
-        if self._pca_builder is not None:
-            # pending への積み増しのみ。ドリップ配信は feature_info / presence tick 側。
-            self._pca_builder.on_recognition_history(msg)
+        if self._pca_builder is None:
+            return
+        # 表示名確定（累積>=FACE_NAME_SCORE_THRESHOLD）と同じタイミングで色付けする。
+        newly_colored = self._pca_builder.on_recognition_history(msg)
+        for user_id in newly_colored:
+            self._pca_builder.flush_pending_labeled(user_id)
+            self._publish_pca_state()
+            self._publish_labeled_update()
+        # 既に色付け済みユーザーの新点を増分反映する。
+        if self._pca_builder.tick_labeled_drip():
+            self._publish_labeled_update()
 
     def _on_people_detection(self, msg: PoseKeyPointsList) -> None:
         """骨格追跡フレームごとに確定ユーザーの在室を更新する（顔検出不要）。"""

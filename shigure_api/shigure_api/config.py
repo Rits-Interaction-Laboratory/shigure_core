@@ -26,6 +26,9 @@ SCORE_ACCUMULATE_EVERY = int(os.environ.get('SHIGURE_SCORE_ACCUMULATE_EVERY', '5
 PRESENCE_TIMEOUT_SEC = float(os.environ.get('SHIGURE_PRESENCE_TIMEOUT_SEC', '1'))
 # 退室判定を行う定期チェックの間隔（秒）。
 PRESENCE_TICK_SEC = float(os.environ.get('SHIGURE_PRESENCE_TICK_SEC', '1'))
+# people_tracking の face_name_score_threshold と同じ。累積がこれを超えると表示名が
+# user_xx（?なし）になり、PCA プロットも同じタイミングで色付けする。
+FACE_NAME_SCORE_THRESHOLD = float(os.environ.get('SHIGURE_FACE_NAME_SCORE_THRESHOLD', '3.0'))
 
 API_HOST = os.environ.get('SHIGURE_API_HOST', '0.0.0.0')
 API_PORT = int(os.environ.get('SHIGURE_API_PORT', '8765'))

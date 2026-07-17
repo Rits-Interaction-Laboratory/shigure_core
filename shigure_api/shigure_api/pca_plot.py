@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Literal, Optional, Set, Tuple
 
 from pydantic import BaseModel
 
-from shigure_api.config import PRESENCE_TIMEOUT_SEC
+from shigure_api.config import FACE_NAME_SCORE_THRESHOLD, PRESENCE_TIMEOUT_SEC
 from shigure_api.feature_images import feature_num_from_stem
 
 Point2D = Tuple[float, float]
@@ -474,7 +474,13 @@ class PcaPlotStateBuilder:
                 ):
                     self._present_last_seen[face_name] = now
 
-    def on_recognition_history(self, msg) -> None:
+    def on_recognition_history(self, msg) -> List[str]:
+        """認識履歴を反映する。
+
+        表示名確定（累積 >= FACE_NAME_SCORE_THRESHOLD）と同じタイミングで
+        PCA 色付け用の確定を行う。新規に色付けした user_id のリストを返す。
+        """
+        newly_colored: List[str] = []
         now = time.monotonic()
         with self._lock:
             self._latest_history = msg
@@ -496,7 +502,7 @@ class PcaPlotStateBuilder:
                             self._unlabeled.pop(fn_int, None)
                             pt = self._feature_map.get(fn_int)
                             if pt is not None:
-                                # 履歴上の新規点も pending 経由で増分表示する。
+                                # 確定後の新点は増分ドリップ用に pending へ。
                                 self._enqueue_pending_labeled_locked(
                                     user_id,
                                     PcaPlotPoint(
@@ -504,69 +510,108 @@ class PcaPlotStateBuilder:
                                     ),
                                 )
                     continue
+
                 fns: Set[int] = set()
                 for face in user.face_info:
                     # people 未確定なら unknown / 既存候補 user_* どちらも unlabeled 対象。
-                    # （再登場直後に Faiss で user_xx が付いても色なしで増やし、確定で色付けする）
                     if not is_pre_confirm_unlabeled_face(face.id):
                         continue
                     fns.update(int(fn) for fn in face.features_num)
-                # 未確定 people を在室として記録し、その unlabeled 特徴番号を更新する。
                 self._present_people_last_seen[people_id] = now
                 self._people_feature_nums[people_id] = fns
+
+                # 表示名と同じ規則: 累積Top1が閾値以上なら ? なし確定 → PCAも色付け。
+                display_id, score = self._best_display_face_locked(user)
+                if (
+                    display_id
+                    and not display_id.startswith('unknown')
+                    and display_id.startswith('user')
+                    and score >= FACE_NAME_SCORE_THRESHOLD
+                ):
+                    self._confirm_people_for_plot_locked(people_id, display_id)
+                    newly_colored.append(display_id)
+        return newly_colored
+
+    def _best_display_face_locked(self, user) -> Tuple[Optional[str], float]:
+        """people_tracking.get_most_likely_face_id と同じ規則で Top1 を返す。"""
+        best_id: Optional[str] = None
+        best_score = -1.0
+        for face in user.face_info:
+            face_id = (face.id or '').strip()
+            if not face_id or face_id == 'none':
+                continue
+            score = float(getattr(face, 'accumulate_score', 0.0) or 0.0)
+            display_id = (
+                face_id[: -len('@profile')]
+                if face_id.endswith('@profile')
+                else face_id
+            )
+            if score > best_score:
+                best_score = score
+                best_id = display_id
+        if best_id is None:
+            return None, 0.0
+        return best_id, best_score
+
+    def _confirm_people_for_plot_locked(self, people_id: str, name: str) -> List[int]:
+        """people_id を name として PCA 色付け確定し、pending へ点を積む（要ロック済み）。"""
+        self._confirmed_people[people_id] = name
+        self._present_last_seen[name] = time.monotonic()
+        pre_unlabeled_fns = set(self._people_feature_nums.get(people_id, set()))
+        self._present_people_last_seen.pop(people_id, None)
+        self._people_feature_nums.pop(people_id, None)
+
+        promoted: List[int] = []
+        if self._latest_history is not None:
+            for user in self._latest_history.users:
+                if user.people_id != people_id:
+                    continue
+                for face in user.face_info:
+                    if face.id.endswith('@profile'):
+                        continue
+                    # 一致バケット、またはこの people の unlabeled 対象だった顔を色付けする。
+                    if not (
+                        should_promote_face_for_user(face.id, name)
+                        or is_pre_confirm_unlabeled_face(face.id)
+                    ):
+                        continue
+                    for fn in face.features_num:
+                        fn_int = int(fn)
+                        if fn_int in promoted:
+                            continue
+                        promoted.append(fn_int)
+                        pt = self._feature_map.get(fn_int)
+                        if pt is not None:
+                            self._enqueue_pending_labeled_locked(
+                                name,
+                                PcaPlotPoint(x=pt[0], y=pt[1], feature_num=fn_int),
+                            )
+                        else:
+                            self._feature_to_user[fn_int] = name
+                            self._promoted_feature_nums.add(fn_int)
+                            self._unlabeled.pop(fn_int, None)
+
+        for fn_int in sorted(pre_unlabeled_fns):
+            if fn_int in promoted:
+                continue
+            promoted.append(fn_int)
+            pt = self._feature_map.get(fn_int)
+            if pt is not None:
+                self._enqueue_pending_labeled_locked(
+                    name,
+                    PcaPlotPoint(x=pt[0], y=pt[1], feature_num=fn_int),
+                )
+            else:
+                self._feature_to_user[fn_int] = name
+                self._promoted_feature_nums.add(fn_int)
+                self._unlabeled.pop(fn_int, None)
+        return sorted(set(promoted))
 
     def on_dictionary_update(self, people_id: str, name: str) -> Optional[PcaSegmentClosed]:
         if not name or name == 'none':
             return None
-        promoted: List[int] = []
         with self._lock:
-            self._confirmed_people[people_id] = name
-            # 確定直後から在室扱い（骨格追跡が来るまでの空白を埋める）。
-            self._present_last_seen[name] = time.monotonic()
-            # 確定前に unlabeled として出していた特徴も色付け対象にする。
-            pre_unlabeled_fns = set(self._people_feature_nums.get(people_id, set()))
-            # 確定した people は未確定の在室追跡から外す（未確定プロットとしては消す）。
-            self._present_people_last_seen.pop(people_id, None)
-            self._people_feature_nums.pop(people_id, None)
-            if self._latest_history is not None:
-                for user in self._latest_history.users:
-                    if user.people_id != people_id:
-                        continue
-                    for face in user.face_info:
-                        if not should_promote_face_for_user(face.id, name):
-                            continue
-                        for fn in face.features_num:
-                            fn_int = int(fn)
-                            promoted.append(fn_int)
-                            pt = self._feature_map.get(fn_int)
-                            if pt is not None:
-                                # 確定コール側で flush するため pending に積む。
-                                self._enqueue_pending_labeled_locked(
-                                    name,
-                                    PcaPlotPoint(
-                                        x=pt[0], y=pt[1], feature_num=fn_int
-                                    ),
-                                )
-                            else:
-                                self._feature_to_user[fn_int] = name
-                                self._promoted_feature_nums.add(fn_int)
-                                self._unlabeled.pop(fn_int, None)
-            # history の promote 条件に漏れた unlabeled 点も色付けへ移す。
-            for fn_int in sorted(pre_unlabeled_fns):
-                if fn_int in promoted:
-                    continue
-                promoted.append(fn_int)
-                pt = self._feature_map.get(fn_int)
-                if pt is not None:
-                    self._enqueue_pending_labeled_locked(
-                        name,
-                        PcaPlotPoint(x=pt[0], y=pt[1], feature_num=fn_int),
-                    )
-                else:
-                    self._feature_to_user[fn_int] = name
-                    self._promoted_feature_nums.add(fn_int)
-                    self._unlabeled.pop(fn_int, None)
-            promoted = sorted(set(promoted))
+            promoted = self._confirm_people_for_plot_locked(people_id, name)
         return PcaSegmentClosed(
             timestamp=_now_iso(),
             people_id=people_id,
