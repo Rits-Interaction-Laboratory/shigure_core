@@ -33,6 +33,7 @@ from shigure_api.config import (
 from shigure_api.events import event_from_dictionary_update, event_from_face_recognition, recognition_scores_to_dict
 from shigure_api.pca_plot import (
     PcaPlotStateBuilder,
+    labeled_update_to_dict,
     segment_closed_to_dict,
     state_to_dict,
     unlabeled_update_to_dict,
@@ -163,9 +164,11 @@ class RosEventBridge(Node):
         self._emit_pca(state_to_dict(self._pca_builder.build_state()))
 
     def _on_pca_presence_tick(self) -> None:
-        """在室（確定ユーザー＋未確定people）が変化していたら、退室者を除いた最新のPCAプロットを再配信する。"""
+        """在室変化の再配信に加え、確定後 pending 点の増分ドリップも行う。"""
         if self._pca_builder is None:
             return
+        if self._pca_builder.tick_labeled_drip():
+            self._publish_labeled_update()
         if self._pca_builder.presence_signature() != self._pca_present_published:
             self._publish_pca_state()
 
@@ -173,6 +176,11 @@ class RosEventBridge(Node):
         if self._pca_builder is None:
             return
         self._emit_pca(unlabeled_update_to_dict(self._pca_builder.build_unlabeled_update()))
+
+    def _publish_labeled_update(self) -> None:
+        if self._pca_builder is None:
+            return
+        self._emit_pca(labeled_update_to_dict(self._pca_builder.build_labeled_update()))
 
     def _on_dictionary_update(self, msg: DictionaryUpdate) -> None:
         event = event_from_dictionary_update(msg.people_id, msg.name)
@@ -194,11 +202,14 @@ class RosEventBridge(Node):
                         self.get_logger().info(
                             f'PCA model rebuilt after new user: {event.user_id}'
                         )
+                # 座標再計算後のフルステート。新ユーザー点は pending 経由で増分される。
                 self._publish_pca_state()
+                self._publish_labeled_update()
             elif event is not None and event.type == 'user_confirmed':
-                self._pca_builder.reload_dictionary_from_disk()
-                self._pca_builder.clear_labeled_new(event.user_id)
+                # ディスク一括 reload はせず、pending→labeled_new の増分で点を出す。
                 self._publish_pca_state()
+                if self._pca_builder.tick_labeled_drip():
+                    self._publish_labeled_update()
 
     def _on_face_recognition(self, msg: FaceRecognitionResult) -> None:
         now = time.monotonic()
@@ -223,17 +234,20 @@ class RosEventBridge(Node):
     def _on_feature_info(self, msg: FeatureInfo) -> None:
         if self._pca_builder is None:
             return
-        should_push = self._pca_builder.on_feature_info(
+        push_unlabeled, push_labeled = self._pca_builder.on_feature_info(
             int(msg.feature_num),
             list(msg.feature),
         )
-        if should_push:
+        if push_unlabeled:
             self._publish_unlabeled_update()
+        if push_labeled:
+            self._publish_labeled_update()
 
     def _on_recognition_history(self, msg: RecognitionHistory) -> None:
         # 今映っている people_id ごとの候補累積スコアをフロントへ配信する。
         self.emit_recognition_scores(recognition_scores_to_dict(msg))
         if self._pca_builder is not None:
+            # pending への積み増しのみ。ドリップ配信は feature_info / presence tick 側。
             self._pca_builder.on_recognition_history(msg)
 
     def _on_people_detection(self, msg: PoseKeyPointsList) -> None:

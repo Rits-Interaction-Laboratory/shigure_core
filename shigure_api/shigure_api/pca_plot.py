@@ -49,6 +49,15 @@ class PcaUnlabeledUpdate(BaseModel):
     unlabeled: List[PcaPlotPoint]
 
 
+class PcaLabeledUpdate(BaseModel):
+    """確定後ユーザーの点が unlabeled と同様に増えていくときの差分配信。"""
+
+    type: Literal['pca_labeled_update'] = 'pca_labeled_update'
+    timestamp: str
+    sequence: int
+    labeled_new: Dict[str, List[PcaPlotPoint]]
+
+
 class PcaTrajectoryUpdate(BaseModel):
     type: Literal['pca_trajectory_update'] = 'pca_trajectory_update'
     timestamp: str
@@ -174,6 +183,10 @@ class PcaPlotStateBuilder:
             face_models_dir, self._transformer
         )
         self._labeled_new: Dict[str, List[PcaPlotPoint]] = defaultdict(list)
+        # 確定時に一括追加せず、unlabeled と同様に少しずつ labeled_new へ移す待ち行列。
+        self._pending_labeled: Dict[str, List[PcaPlotPoint]] = defaultdict(list)
+        # feature_num -> 確定済み user_id（確定後の新規点を labeled に振り分ける用）。
+        self._feature_to_user: Dict[int, str] = {}
         self._unlabeled: Dict[int, Point2D] = {}
         self._feature_map: Dict[int, Point2D] = {}
         self._raw_features: Dict[int, List[float]] = {}
@@ -184,18 +197,78 @@ class PcaPlotStateBuilder:
             1 for p in face_models_dir.glob('user_*') if p.is_dir()
         ) if face_models_dir.is_dir() else 0
 
-    def on_feature_info(self, feature_num: int, feature: List[float]) -> bool:
-        """Returns True if clients should receive an update (redraw_every)."""
+    def on_feature_info(self, feature_num: int, feature: List[float]) -> Tuple[bool, bool]:
+        """特徴を取り込み、配信が必要なら (unlabeled要配信, labeled要配信) を返す。"""
         pt = self._transformer.transform(feature)
         if pt is None:
-            return False
+            return False, False
         with self._lock:
             self._raw_features[feature_num] = list(feature)
             self._feature_map[feature_num] = pt
-            if feature_num not in self._promoted_feature_nums:
+            push_unlabeled = False
+            push_labeled = False
+            owner = self._feature_to_user.get(feature_num)
+            if owner:
+                self._append_labeled_point_locked(
+                    owner, PcaPlotPoint(x=pt[0], y=pt[1], feature_num=feature_num)
+                )
+            elif feature_num not in self._promoted_feature_nums:
                 self._unlabeled[feature_num] = pt
             self._feature_counter += 1
-            return self._feature_counter % self._redraw_every == 0
+            # unlabeled と同様、redraw_every ごとに現在の一覧を配信する。
+            if self._feature_counter % self._redraw_every != 0:
+                return False, False
+            drained = self._drain_pending_labeled_locked(self._redraw_every)
+            has_labeled = drained or any(self._labeled_new.values())
+            return True, has_labeled
+
+    def tick_labeled_drip(self) -> bool:
+        """タイマー用: pending の点を labeled_new へ移す。配信が必要なら True。"""
+        with self._lock:
+            return self._drain_pending_labeled_locked(self._redraw_every)
+
+    def _labeled_feature_nums_locked(self, user_id: str) -> Set[int]:
+        fns = {p.feature_num for p in self._labeled_new.get(user_id, [])}
+        fns |= {p.feature_num for p in self._pending_labeled.get(user_id, [])}
+        return fns
+
+    def _append_labeled_point_locked(self, user_id: str, point: PcaPlotPoint) -> bool:
+        """labeled_new に未登録の点を追加する。追加したら True。"""
+        if point.feature_num in self._labeled_feature_nums_locked(user_id):
+            return False
+        self._labeled_new[user_id].append(point)
+        self._feature_to_user[point.feature_num] = user_id
+        self._promoted_feature_nums.add(point.feature_num)
+        self._unlabeled.pop(point.feature_num, None)
+        return True
+
+    def _enqueue_pending_labeled_locked(self, user_id: str, point: PcaPlotPoint) -> None:
+        """確定時の一括点を pending に積む（即 labeled_new には入れない）。"""
+        if point.feature_num in self._labeled_feature_nums_locked(user_id):
+            return
+        self._pending_labeled[user_id].append(point)
+        self._feature_to_user[point.feature_num] = user_id
+        self._promoted_feature_nums.add(point.feature_num)
+        self._unlabeled.pop(point.feature_num, None)
+
+    def _drain_pending_labeled_locked(self, max_points: int) -> bool:
+        """pending から最大 max_points 個を labeled_new へ移す。"""
+        if max_points <= 0:
+            return False
+        moved = 0
+        for user_id in list(self._pending_labeled.keys()):
+            queue = self._pending_labeled[user_id]
+            while queue and moved < max_points:
+                point = queue.pop(0)
+                existing = {p.feature_num for p in self._labeled_new[user_id]}
+                if point.feature_num not in existing:
+                    self._labeled_new[user_id].append(point)
+                    moved += 1
+            if not queue:
+                self._pending_labeled.pop(user_id, None)
+            if moved >= max_points:
+                break
+        return moved > 0
 
     def rebuild_pca_from_disk(self, registered_user_id: Optional[str] = None) -> bool:
         """Rebuild pca_model.pkl, reload coordinates, and refresh dictionary from disk."""
@@ -240,9 +313,32 @@ class PcaPlotStateBuilder:
                 if rebuilt:
                     self._labeled_new[uid] = rebuilt
 
+            for uid, points in list(self._pending_labeled.items()):
+                rebuilt_pending: List[PcaPlotPoint] = []
+                for point in points:
+                    raw = self._raw_features.get(point.feature_num)
+                    if raw is None:
+                        rebuilt_pending.append(point)
+                        continue
+                    pt = self._transformer.transform(raw)
+                    if pt is not None:
+                        rebuilt_pending.append(
+                            PcaPlotPoint(
+                                x=pt[0], y=pt[1], feature_num=point.feature_num
+                            )
+                        )
+                if rebuilt_pending:
+                    self._pending_labeled[uid] = rebuilt_pending
+                else:
+                    self._pending_labeled.pop(uid, None)
+
             if registered_user_id:
-                # Disk dictionary now includes the new user; avoid duplicate layers.
+                # ディスク辞書に新ユーザーが載るが、一括表示せず pending 経由で増分表示する。
                 self._labeled_new.pop(registered_user_id, None)
+                disk_points = list(self._dictionary.pop(registered_user_id, []))
+                self._pending_labeled.pop(registered_user_id, None)
+                for point in disk_points:
+                    self._enqueue_pending_labeled_locked(registered_user_id, point)
 
         return True
 
@@ -340,9 +436,28 @@ class PcaPlotStateBuilder:
             for user in msg.users:
                 people_id = user.people_id
                 if people_id in self._confirmed_people:
-                    # 確定済み: 骨格が認識履歴に残っている間も在室を更新（people_detection の補助）。
+                    # 確定済み: 在室更新しつつ、新しい特徴を labeled 側へ紐付ける。
                     user_id = self._confirmed_people[people_id]
                     self._present_last_seen[user_id] = now
+                    for face in user.face_info:
+                        if face.id.endswith('@profile'):
+                            continue
+                        if not should_promote_face_for_user(face.id, user_id):
+                            continue
+                        for fn in face.features_num:
+                            fn_int = int(fn)
+                            self._feature_to_user[fn_int] = user_id
+                            self._promoted_feature_nums.add(fn_int)
+                            self._unlabeled.pop(fn_int, None)
+                            pt = self._feature_map.get(fn_int)
+                            if pt is not None:
+                                # 履歴上の新規点も pending 経由で増分表示する。
+                                self._enqueue_pending_labeled_locked(
+                                    user_id,
+                                    PcaPlotPoint(
+                                        x=pt[0], y=pt[1], feature_num=fn_int
+                                    ),
+                                )
                     continue
                 fns: Set[int] = set()
                 for face in user.face_info:
@@ -383,11 +498,17 @@ class PcaPlotStateBuilder:
                             promoted.append(fn_int)
                             pt = self._feature_map.get(fn_int)
                             if pt is not None:
-                                self._labeled_new[name].append(
-                                    PcaPlotPoint(x=pt[0], y=pt[1], feature_num=fn_int)
+                                # 一気に labeled_new へは入れず、pending 経由で増分表示する。
+                                self._enqueue_pending_labeled_locked(
+                                    name,
+                                    PcaPlotPoint(
+                                        x=pt[0], y=pt[1], feature_num=fn_int
+                                    ),
                                 )
-                            self._unlabeled.pop(fn_int, None)
-                            self._promoted_feature_nums.add(fn_int)
+                            else:
+                                self._feature_to_user[fn_int] = name
+                                self._promoted_feature_nums.add(fn_int)
+                                self._unlabeled.pop(fn_int, None)
             promoted = sorted(set(promoted))
         return PcaSegmentClosed(
             timestamp=_now_iso(),
@@ -419,6 +540,29 @@ class PcaPlotStateBuilder:
                 unlabeled=unlabeled,
             )
 
+    def build_labeled_update(self) -> PcaLabeledUpdate:
+        with self._lock:
+            self._sequence += 1
+            present = self.present_user_ids_locked()
+            labeled = {
+                k: list(v) for k, v in self._labeled_new.items() if k in present
+            }
+            pending_counts = {
+                k: len(v) for k, v in self._pending_labeled.items() if v
+            }
+            print(
+                f'[pca][C:labeled_update] seq={self._sequence} '
+                f'labeled_users={len(labeled)} '
+                f'labeled_points={sum(len(v) for v in labeled.values())} '
+                f'pending={pending_counts} present_users={sorted(present)}',
+                flush=True,
+            )
+            return PcaLabeledUpdate(
+                timestamp=_now_iso(),
+                sequence=self._sequence,
+                labeled_new=labeled,
+            )
+
     def build_trajectory_update(self) -> PcaTrajectoryUpdate:
         with self._lock:
             return PcaTrajectoryUpdate(
@@ -437,9 +581,9 @@ class PcaPlotStateBuilder:
                 for fn, pt in sorted(self._unlabeled.items())
                 if fn in present_fns
             ]
-            # 今映っているユーザーのプロット（dictionary / labeled_new）だけを含める。
+            # 確定ユーザーは、この実行中に取得した labeled_new の点だけを表示する。
+            # ディスク上の辞書特徴は PCA 変換には使うが、プロットには含めない。
             present = self.present_user_ids_locked()
-            dict_shown = sum(1 for k in self._dictionary if k in present)
             labeled_shown = sum(1 for k in self._labeled_new if k in present)
             # デバッグ: 点の生成有無と在室フィルタ通過後の件数を並べて出す。
             # unlabeled_total>0 かつ unlabeled_shown==0 なら「点はあるがフィルタで全除外」。
@@ -447,7 +591,7 @@ class PcaPlotStateBuilder:
                 f'[pca][A:build_state] seq={self._sequence} '
                 f'unlabeled_total={len(self._unlabeled)} present_fns={len(present_fns)} '
                 f'unlabeled_shown={len(unlabeled)} '
-                f'dict_total={len(self._dictionary)} dict_shown={dict_shown} '
+                f'dict_total={len(self._dictionary)} dict_shown=0 '
                 f'labeled_total={len(self._labeled_new)} labeled_shown={labeled_shown} '
                 f'present_users={sorted(present)} '
                 f'present_people={sorted(self._present_people_last_seen.keys())}',
@@ -456,9 +600,8 @@ class PcaPlotStateBuilder:
             return PcaPlotState(
                 timestamp=_now_iso(),
                 sequence=self._sequence,
-                dictionary={
-                    k: list(v) for k, v in self._dictionary.items() if k in present
-                },
+                # API 互換性のためフィールドは残し、過去の辞書特徴は常に非表示にする。
+                dictionary={},
                 labeled_new={
                     k: list(v) for k, v in self._labeled_new.items() if k in present
                 },
@@ -535,6 +678,20 @@ class PcaPlotHub:
                     ),
                 }
             elif (
+                payload.get('type') == 'pca_labeled_update'
+                and self._latest_state is not None
+            ):
+                self._latest_state = {
+                    **self._latest_state,
+                    'labeled_new': payload.get('labeled_new', {}),
+                    'sequence': payload.get(
+                        'sequence', self._latest_state.get('sequence', 0)
+                    ),
+                    'timestamp': payload.get(
+                        'timestamp', self._latest_state.get('timestamp', '')
+                    ),
+                }
+            elif (
                 payload.get('type') == 'pca_trajectory_update'
                 and self._latest_state is not None
             ):
@@ -572,6 +729,10 @@ def state_to_dict(state: PcaPlotState) -> Dict[str, Any]:
 
 
 def unlabeled_update_to_dict(msg: PcaUnlabeledUpdate) -> Dict[str, Any]:
+    return msg.model_dump()
+
+
+def labeled_update_to_dict(msg: PcaLabeledUpdate) -> Dict[str, Any]:
     return msg.model_dump()
 
 
