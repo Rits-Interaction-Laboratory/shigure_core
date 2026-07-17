@@ -152,6 +152,20 @@ def should_promote_face_for_user(face_id: str, confirmed_user_id: str) -> bool:
     return False
 
 
+def is_pre_confirm_unlabeled_face(face_id: str) -> bool:
+    """未確定 people の unlabeled 対象か。
+
+    既存ユーザー再登場時は Faiss 等で face.id がすぐ user_xx になるが、
+    people_id が未確定のあいだは色なし（unlabeled）として出したい。
+    """
+    if not face_id or face_id in ('none',):
+        return False
+    if face_id.endswith('@profile'):
+        return False
+    base = face_id[:-1] if face_id.endswith('?') else face_id
+    return base == 'unknown' or base.startswith('user')
+
+
 class PcaPlotStateBuilder:
     """Thread-safe PCA plot state (mirrors feature_plot logic, pre_confirm trajectories only)."""
 
@@ -361,7 +375,7 @@ class PcaPlotStateBuilder:
             self._present_last_seen[user_id] = time.monotonic()
 
     def _forget_user_plot_locked(self, user_id: str) -> None:
-        """退出した確定ユーザーの蓄積プロットを破棄する（再登場時に前回分を再表示しない）。"""
+        """退出した確定ユーザーの点だけを破棄し、確定済みの対応関係は維持する。"""
         self._labeled_new.pop(user_id, None)
         self._pending_labeled.pop(user_id, None)
         owned = [fn for fn, uid in self._feature_to_user.items() if uid == user_id]
@@ -371,14 +385,6 @@ class PcaPlotStateBuilder:
             self._feature_map.pop(fn, None)
             self._raw_features.pop(fn, None)
             self._unlabeled.pop(fn, None)
-        # 確定関係も解除し、再入室時は改めてリアルタイム点だけ積む。
-        stale_people = [
-            people_id
-            for people_id, name in self._confirmed_people.items()
-            if name == user_id
-        ]
-        for people_id in stale_people:
-            self._confirmed_people.pop(people_id, None)
 
     def present_user_ids_locked(self) -> Set[str]:
         """在室タイムアウトを超えたユーザーを除去し、今映っている user_id 集合を返す（要ロック済み）。"""
@@ -483,14 +489,9 @@ class PcaPlotStateBuilder:
                     continue
                 fns: Set[int] = set()
                 for face in user.face_info:
-                    # 非正面(@profile)も含め、未認識(unknown)の顔だけを unlabeled 対象にする。
-                    # 登録ユーザーに一致した顔（'user_x' / 'user_x@profile'）は除外する。
-                    base_id = (
-                        face.id[: -len('@profile')]
-                        if face.id.endswith('@profile')
-                        else face.id
-                    )
-                    if base_id != 'unknown':
+                    # people 未確定なら unknown / 既存候補 user_* どちらも unlabeled 対象。
+                    # （再登場直後に Faiss で user_xx が付いても色なしで増やし、確定で色付けする）
+                    if not is_pre_confirm_unlabeled_face(face.id):
                         continue
                     fns.update(int(fn) for fn in face.features_num)
                 # 未確定 people を在室として記録し、その unlabeled 特徴番号を更新する。
@@ -505,6 +506,8 @@ class PcaPlotStateBuilder:
             self._confirmed_people[people_id] = name
             # 確定直後から在室扱い（骨格追跡が来るまでの空白を埋める）。
             self._present_last_seen[name] = time.monotonic()
+            # 確定前に unlabeled として出していた特徴も色付け対象にする。
+            pre_unlabeled_fns = set(self._people_feature_nums.get(people_id, set()))
             # 確定した people は未確定の在室追跡から外す（未確定プロットとしては消す）。
             self._present_people_last_seen.pop(people_id, None)
             self._people_feature_nums.pop(people_id, None)
@@ -531,6 +534,21 @@ class PcaPlotStateBuilder:
                                 self._feature_to_user[fn_int] = name
                                 self._promoted_feature_nums.add(fn_int)
                                 self._unlabeled.pop(fn_int, None)
+            # history の promote 条件に漏れた unlabeled 点も色付けへ移す。
+            for fn_int in sorted(pre_unlabeled_fns):
+                if fn_int in promoted:
+                    continue
+                promoted.append(fn_int)
+                pt = self._feature_map.get(fn_int)
+                if pt is not None:
+                    self._enqueue_pending_labeled_locked(
+                        name,
+                        PcaPlotPoint(x=pt[0], y=pt[1], feature_num=fn_int),
+                    )
+                else:
+                    self._feature_to_user[fn_int] = name
+                    self._promoted_feature_nums.add(fn_int)
+                    self._unlabeled.pop(fn_int, None)
             promoted = sorted(set(promoted))
         return PcaSegmentClosed(
             timestamp=_now_iso(),
@@ -644,9 +662,8 @@ class PcaPlotStateBuilder:
                 continue
             feature_nums: List[int] = []
             for face in user.face_info:
-                if face.id.endswith('@profile'):
-                    continue
-                if face.id != 'unknown':
+                # unlabeled と同様、未確定 people なら既存候補 user_* も含める。
+                if not is_pre_confirm_unlabeled_face(face.id):
                     continue
                 feature_nums.extend(int(fn) for fn in face.features_num)
             feature_nums = sorted(set(feature_nums))
