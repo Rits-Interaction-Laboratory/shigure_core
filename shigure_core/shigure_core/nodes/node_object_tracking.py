@@ -1,6 +1,3 @@
-import random
-import re
-
 import cv2
 import message_filters
 import numpy as np
@@ -12,6 +9,7 @@ from shigure_core_msgs.msg import DetectedObjectList, TrackedObjectList, Tracked
 from shigure_core.nodes.node_image_preview import ImagePreviewNode
 from shigure_core.nodes.object_tracking.logic import ObjectTrackingLogic
 from shigure_core.nodes.object_tracking.tracking_info import TrackingInfo
+from shigure_core.nodes.object_tracking.visualizer import ObjectTrackingVisualizer
 from shigure_core.util import compressed_depth_util
 
 
@@ -64,10 +62,6 @@ class ObjectTrackingNode(ImagePreviewNode):
             self.time_synchronizer.registerCallback(self.callback_debug)
 
         self._tracking_info = TrackingInfo()
-
-        self._colors = []
-        for i in range(255):
-            self._colors.append(tuple([random.randint(128, 192) for _ in range(3)]))
 
     def _compute_depth_range(self, depth_img: np.ndarray, stay_object, left: int, top: int,
                              right: int, bottom: int):
@@ -176,30 +170,8 @@ class ObjectTrackingNode(ImagePreviewNode):
             return
 
         color_img: np.ndarray = self.bridge.compressed_imgmsg_to_cv2(color_src)
-
-        height, width = color_img.shape[:2]
-        for object_id, item in self._tracking_info.object_dict.items():
-            stay_object, bounding_box = item
-
-            bounding_box = stay_object.bounding_box
-            left = min(int(bounding_box.x), width - 1)
-            top = min(int(bounding_box.y), height - 1)
-            right = min(int(bounding_box.x + bounding_box.width), width - 1)
-            bottom = min(int(bounding_box.y + bounding_box.height), height - 1)
-
-            object_id_num = int(re.sub(".*_", "", object_id))
-            color = self._colors[object_id_num % 255]
-            cv2.rectangle(color_img, (left, top), (right, bottom), color, thickness=3)
-            text_w, text_h = cv2.getTextSize(f'ID : {object_id_num}',
-                                             cv2.FONT_HERSHEY_PLAIN, 1.5, 2)[0]
-            cv2.rectangle(color_img, (left, top), (left + text_w, top - text_h), color, -1)
-            cv2.putText(color_img, f'ID : {object_id_num}({stay_object.action})', (left, top),
-                        cv2.FONT_HERSHEY_PLAIN, 1.5, (255, 255, 255), thickness=2)
-
-        self.print_fps(color_img)
-        cv2.namedWindow('object_tracking', cv2.WINDOW_NORMAL)
-        cv2.imshow('object_tracking', color_img)
-        cv2.waitKey(1)
+        ObjectTrackingVisualizer.draw(color_img, self._tracking_info.object_dict,
+                                      self.frame_count, self.fps)
 
 
 def main(args=None):
