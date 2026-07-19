@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## プロジェクト概要
 
-Shigure Core は ROS2 (Humble) による室内シーン変遷ロギングシステム。カメラ画像から人物・物体を検出・追跡し、「誰が何をどこへ動かしたか」（持ち込み/持ち去り/接触イベント）を MySQL に記録する。
+Shigure Core は ROS2 (Humble) による室内シーン変遷ロギングシステム。カメラ画像から人物（顔認識による個人特定つき）・物体を検出・追跡し、「誰が何をどこへ動かしたか」（持ち込み/持ち去り/接触イベント）を MySQL に記録する。認識結果は付属の `shigure_api`（FastAPI）から Web/アプリへ配信する。
 
 ## コードスタイル
 
@@ -46,8 +46,9 @@ docker compose down -v   # DB 含め完全リセット
 | パッケージ | 種別 | 内容 |
 | :--- | :--- | :--- |
 | `shigure_core/` | ament_python | 全ノード実装（本体） |
+| `shigure_api/` | ament_python | 顔認識イベント配信用の FastAPI ブリッジ（Web / iOS・React Native 向け）。`launch` から `shigure_api` として起動 |
 | `shigure_core_msgs/` | ament_cmake | 独自メッセージ定義（.msg） |
-| `bbox_ex_msgs/` | git submodule | YOLOX 検出結果メッセージ（fork 側で編集する。直接編集禁止） |
+| `bbox_ex_msgs/` | git submodule | YOLO 検出結果メッセージ（fork 側で編集する。直接編集禁止） |
 
 `shigure_core` はパッケージと Python モジュールが同名でネストしている点に注意:
 
@@ -63,15 +64,20 @@ shigure_core/            # ament_python パッケージ（setup.py はここ）
 
 ### データフロー（パイプライン）
 
-外部ノード（RealSense `rs_camera`・OpenPose・YOLOX・people_detection は別リポジトリ）から入力を受け、内部トピックは `/shigure/` プレフィックスで流れる:
+外部ノード（RealSense `rs_camera`・OpenPose・YOLO11・people_detection は別リポジトリ）から入力を受け、内部トピックは `/shigure/` プレフィックスで流れる:
 
 ```
-YOLOX (/bounding_boxes) → yolox_object_detection → object_tracking ─┐
-OpenPose (/openpose/pose_key_points) → people_tracking ─────────────┤→ contact_detection → record_event → MySQL
-RealSense (depth + cameraInfo) ── 各ノードの3次元投影に使用 ──────────┘
+YOLO11 (/bounding_boxes, /Segments) → yolox_object_detection → object_tracking ─┐
+OpenPose (/openpose/pose_key_points) ─┐                                          │
+people_recognition（顔認識で個人特定） ┴→ people_tracking (/shigure/people_detection) ┤→ contact_detection → record_event → MySQL
+RealSense (depth + cameraInfo) ── 各ノードの3次元投影に使用 ────────────────────────┘
+
+shigure_api（FastAPI）── MySQL と内部トピックを購読し、顔画像・追跡オーバーレイ・PCA・認識イベントを Web/アプリ（iOS・React Native）へ配信
 ```
 
-`bg_subtraction` / `subtraction_analysis` / `object_detection`（背景差分系）は現在未使用の系統。稼働しているのは YOLOX 由来の `yolox_object_detection`。
+`people_tracking` は `people_recognition` が確定した顔名（`face_name`）を人物 ID に載せて下流へ流す。
+
+`bg_subtraction` / `subtraction_analysis` / `object_detection`（背景差分系）は現在未使用の系統。稼働しているのは YOLO 由来の `yolox_object_detection`。
 
 ### 実装規約
 
