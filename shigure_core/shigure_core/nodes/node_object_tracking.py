@@ -63,8 +63,6 @@ class ObjectTrackingNode(ImagePreviewNode):
                 [depth_subscriber, object_detection_subscriber, depth_camera_info_subscriber, color_subscriber], 400000)
             self.time_synchronizer.registerCallback(self.callback_debug)
 
-        self.people_tracking_logic = ObjectTrackingLogic()
-
         self._tracking_info = TrackingInfo()
 
         self._colors = []
