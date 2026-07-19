@@ -1,6 +1,6 @@
 from typing import List
 
-from shigure_core.nodes.object_detection.color_image_frame import ColorImageFrame
+from shigure_core.nodes.yolox_object_detection.color_image_frame import ColorImageFrame
 
 
 class ColorImageFrames:

@@ -1,3 +1,0 @@
-subtraction_analysis_node:
-  ros__parameters:
-    is_debug_mode: false
