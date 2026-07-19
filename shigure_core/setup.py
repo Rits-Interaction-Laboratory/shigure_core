@@ -33,7 +33,6 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'object_detection = shigure_core.nodes.node_object_detection:main',
             'object_tracking = shigure_core.nodes.node_object_tracking:main',
             'contact_detection = shigure_core.nodes.node_contact_detection:main',
             'people_tracking = shigure_core.nodes.node_people_tracking:main',
