@@ -1,17 +1,16 @@
-import random
-import re
-
 import cv2
 import message_filters
 import numpy as np
 import rclpy
 from rclpy.qos import QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import CompressedImage, CameraInfo
-from shigure_core_msgs.msg import DetectedObjectList, TrackedObjectList, TrackedObject, Cube
+from shigure_core_msgs.msg import DetectedObjectList, TrackedObjectList, TrackedObject
 
 from shigure_core.nodes.node_image_preview import ImagePreviewNode
+from shigure_core.nodes.object_tracking.collider import build_collider, compute_depth_range
 from shigure_core.nodes.object_tracking.logic import ObjectTrackingLogic
 from shigure_core.nodes.object_tracking.tracking_info import TrackingInfo
+from shigure_core.nodes.object_tracking.visualizer import ObjectTrackingVisualizer
 from shigure_core.util import compressed_depth_util
 
 
@@ -63,53 +62,21 @@ class ObjectTrackingNode(ImagePreviewNode):
                 [depth_subscriber, object_detection_subscriber, depth_camera_info_subscriber, color_subscriber], 400000)
             self.time_synchronizer.registerCallback(self.callback_debug)
 
-        self.people_tracking_logic = ObjectTrackingLogic()
-
         self._tracking_info = TrackingInfo()
 
-        self._colors = []
-        for i in range(255):
-            self._colors.append(tuple([random.randint(128, 192) for _ in range(3)]))
+    def _decode_mask_roi(self, mask_msg, roi_shape):
+        """物体マスク(CompressedImage)を復号し depth_roi と同形に切り出す（ROS境界）.
 
-    def _compute_depth_range(self, depth_img: np.ndarray, stay_object, left: int, top: int,
-                             right: int, bottom: int):
-        """3次元BBOXの奥行きに用いる深度範囲を求めます.
-
-        物体領域(セグメンテーションマスク)の縁から5pxより更に内部の深度値のうち,
-        分布の5%点を最小値, 95%点を最大値として返します. マスクが取得できない,
-        または内部に有効な深度が無い場合は bbox 内の深度最小/最大にフォールバックします.
+        マスクは bbox 左上を原点とするため、depth_roi の大きさに合わせて左上を切り出す。
+        復号失敗・2次元でない場合は None を返す（呼び出し側で bbox 深度にフォールバック）。
         """
-        depth_roi = depth_img[top:bottom, left:right]
-
-        mask_roi = None
         try:
-            mask = self.bridge.compressed_imgmsg_to_cv2(stay_object.mask)
-            if mask is not None and mask.ndim == 2:
-                # マスクは bbox 左上を原点とする. depth_roi の大きさに合わせて切り出す
-                mask_roi = mask[0:depth_roi.shape[0], 0:depth_roi.shape[1]]
+            mask = self.bridge.compressed_imgmsg_to_cv2(mask_msg)
         except Exception:
-            mask_roi = None
-
-        valid = None
-        if mask_roi is not None and mask_roi.shape == depth_roi.shape and mask_roi.any():
-            binary = (mask_roi > 0).astype(np.uint8)
-            # 縁から5pxより内部のみを残す (11x11カーネルで縁を5px収縮)
-            kernel = np.ones((11, 11), np.uint8)
-            interior_mask = cv2.erode(binary, kernel)
-            interior = (interior_mask > 0) & (depth_roi != 0.0)
-            if np.count_nonzero(interior) > 0:
-                valid = depth_roi[interior]
-
-        if valid is None or valid.size == 0:
-            # フォールバック: 従来通り bbox 内の有効深度の最小/最大を用いる
-            masked = np.ma.masked_equal(depth_roi, 0.0, copy=False)
-            if masked.count() == 0:
-                return 0.0, 0.0
-            return float(masked.min()), float(masked.max())
-
-        depth_min = float(np.percentile(valid, 5))
-        depth_max = float(np.percentile(valid, 95))
-        return depth_min, depth_max
+            return None
+        if mask is None or mask.ndim != 2:
+            return None
+        return mask[0:roi_shape[0], 0:roi_shape[1]]
 
     def callback(self, depth_src: CompressedImage, detected_object_list: DetectedObjectList,
                  camera_info: CameraInfo):
@@ -147,21 +114,10 @@ class ObjectTrackingNode(ImagePreviewNode):
             right = min(int(bounding_box.x + bounding_box.width), width - 1)
             bottom = min(int(bounding_box.y + bounding_box.height), height - 1)
 
-            depth_min, depth_max = self._compute_depth_range(depth_img, stay_object, left, top, right, bottom)
-
-            s1 = np.asarray([[bounding_box.x, bounding_box.y, 1]]).T
-            s2 = np.asarray([[bounding_box.x + bounding_box.width,
-                              bounding_box.y + bounding_box.height, 1]]).T
-
-            m1 = (depth_min * np.matmul(k_inv, s1)).T
-            m2 = (depth_min * np.matmul(k_inv, s2)).T
-
-            collider = Cube()
-            collider.x, collider.y = float(m1[0, 0]), float(m1[0, 1])
-            collider.width, collider.height = float(m2[0, 0] - m1[0, 0]), float(m2[0, 1] - m1[0, 1])
-            collider.z = float(depth_min)
-            collider.depth = float(depth_max - depth_min)
-            tracked_object.collider = collider
+            depth_roi = depth_img[top:bottom, left:right]
+            mask_roi = self._decode_mask_roi(stay_object.mask, depth_roi.shape)
+            depth_min, depth_max = compute_depth_range(depth_roi, mask_roi)
+            tracked_object.collider = build_collider(bounding_box, depth_min, depth_max, k_inv)
 
             publish_msg.tracked_object_list.append(tracked_object)
             
@@ -178,30 +134,8 @@ class ObjectTrackingNode(ImagePreviewNode):
             return
 
         color_img: np.ndarray = self.bridge.compressed_imgmsg_to_cv2(color_src)
-
-        height, width = color_img.shape[:2]
-        for object_id, item in self._tracking_info.object_dict.items():
-            stay_object, bounding_box = item
-
-            bounding_box = stay_object.bounding_box
-            left = min(int(bounding_box.x), width - 1)
-            top = min(int(bounding_box.y), height - 1)
-            right = min(int(bounding_box.x + bounding_box.width), width - 1)
-            bottom = min(int(bounding_box.y + bounding_box.height), height - 1)
-
-            object_id_num = int(re.sub(".*_", "", object_id))
-            color = self._colors[object_id_num % 255]
-            cv2.rectangle(color_img, (left, top), (right, bottom), color, thickness=3)
-            text_w, text_h = cv2.getTextSize(f'ID : {object_id_num}',
-                                             cv2.FONT_HERSHEY_PLAIN, 1.5, 2)[0]
-            cv2.rectangle(color_img, (left, top), (left + text_w, top - text_h), color, -1)
-            cv2.putText(color_img, f'ID : {object_id_num}({stay_object.action})', (left, top),
-                        cv2.FONT_HERSHEY_PLAIN, 1.5, (255, 255, 255), thickness=2)
-
-        self.print_fps(color_img)
-        cv2.namedWindow('object_tracking', cv2.WINDOW_NORMAL)
-        cv2.imshow('object_tracking', color_img)
-        cv2.waitKey(1)
+        ObjectTrackingVisualizer.draw(color_img, self._tracking_info.object_dict,
+                                      self.frame_count, self.fps)
 
 
 def main(args=None):
