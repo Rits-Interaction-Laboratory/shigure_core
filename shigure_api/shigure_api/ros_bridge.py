@@ -22,6 +22,7 @@ from shigure_api.config import (
     DICTIONARY_UPDATE_TOPIC,
     FACE_RECOGNITION_TOPIC,
     FEATURE_INFO_TOPIC,
+    FACE_MODELS_DIR,
     PCA_REBUILD_ON_NEW_USER,
     PEOPLE_DETECTION_TOPIC,
     PRESENCE_TICK_SEC,
@@ -38,6 +39,7 @@ from shigure_api.pca_plot import (
     unlabeled_update_to_dict,
 )
 from shigure_api.tracking_debug import debug_image_msg_to_payload
+from shigure_core.util.face_models_dir import face_models_signature
 
 
 class RosEventBridge(Node):
@@ -60,6 +62,7 @@ class RosEventBridge(Node):
         self._recognition_last_sent: Dict[str, float] = {}
         # PCAプロットに反映済みの在室ユーザー集合（変化検知用）。
         self._pca_present_published: frozenset = frozenset()
+        self._face_models_signature = face_models_signature(FACE_MODELS_DIR)
         self._lock = threading.Lock()
 
         shigure_qos = QoSProfile(depth=10, reliability=ReliabilityPolicy.BEST_EFFORT)
@@ -169,6 +172,18 @@ class RosEventBridge(Node):
         if self._pca_builder.presence_signature() != self._pca_present_published:
             self._publish_pca_state()
 
+    def _sync_face_models_from_disk_if_changed(self) -> bool:
+        """手動削除などで face_models が変わっていれば PCA 辞書を再読込する."""
+        if self._pca_builder is None:
+            return False
+        signature = face_models_signature(FACE_MODELS_DIR)
+        if signature == self._face_models_signature:
+            return False
+        self._face_models_signature = signature
+        self._pca_builder.reload_dictionary_from_disk()
+        self.get_logger().info('[dict_sync] reloaded PCA dictionary from disk')
+        return True
+
     def _publish_unlabeled_update(self) -> None:
         if self._pca_builder is None:
             return
@@ -194,13 +209,17 @@ class RosEventBridge(Node):
                         self.get_logger().info(
                             f'PCA model rebuilt after new user: {event.user_id}'
                         )
+                self._face_models_signature = face_models_signature(FACE_MODELS_DIR)
                 self._publish_pca_state()
             elif event is not None and event.type == 'user_confirmed':
                 self._pca_builder.reload_dictionary_from_disk()
                 self._pca_builder.clear_labeled_new(event.user_id)
+                self._face_models_signature = face_models_signature(FACE_MODELS_DIR)
                 self._publish_pca_state()
 
     def _on_face_recognition(self, msg: FaceRecognitionResult) -> None:
+        if self._sync_face_models_from_disk_if_changed():
+            self._publish_pca_state()
         now = time.monotonic()
         for face in msg.faces:
             if face.score < RECOGNITION_SCORE_THRESHOLD:

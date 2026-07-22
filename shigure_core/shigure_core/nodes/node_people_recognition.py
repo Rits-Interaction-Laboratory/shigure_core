@@ -17,7 +17,7 @@ from PIL import Image
 
 from shigure_core.nodes.node_image_preview import ImagePreviewNode
 from shigure_core.nodes.profile_insightface import ProfileInsightFace, InsightFaceResult
-from shigure_core.util.face_models_dir import get_face_models_dir
+from shigure_core.util.face_models_dir import face_models_signature, get_face_models_dir
 from shigure_core.util.pca_model import build_pca_model
 
 from sklearn.semi_supervised import LabelPropagation
@@ -38,6 +38,7 @@ MIN_FEATURES_FOR_NEW_USER = 10
 
 # 顔辞書(face_models)。登録先・追跡ノード・APIの参照先と共通化する。
 DIRECTORY = str(get_face_models_dir())
+
 
 class PeopleRecognitionNode(ImagePreviewNode):
 
@@ -100,32 +101,89 @@ class PeopleRecognitionNode(ImagePreviewNode):
         if not self.insightface.available:
             raise RuntimeError("insightface is not installed")
 
-        # 特徴を読み込む
+        # 特徴を読み込む（手動でディスクの user_* を消した場合は照合前に再同期する）
         self.dictionary = {}
-        user_dirs = glob.glob(os.path.join(DIRECTORY, "user_*"))
-        for user_dir in user_dirs:
-            user_id = os.path.basename(user_dir)
-            features = []
-            for file in glob.glob(os.path.join(user_dir, "*.npy")):
-                feature = np.load(file)
-                features.append(np.squeeze(feature)) # 事前に形を整える
-            if features:
-                self.dictionary[user_id] = features
-
         self.profile_dictionary = {}
-        for user_dir in user_dirs:
-            user_id = os.path.basename(user_dir)
-            profile_dir = os.path.join(user_dir, 'profile')
-            features = []
-            if os.path.isdir(profile_dir):
-                for file in glob.glob(os.path.join(profile_dir, '*.npy')):
-                    feature = np.load(file)
-                    features.append(np.squeeze(feature).astype('float32'))
-            if features:
-                self.profile_dictionary[user_id] = features
+        # ディスク由来のユーザー集合。ディレクトリ削除時にメモリから落とす判定に使う。
+        self._disk_backed_users = set()
+        self._face_models_signature = None
+        self.reload_dictionary_from_disk(force=True)
 
         # people_idとuser_idの対応付け用辞書
         self.user_id_map = {}
+
+    @staticmethod
+    def _load_dictionaries_from_disk():
+        """face_models から正面・横顔辞書を読み込む."""
+        dictionary = {}
+        profile_dictionary = {}
+        user_dirs = glob.glob(os.path.join(DIRECTORY, 'user_*'))
+        for user_dir in user_dirs:
+            user_id = os.path.basename(user_dir)
+            features = []
+            for file in glob.glob(os.path.join(user_dir, '*.npy')):
+                feature = np.load(file)
+                features.append(np.squeeze(feature))
+            if features:
+                dictionary[user_id] = features
+
+            profile_dir = os.path.join(user_dir, 'profile')
+            profile_features = []
+            if os.path.isdir(profile_dir):
+                for file in glob.glob(os.path.join(profile_dir, '*.npy')):
+                    feature = np.load(file)
+                    profile_features.append(np.squeeze(feature).astype('float32'))
+            if profile_features:
+                profile_dictionary[user_id] = profile_features
+        return dictionary, profile_dictionary
+
+    def reload_dictionary_from_disk(self, force: bool = False) -> bool:
+        """ディスクの face_models をメモリ辞書へ反映する.
+
+        - ディスク上の user_* は内容をディスク基準で置き換える
+        - ディスクから消えたユーザーはメモリからも削除する
+        - save_registration=false などでディスクに無いメモリ専用ユーザーは残す
+        """
+        signature = face_models_signature(DIRECTORY)
+        if not force and signature == self._face_models_signature:
+            return False
+
+        disk_dictionary, disk_profile = self._load_dictionaries_from_disk()
+        disk_users = set(disk_dictionary.keys()) | set(disk_profile.keys())
+        previous_disk_users = set(self._disk_backed_users)
+        removed_users = previous_disk_users - disk_users
+
+        # ディスク由来だったが今はディレクトリが無いユーザーをメモリから除去する
+        for user_id in removed_users:
+            self.dictionary.pop(user_id, None)
+            self.profile_dictionary.pop(user_id, None)
+
+        # ディスク上のユーザーはディスク内容で上書き（追加含む）
+        for user_id, features in disk_dictionary.items():
+            self.dictionary[user_id] = features
+        for user_id, features in disk_profile.items():
+            self.profile_dictionary[user_id] = features
+        # 正面が無く横顔だけ残っているケース向けに profile も掃除
+        for user_id in list(self.profile_dictionary.keys()):
+            if (
+                user_id in previous_disk_users
+                and user_id not in disk_profile
+                and user_id not in disk_dictionary
+            ):
+                self.profile_dictionary.pop(user_id, None)
+
+        self._disk_backed_users = disk_users
+        self._face_models_signature = signature
+
+        if removed_users:
+            self.get_logger().info(
+                f'[dict_sync] removed from memory: {sorted(removed_users)}'
+            )
+        self.get_logger().info(
+            f'[dict_sync] disk users={sorted(self._disk_backed_users)} '
+            f'memory users={sorted(self.dictionary.keys())}'
+        )
+        return True
 
     def _on_set_parameters_people_recognition(self, params: List[Parameter]) -> SetParametersResult:
         """save_registration の実行時変更を反映する（他パラメータは基底コールバックが処理）。"""
@@ -180,6 +238,8 @@ class PeopleRecognitionNode(ImagePreviewNode):
             image_path = os.path.join(profile_dir, f'{user_name}_profile_{idx}.jpg')
             cv2.imwrite(image_path, face_image)
             self.get_logger().info(f'Saved profile image: {image_path}')
+        self._disk_backed_users.add(user_name)
+        self._face_models_signature = face_models_signature(DIRECTORY)
 
     def callback_profile_feature_add(self, msg: ProfileFeatureAdd):
         face_image = None
@@ -211,7 +271,9 @@ class PeopleRecognitionNode(ImagePreviewNode):
 
     def matching(self, feature1, dictionary, threshold=COSINE_THRESHOLD):
         """Faissを使ってクエリ特徴と最も類似するユーザーを探す"""
-        
+        # 手動でディスク上の user_* を削除/変更した場合にメモリへ反映する
+        self.reload_dictionary_from_disk(force=False)
+
         # 辞書内のすべての特徴ベクトルを取り出す
         features_list = []
         user_ids = []
@@ -474,6 +536,10 @@ class PeopleRecognitionNode(ImagePreviewNode):
                 f"Saved {saved} feature(s) to {user_name} "
                 f"(total={len(self.dictionary[user_name])})"
             )
+            if self.save_registration:
+                # 直後のディスク同期タイマーで再読込されないよう署名を更新する
+                self._disk_backed_users.add(user_name)
+                self._face_models_signature = face_models_signature(DIRECTORY)
 
     def dictionary_renew(self, msg: RecognitionHistory):
         """

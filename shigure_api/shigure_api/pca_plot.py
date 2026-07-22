@@ -252,6 +252,20 @@ class PcaPlotStateBuilder:
             self._dictionary = load_dictionary_points(
                 self._face_models_dir, self._transformer
             )
+            disk_users = set(self._dictionary.keys())
+            self._known_user_count = sum(
+                1 for p in self._face_models_dir.glob('user_*') if p.is_dir()
+            ) if self._face_models_dir.is_dir() else 0
+            # ディスクから消えたユーザーのプロット状態も落とす
+            for user_id in list(self._labeled_new.keys()):
+                if user_id not in disk_users:
+                    self._labeled_new.pop(user_id, None)
+            for people_id, user_id in list(self._confirmed_people.items()):
+                if user_id not in disk_users:
+                    self._confirmed_people.pop(people_id, None)
+            for user_id in list(self._present_last_seen.keys()):
+                if user_id.startswith('user') and user_id not in disk_users:
+                    self._present_last_seen.pop(user_id, None)
 
     def clear_labeled_new(self, user_id: str) -> None:
         with self._lock:
