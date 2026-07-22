@@ -259,7 +259,9 @@ class RosEventBridge(Node):
         # 今映っている people_id ごとの候補累積スコアをフロントへ配信する。
         self.emit_recognition_scores(recognition_scores_to_dict(msg))
         if self._pca_builder is not None:
-            self._pca_builder.on_recognition_history(msg)
+            # 確定済み複数人の新規点を色付けした場合はフル state を再配信する。
+            if self._pca_builder.on_recognition_history(msg):
+                self._publish_pca_state()
 
     def _on_people_detection(self, msg: PoseKeyPointsList) -> None:
         """骨格追跡フレームごとに確定ユーザーの在室を更新する（顔検出不要）。"""

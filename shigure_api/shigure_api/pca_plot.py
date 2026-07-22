@@ -132,13 +132,18 @@ def load_dictionary_points(
 
 
 def should_promote_face_for_user(face_id: str, confirmed_user_id: str) -> bool:
-    """Promote PCA points only for the face_id bucket that matches confirmation."""
+    """確定時に色付け対象とする face_id バケットか判定する.
+
+    - 確定名と一致するバケット
+    - unknown バケット（新規 user_new* および Faiss/LP で既存ユーザーへ救済された場合）
+    横顔(@profile)は対象外。
+    """
     if face_id.endswith('@profile'):
         return False
     if face_id == confirmed_user_id:
         return True
-    # New user_new* registration uses the unknown bucket at confirm time.
-    if face_id == 'unknown' and confirmed_user_id.startswith('user_new'):
+    # LP/Faiss 救済では history 上の face_id が unknown のまま既存 user_* へ確定することがある。
+    if face_id == 'unknown':
         return True
     return False
 
@@ -362,68 +367,84 @@ class PcaPlotStateBuilder:
                 ):
                     self._present_last_seen[face_name] = now
 
-    def on_recognition_history(self, msg) -> None:
+    def on_recognition_history(self, msg) -> bool:
+        """認識履歴を反映する.
+
+        :return: 確定済み people の点を新規に色付けした場合 True（再配信が必要）
+        """
         now = time.monotonic()
+        promoted_any = False
         with self._lock:
             self._latest_history = msg
             for user in msg.users:
                 people_id = user.people_id
                 fns: Set[int] = set()
                 for face in user.face_info:
+                    if face.id.endswith('@profile'):
+                        continue
                     fns.update(int(fn) for fn in face.features_num)
                 # 未ラベル点は確定前後を問わず出し続ける（在室 people の特徴番号を追跡）。
                 self._present_people_last_seen[people_id] = now
                 self._people_feature_nums[people_id] = fns
                 if people_id in self._confirmed_people:
-                    # 確定済みユーザーの在室も更新する。
+                    # 確定済みユーザーの在室も更新し、新規点も色付けへ昇格する。
+                    # （複数人同時確定後、片方だけ未ラベルのまま残るのを防ぐ）
                     user_id = self._confirmed_people[people_id]
                     self._present_last_seen[user_id] = now
+                    if self._promote_fns_locked(user_id, fns):
+                        promoted_any = True
+        return promoted_any
+
+    def _promote_fns_locked(self, user_id: str, candidate_fns: Set[int]) -> List[int]:
+        """unlabeled にある候補特徴を labeled_new[user_id] へ昇格する（要ロック済み）."""
+        if not user_id or not candidate_fns:
+            return []
+        if user_id not in self._labeled_new:
+            self._labeled_new[user_id] = []
+        existing_fns = {
+            int(p.feature_num)
+            for p in self._labeled_new[user_id]
+            if p.feature_num is not None
+        }
+        promoted: List[int] = []
+        for fn_int in sorted(fn for fn in candidate_fns if fn in self._unlabeled):
+            if fn_int in existing_fns:
+                self._unlabeled.pop(fn_int, None)
+                self._promoted_feature_nums.add(fn_int)
+                continue
+            pt = self._feature_map.get(fn_int) or self._unlabeled.get(fn_int)
+            if pt is not None:
+                self._labeled_new[user_id].append(
+                    PcaPlotPoint(x=pt[0], y=pt[1], feature_num=fn_int)
+                )
+            self._unlabeled.pop(fn_int, None)
+            self._promoted_feature_nums.add(fn_int)
+            promoted.append(fn_int)
+        return promoted
 
     def on_dictionary_update(self, people_id: str, name: str) -> Optional[PcaSegmentClosed]:
         if not name or name == 'none':
             return None
-        promoted: List[int] = []
         with self._lock:
             self._confirmed_people[people_id] = name
             # 確定直後から在室扱い（骨格追跡が来るまでの空白を埋める）。
             self._present_last_seen[name] = time.monotonic()
-            # 今回の確定では「今未ラベルとして見えている点」だけを色付けする。
-            # recognition_history の過去 features_num を全部昇格すると全特徴相当になるため。
-            candidate_fns: Set[int] = set()
+            # この people_id の未ラベル表示に使っている特徴を色付けする。
+            # （face_id が unknown / user_* のどちらでも、確定前に出していた点を漏れなく昇格）
+            candidate_fns: Set[int] = set(self._people_feature_nums.get(people_id, set()))
             if self._latest_history is not None:
                 for user in self._latest_history.users:
                     if user.people_id != people_id:
                         continue
                     for face in user.face_info:
+                        if face.id.endswith('@profile'):
+                            continue
                         if not should_promote_face_for_user(face.id, name):
+                            # 別ユーザー名バケットは history からは足さない。
+                            # people_feature_nums 経由の点はそのまま候補に残す。
                             continue
                         candidate_fns.update(int(fn) for fn in face.features_num)
-            # いま unlabeled にある点 ∩ 今回バケットの点 だけを色付けへ移す
-            promote_fns = sorted(
-                fn for fn in candidate_fns if fn in self._unlabeled
-            )
-            # 同じ骨格IDセッション中は色付け点を消さず追加する
-            if name not in self._labeled_new:
-                self._labeled_new[name] = []
-            existing_fns = {
-                int(p.feature_num)
-                for p in self._labeled_new[name]
-                if p.feature_num is not None
-            }
-            for fn_int in promote_fns:
-                if fn_int in existing_fns:
-                    self._unlabeled.pop(fn_int, None)
-                    self._promoted_feature_nums.add(fn_int)
-                    continue
-                pt = self._feature_map.get(fn_int) or self._unlabeled.get(fn_int)
-                if pt is not None:
-                    self._labeled_new[name].append(
-                        PcaPlotPoint(x=pt[0], y=pt[1], feature_num=fn_int)
-                    )
-                self._unlabeled.pop(fn_int, None)
-                self._promoted_feature_nums.add(fn_int)
-                promoted.append(fn_int)
-            promoted = sorted(set(promoted))
+            promoted = self._promote_fns_locked(name, candidate_fns)
         return PcaSegmentClosed(
             timestamp=_now_iso(),
             people_id=people_id,
@@ -473,11 +494,18 @@ class PcaPlotStateBuilder:
                 if fn in present_fns
             ]
             # 今映っているユーザーのプロットは骨格IDセッション単位。
-            # - unlabeled: 常に表示（確定後に増えた点も含む）
+            # - unlabeled: 確定前の点（確定済み people の点は昇格済みなので通常は出ない）
             # - labeled_new: 同じ骨格IDで確定した色付け点（骨格IDが生きている間は増えてよい）
             # - 骨格IDが消えたら色付け点はリセット（別骨格での再登場は未ラベルから）
             # dictionary(ディスク全特徴)はライブプロットに出さない。
-            present = self.present_user_ids_locked()
+            present_people = self.present_people_ids_locked()
+            # 在室骨格に紐づく確定ユーザーは、顔認識の短タイムアウトに依らず色付けを出す。
+            confirmed_present = {
+                user_id
+                for pid, user_id in self._confirmed_people.items()
+                if pid in present_people
+            }
+            present = self.present_user_ids_locked() | confirmed_present
             labeled_new = {
                 k: list(v) for k, v in self._labeled_new.items() if k in present and v
             }
