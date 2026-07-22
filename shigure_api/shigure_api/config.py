@@ -50,6 +50,11 @@ PCA_REBUILD_ON_NEW_USER = os.environ.get('SHIGURE_PCA_REBUILD_ON_NEW_USER', 'tru
     'true',
     'yes',
 )
+# true のとき PCA API に face_models 辞書の全特徴を含めて配信する
+# （eliminate-low-quality-images ブランチの常時 dictionary 配信と同等。既定 false＝ライブ点のみ）。
+PCA_SHOW_FULL_DICTIONARY = os.environ.get(
+    'SHIGURE_PCA_SHOW_FULL_DICTIONARY', 'false'
+).lower() in ('1', 'true', 'yes')
 
 
 def default_pca_model_path(face_models_dir: Path | None = None) -> Path:

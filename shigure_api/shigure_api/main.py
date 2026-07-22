@@ -8,7 +8,7 @@ from pathlib import Path
 
 import uvicorn
 
-from shigure_api.config import API_HOST, API_PORT, FACE_MODELS_DIR
+from shigure_api.config import API_HOST, API_PORT, FACE_MODELS_DIR, PCA_SHOW_FULL_DICTIONARY
 from shigure_api.ros_bridge import run_ros_bridge
 
 
@@ -21,6 +21,13 @@ def main() -> None:
         default=str(FACE_MODELS_DIR),
         help='Path to face_models directory',
     )
+    parser.add_argument(
+        '--show-full-dictionary',
+        action=argparse.BooleanOptionalAction,
+        default=PCA_SHOW_FULL_DICTIONARY,
+        help='PCA API に face_models 辞書の全特徴点を含めて配信する'
+             '（eliminate-low-quality-images の dictionary 配信相当）',
+    )
     # ros2 launch経由では --ros-args 等が付与されるため、未知の引数は無視する
     args, _ = parser.parse_known_args()
 
@@ -29,6 +36,7 @@ def main() -> None:
     from shigure_api.pca_plot import state_to_dict
 
     config.FACE_MODELS_DIR = Path(args.face_models_dir).expanduser()
+    config.PCA_SHOW_FULL_DICTIONARY = bool(args.show_full_dictionary)
     pca_builder = init_pca_builder(config.FACE_MODELS_DIR)
 
     pca_hub.enqueue(state_to_dict(pca_builder.build_state()))
@@ -66,7 +74,8 @@ def main() -> None:
         f'WebSocket: ws://{args.host}:{args.port}/ws/events  '
         f'PCA plot: ws://{args.host}:{args.port}/ws/pca_plot  '
         f'Tracking debug: ws://{args.host}:{args.port}/ws/tracking_debug  '
-        f'face_models={config.FACE_MODELS_DIR}'
+        f'face_models={config.FACE_MODELS_DIR}  '
+        f'show_full_dictionary={config.PCA_SHOW_FULL_DICTIONARY}'
     )
 
     try:

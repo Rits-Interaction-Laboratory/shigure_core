@@ -9,6 +9,9 @@ launch 引数（フラグ類は「起動時の初期値」。稼働中は ros2 p
                             （手元解析用。既定 false）。Web配信は常時なので save_image とは無関係。
   save_registration:=true/false true で people_recognition が新規/更新の顔特徴・画像・
                             PCAモデルをディスク保存する（既定 false。is_debug_mode とは独立）。
+  show_full_dictionary:=true/false
+                            true で shigure_api の PCA 配信に辞書の全特徴点を含める（既定 false）。
+                            稼働中は PUT /pca/show_full_dictionary でも切替可。
   terminal:=gnome-terminal/xterm/none
                             各ノードを開く端末エミュレータ（既定 gnome-terminal）。
                             Docker では xterm、ヘッドレス環境では none を指定する。
@@ -24,10 +27,12 @@ launch 引数（フラグ類は「起動時の初期値」。稼働中は ros2 p
   ros2 param set /people_tracking_node    save_image        false  # 追跡画像のローカル保存を停止（Web配信は継続）
   ros2 param set /people_tracking_node    enable_profile_insightface false  # 横顔特徴の配信を停止
   ros2 param set /people_tracking_node    is_debug_mode     true   # デバッグ窓の表示（保存はしない）
+  curl -X PUT 'http://localhost:8765/pca/show_full_dictionary?enabled=true'  # 辞書全特徴の PCA 配信
 
 例:
   ros2 launch shigure_core shigure_core_launch.py
   ros2 launch shigure_core shigure_core_launch.py debug_mode:=true save_registration:=true
+  ros2 launch shigure_core shigure_core_launch.py show_full_dictionary:=true
   ros2 launch shigure_core shigure_core_launch.py terminal:=xterm record:=true  # Docker と同等の構成
 """
 
@@ -59,16 +64,19 @@ def _setup_nodes(context):
     record = _to_bool(context.launch_configurations['record'])
     terminal = context.launch_configurations['terminal']
     save_root_path = context.launch_configurations['save_root_path']
+    show_full_dictionary = _to_bool(context.launch_configurations['show_full_dictionary'])
 
     is_debug = {'is_debug_mode': debug_mode}
 
-    def make_node(executable, package='shigure_core', parameters=None):
+    def make_node(executable, package='shigure_core', parameters=None, arguments=None):
         kwargs = {}
         prefix = _make_prefix(terminal, executable)
         if prefix:
             kwargs['prefix'] = prefix
         if parameters:
             kwargs['parameters'] = parameters
+        if arguments:
+            kwargs['arguments'] = arguments
         return Node(package=package, executable=executable, **kwargs)
 
     nodes = [
@@ -91,7 +99,12 @@ def _setup_nodes(context):
 
     # Web API（常駐）。people_tracking が /shigure/tracking_debug_image を常時配信するので、
     # WebUI ではいつでも現フレームの追跡画像を確認できる。サーバ自体はストレージを消費しない。
-    nodes.append(make_node('shigure_api', package='shigure_api'))
+    api_args = (
+        ['--show-full-dictionary']
+        if show_full_dictionary
+        else ['--no-show-full-dictionary']
+    )
+    nodes.append(make_node('shigure_api', package='shigure_api', arguments=api_args))
 
     # DB 保存系（record:=true のときのみ起動）
     if record:
@@ -129,6 +142,11 @@ def generate_launch_description():
             default_value='false',
             description='true のとき people_recognition が新規/更新の顔特徴・画像・PCAモデルを'
                         'ディスクへ保存する（is_debug_mode とは独立）。',
+        ),
+        DeclareLaunchArgument(
+            'show_full_dictionary',
+            default_value='false',
+            description='true のとき shigure_api の PCA 配信に face_models 辞書の全特徴点を含める。',
         ),
         DeclareLaunchArgument(
             'terminal',

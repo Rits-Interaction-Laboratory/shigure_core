@@ -12,11 +12,18 @@ from typing import AsyncIterator, List, Optional, Set
 from fastapi import FastAPI, Header, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
-from shigure_api.config import API_KEY, FACE_MODELS_DIR, PCA_REDRAW_EVERY, PCA_TRAJECTORY_MAX_POINTS, default_pca_model_path
+from shigure_api.config import (
+    API_KEY,
+    FACE_MODELS_DIR,
+    PCA_REDRAW_EVERY,
+    PCA_SHOW_FULL_DICTIONARY,
+    PCA_TRAJECTORY_MAX_POINTS,
+    default_pca_model_path,
+)
 from shigure_api.events import ContactCandidate, UserEvent, UserSummary, contact_row_to_model, user_event_to_dict
 
 from shigure_api.feature_images import find_face_image_path, load_face_thumbnail
-from shigure_api.pca_plot import PcaPlotHub, PcaPlotStateBuilder
+from shigure_api.pca_plot import PcaPlotHub, PcaPlotStateBuilder, state_to_dict
 from shigure_api.tracking_debug import TrackingDebugHub
 
 
@@ -107,6 +114,7 @@ def init_pca_builder(face_models_dir: Path | None = None) -> PcaPlotStateBuilder
         default_pca_model_path(base),
         redraw_every=PCA_REDRAW_EVERY,
         trajectory_max_points=PCA_TRAJECTORY_MAX_POINTS,
+        show_full_dictionary=PCA_SHOW_FULL_DICTIONARY,
     )
     return pca_builder
 
@@ -178,7 +186,35 @@ def create_app() -> FastAPI:
             'status': 'ok',
             'face_models_dir': str(FACE_MODELS_DIR),
             'face_models_exists': FACE_MODELS_DIR.is_dir(),
+            'pca_show_full_dictionary': (
+                pca_builder.show_full_dictionary
+                if pca_builder is not None
+                else PCA_SHOW_FULL_DICTIONARY
+            ),
         }
+
+    @app.get('/pca/show_full_dictionary')
+    def get_show_full_dictionary(
+        x_api_key: str | None = Header(default=None, alias='X-API-Key'),
+    ) -> dict:
+        """辞書全特徴の API 配信モードの現在値を返す."""
+        _verify_api_key(x_api_key)
+        if pca_builder is None:
+            raise HTTPException(status_code=503, detail='PCA builder not initialized')
+        return {'show_full_dictionary': pca_builder.show_full_dictionary}
+
+    @app.put('/pca/show_full_dictionary')
+    def put_show_full_dictionary(
+        enabled: bool = Query(..., description='true で辞書の全特徴を PCA API に含める'),
+        x_api_key: str | None = Header(default=None, alias='X-API-Key'),
+    ) -> dict:
+        """辞書全特徴の API 配信モードを切り替えて、最新 state を再配信する."""
+        _verify_api_key(x_api_key)
+        if pca_builder is None:
+            raise HTTPException(status_code=503, detail='PCA builder not initialized')
+        pca_builder.set_show_full_dictionary(enabled)
+        pca_hub.enqueue(state_to_dict(pca_builder.build_state()))
+        return {'show_full_dictionary': pca_builder.show_full_dictionary}
 
     @app.get('/users', response_model=List[UserSummary])
     def list_users(x_api_key: str | None = Header(default=None, alias='X-API-Key')) -> List[UserSummary]:

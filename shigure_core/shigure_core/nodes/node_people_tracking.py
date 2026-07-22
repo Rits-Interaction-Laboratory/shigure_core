@@ -148,7 +148,8 @@ class PeopleTrackingNode(ImagePreviewNode):
                                                    description='追跡基準点とする関節番号（OpenPoseインデックス）。'))
         self.declare_parameter('face_name_score_threshold', 3.0,
                                ParameterDescriptor(type=ParameterType.PARAMETER_DOUBLE,
-                                                   description='face_name を確定として publish する累積スコアのしきい値（コサイン類似度の累積和）。未満は未確定として空文字を publish する。'))
+                                                   description='暫定 face_name（末尾?）を publish する累積スコアのしきい値（コサイン類似度の累積和）。'
+                                                               '確定名（?なし＝青枠）は /dictionary_update 起点で、PCA色付けと同期する。'))
         self.declare_parameter('tracking_max_age', 5,
                                ParameterDescriptor(type=ParameterType.PARAMETER_INTEGER,
                                                    description='人物を見失っても people_id を保持する最大フレーム数。'
@@ -286,19 +287,26 @@ class PeopleTrackingNode(ImagePreviewNode):
         """
         体IDに対する face_name を決める.
 
-        累積スコアが閾値以上なら確定名（例 'user_nakamura'）を返す。
-        未確定でも現フレームの暫定Top1があれば末尾に '?' を付けた暫定名（例 'user_nakamura?'）を返す。
+        /dictionary_update で確定済みなら確定名（例 'user_nakamura'）を返す。
+        これによりデバッグ画像の青枠と PCA 未ラベル色付けが同じタイミングになる。
+        未確定でも累積スコアが閾値以上なら末尾に '?' を付けた暫定名を返す。
         どちらも無ければ空文字を返す。
         """
-        # 暫定・確定とも累積(recognition_history)のargmaxを使う（案B: latch）。
+        # 確定は people_recognition の辞書更新(/dictionary_update)と同期する。
+        # （累積スコア単独では確定にしない → PCA 色付けより先に青枠だけ出るズレを防ぐ）
+        confirmed = self.confirmed_users.get(people_id)
+        if confirmed and confirmed.startswith('user'):
+            return confirmed
+
+        # 暫定は累積(recognition_history)のargmaxを使う（案B: latch）。
         # 累積は追跡が続く限り残るため、顔が見えなくなっても・別人が一瞬映っても、
         # 累積で勝っている人物の名前が保持され続ける（instantaneousな上書きで消えない）。
         name, score = self.get_most_likely_face_id(people_id)
         if name is None or name.startswith('unknown'):
             return ''
         if score >= self.face_name_score_threshold:
-            return name          # 確定：?なし
-        return name + '?'        # 暫定：?付き（累積argmaxなのでlatchされる）
+            return name + '?'    # 暫定：?付き（赤枠）。確定は confirmed_users のみ
+        return ''
 
     def _cleanup_recognition_history(self):
         """現在追跡していない体IDの顔認識履歴・確定名・横顔保存状態を破棄する.

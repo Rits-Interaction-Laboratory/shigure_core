@@ -159,12 +159,15 @@ class PcaPlotStateBuilder:
         redraw_every: int = 1,
         trajectory_max_points: int = 50,
         presence_timeout: float = PRESENCE_TIMEOUT_SEC,
+        show_full_dictionary: bool = False,
     ) -> None:
         self._lock = threading.Lock()
         self._redraw_every = max(1, redraw_every)
         self._trajectory_max_points = max(2, trajectory_max_points)
         # 今映っているユーザーのみプロットするための在室追跡（user_id -> 最終認識時刻）。
         self._presence_timeout = max(0.0, presence_timeout)
+        # true のとき eliminate-low-quality-images 相当で辞書全特徴を API 配信する。
+        self._show_full_dictionary = bool(show_full_dictionary)
         self._present_last_seen: Dict[str, float] = {}
         # 未確定ユーザー（people_id 単位）の在室追跡と、その people が持つ unlabeled 特徴番号。
         self._present_people_last_seen: Dict[str, float] = {}
@@ -274,6 +277,16 @@ class PcaPlotStateBuilder:
     def clear_labeled_new(self, user_id: str) -> None:
         with self._lock:
             self._labeled_new.pop(user_id, None)
+
+    def set_show_full_dictionary(self, enabled: bool) -> None:
+        """辞書全特徴の API 配信モードを切り替える."""
+        with self._lock:
+            self._show_full_dictionary = bool(enabled)
+
+    @property
+    def show_full_dictionary(self) -> bool:
+        with self._lock:
+            return self._show_full_dictionary
 
     def mark_present(self, user_id: str) -> None:
         """ユーザーが認識されたことを記録する（在室扱いにする）。認識フレームごとに呼ぶ。"""
@@ -497,7 +510,7 @@ class PcaPlotStateBuilder:
             # - unlabeled: 確定前の点（確定済み people の点は昇格済みなので通常は出ない）
             # - labeled_new: 同じ骨格IDで確定した色付け点（骨格IDが生きている間は増えてよい）
             # - 骨格IDが消えたら色付け点はリセット（別骨格での再登場は未ラベルから）
-            # dictionary(ディスク全特徴)はライブプロットに出さない。
+            # - dictionary: show_full_dictionary=true のときのみ全特徴を配信
             present_people = self.present_people_ids_locked()
             # 在室骨格に紐づく確定ユーザーは、顔認識の短タイムアウトに依らず色付けを出す。
             confirmed_present = {
@@ -509,13 +522,20 @@ class PcaPlotStateBuilder:
             labeled_new = {
                 k: list(v) for k, v in self._labeled_new.items() if k in present and v
             }
-            dictionary: Dict[str, List[PcaPlotPoint]] = {}
-            dict_shown = len(dictionary)
+            # eliminate-low-quality-images 相当:
+            # show_full_dictionary=true なら dictionary に全ユーザー特徴を載せる。
+            # false ならライブ点のみ（dictionary は空）。
+            if self._show_full_dictionary:
+                dictionary = {k: list(v) for k, v in self._dictionary.items() if v}
+            else:
+                dictionary = {}
+            dict_shown = sum(len(v) for v in dictionary.values())
             labeled_shown = len(labeled_new)
             # デバッグ: 点の生成有無と在室フィルタ通過後の件数を並べて出す。
             # unlabeled_total>0 かつ unlabeled_shown==0 なら「点はあるがフィルタで全除外」。
             print(
                 f'[pca][A:build_state] seq={self._sequence} '
+                f'show_full_dictionary={self._show_full_dictionary} '
                 f'unlabeled_total={len(self._unlabeled)} present_fns={len(present_fns)} '
                 f'unlabeled_shown={len(unlabeled)} '
                 f'dict_total={len(self._dictionary)} dict_shown={dict_shown} '
@@ -592,10 +612,10 @@ class PcaPlotHub:
                 payload.get('type') == 'pca_unlabeled_update'
                 and self._latest_state is not None
             ):
-                # unlabeled のみ更新。dictionary はライブでは使わないので空を維持する。
+                # unlabeled のみ更新。dictionary は最新 state を維持
+                # （show_full_dictionary=true 時に全特徴が消えないようにする）。
                 self._latest_state = {
                     **self._latest_state,
-                    'dictionary': {},
                     'unlabeled': payload.get('unlabeled', []),
                     'sequence': payload.get('sequence', self._latest_state.get('sequence', 0)),
                     'timestamp': payload.get(
