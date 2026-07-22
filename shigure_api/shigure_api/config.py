@@ -43,7 +43,7 @@ TRACKING_DEBUG_IMAGE_TOPIC = os.environ.get(
     'SHIGURE_TRACKING_DEBUG_IMAGE_TOPIC', '/shigure/tracking_debug_image'
 )
 
-PCA_REDRAW_EVERY = int(os.environ.get('SHIGURE_PCA_REDRAW_EVERY', '5'))
+PCA_REDRAW_EVERY = int(os.environ.get('SHIGURE_PCA_REDRAW_EVERY', '1'))
 PCA_TRAJECTORY_MAX_POINTS = int(os.environ.get('SHIGURE_PCA_TRAJECTORY_MAX_POINTS', '50'))
 PCA_REBUILD_ON_NEW_USER = os.environ.get('SHIGURE_PCA_REBUILD_ON_NEW_USER', 'true').lower() in (
     '1',

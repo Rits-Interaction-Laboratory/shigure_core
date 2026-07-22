@@ -84,7 +84,7 @@ class PeopleTrackingNode(ImagePreviewNode):
             self.face_recognition_callback,
             10
         )
-        # 追跡デバッグ画像(オーバーレイ)の配信先。5フレーム毎に現フレームを配信する（shigure_api のWeb表示用）。
+        # 追跡デバッグ画像(オーバーレイ)の配信先。毎フレーム現フレームを配信する（shigure_api のWeb表示用）。
         self._debug_image_publisher = self.create_publisher(
             DebugImage,
             '/shigure/tracking_debug_image',
@@ -122,7 +122,7 @@ class PeopleTrackingNode(ImagePreviewNode):
             qos_profile=shigure_qos
         )
 
-        # color 画像は Web配信(5フレーム毎)・描画(is_debug_mode)・横顔保存(enable_profile_insightface)
+        # color 画像は Web配信(毎フレーム)・描画(is_debug_mode)・横顔保存(enable_profile_insightface)
         # で必要になる。Web配信は常時行うため、常に color を購読して callback_debug を使う。
         # （color/depth/cameraInfo は同一 RealSense 由来でタイムスタンプが揃うため 4 topic
         # 同期でも取りこぼしは増えない。color 不要なフレームは callback_debug 側で復号しない。）
@@ -225,6 +225,10 @@ class PeopleTrackingNode(ImagePreviewNode):
             face_box = list(face_info.box)
             # box は [x, y, w, h] を想定。異常な長さは対応付け不能なのでスキップする。
             if len(face_box) != 4:
+                continue
+            # 横顔(@profile)の累積スコアは当面無効化する。
+            # （描画・横顔保存用の current_face_data は上で保持済み）
+            if face_id.endswith('@profile'):
                 continue
 
             for people_id, people in self.tracking_info.get_people_dict().items():
@@ -447,9 +451,9 @@ class PeopleTrackingNode(ImagePreviewNode):
                        camera_info: CameraInfo, color_src: CompressedImage):
         published_msg: ShigurePoseKeyPointsList = self.callback(depth_src, key_points_list, camera_info)
 
-        # 現フレームを shigure_api(/ws/tracking_debug)へ配信するフレームか（負荷軽減のため5フレーム毎）。
-        # WebUI は常駐なので配信は常時行う。save_image=true のときは同じ画像をローカル保存もする。
-        publish_web = (self.frame_count % 5 == 0)
+        # 現フレームを shigure_api(/ws/tracking_debug)へ配信するフレームか。
+        # WebUI は常駐なので毎フレーム配信する。save_image=true のときは同じ画像をローカル保存もする。
+        publish_web = True
 
         # color 画像が要るのは Web配信 / デバッグ窓表示 / 横顔保存 のいずれか。
         # どれも不要なフレームは復号せずに抜ける（CPU節約）。people_detection は上の callback で配信済み。

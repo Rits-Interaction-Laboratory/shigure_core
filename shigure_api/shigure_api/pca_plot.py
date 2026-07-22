@@ -151,7 +151,7 @@ class PcaPlotStateBuilder:
         face_models_dir: Path,
         pca_path: Path,
         *,
-        redraw_every: int = 5,
+        redraw_every: int = 1,
         trajectory_max_points: int = 50,
         presence_timeout: float = PRESENCE_TIMEOUT_SEC,
     ) -> None:
@@ -405,7 +405,7 @@ class PcaPlotStateBuilder:
                 for fn, pt in sorted(self._unlabeled.items())
                 if fn in present_fns
             ]
-            # デバッグ: FeatureInfo 到着ごと（5フレーム毎）の点数。顔が映っている間に出る。
+            # デバッグ: FeatureInfo 到着ごとの点数。顔が映っている間に出る。
             print(
                 f'[pca][B:unlabeled_update] seq={self._sequence} '
                 f'unlabeled_total={len(self._unlabeled)} present_fns={len(present_fns)} '
