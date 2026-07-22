@@ -39,7 +39,7 @@ from shigure_api.pca_plot import (
     unlabeled_update_to_dict,
 )
 from shigure_api.tracking_debug import debug_image_msg_to_payload
-from shigure_core.util.face_models_dir import face_models_signature
+from shigure_core.util.face_models_dir import face_models_signature, sync_all_user_file_prefixes
 
 
 class RosEventBridge(Node):
@@ -179,7 +179,13 @@ class RosEventBridge(Node):
         signature = face_models_signature(FACE_MODELS_DIR)
         if signature == self._face_models_signature:
             return False
-        self._face_models_signature = signature
+        # ディレクトリ手動リネーム後の user_newN_* ファイル名を揃える。
+        renamed = sync_all_user_file_prefixes(FACE_MODELS_DIR)
+        if renamed:
+            self.get_logger().info(
+                f'[dict_sync] renamed {renamed} file(s) to match user dir names'
+            )
+        self._face_models_signature = face_models_signature(FACE_MODELS_DIR)
         self._pca_builder.reload_dictionary_from_disk()
         self.get_logger().info('[dict_sync] reloaded PCA dictionary from disk')
         return True
@@ -212,8 +218,8 @@ class RosEventBridge(Node):
                 self._face_models_signature = face_models_signature(FACE_MODELS_DIR)
                 self._publish_pca_state()
             elif event is not None and event.type == 'user_confirmed':
+                # ディスク辞書は更新するが、今セッションの色付き点(labeled_new)は消さない。
                 self._pca_builder.reload_dictionary_from_disk()
-                self._pca_builder.clear_labeled_new(event.user_id)
                 self._face_models_signature = face_models_signature(FACE_MODELS_DIR)
                 self._publish_pca_state()
 

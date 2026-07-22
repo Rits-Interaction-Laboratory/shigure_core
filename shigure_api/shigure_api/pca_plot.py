@@ -240,9 +240,8 @@ class PcaPlotStateBuilder:
                 if rebuilt:
                     self._labeled_new[uid] = rebuilt
 
-            if registered_user_id:
-                # Disk dictionary now includes the new user; avoid duplicate layers.
-                self._labeled_new.pop(registered_user_id, None)
+            # 新規登録ユーザーも今セッションの色付き点(labeled_new)を残す。
+            # （ディスク全特徴の dictionary とは build_state 側で排他する）
 
         return True
 
@@ -288,6 +287,7 @@ class PcaPlotStateBuilder:
         ]
         for user_id in expired:
             self._present_last_seen.pop(user_id, None)
+            # 色付け点は骨格ID(people_id)単位のセッションなので、ここでは消さない。
         return set(self._present_last_seen.keys())
 
     def present_user_ids(self) -> Set[str]:
@@ -296,7 +296,10 @@ class PcaPlotStateBuilder:
             return self.present_user_ids_locked()
 
     def present_people_ids_locked(self) -> Set[str]:
-        """在室タイムアウトを超えた未確定 people を除去し、今映っている people_id 集合を返す（要ロック済み）。"""
+        """在室タイムアウトを超えた people を除去し、今映っている people_id 集合を返す（要ロック済み）。
+
+        骨格IDが消えたときだけ、そのセッションの色付け点をリセットする。
+        """
         now = time.monotonic()
         expired = [
             people_id
@@ -306,10 +309,18 @@ class PcaPlotStateBuilder:
         for people_id in expired:
             self._present_people_last_seen.pop(people_id, None)
             self._people_feature_nums.pop(people_id, None)
+            user_id = self._confirmed_people.pop(people_id, None)
+            if user_id:
+                # 同じ骨格IDのセッションが終わったので色付け点を捨てる。
+                # 別の骨格IDで再登場したときは未ラベルからやり直す。
+                self._labeled_new.pop(user_id, None)
         return set(self._present_people_last_seen.keys())
 
     def present_unlabeled_fns_locked(self) -> Set[int]:
-        """今映っている未確定 people が持つ unlabeled 特徴番号の集合を返す（要ロック済み）。"""
+        """今映っている people が持つ unlabeled 特徴番号の集合を返す（要ロック済み）。
+
+        確定済み people も含める（未ラベル点は常時表示するため）。
+        """
         present_people = self.present_people_ids_locked()
         fns: Set[int] = set()
         for people_id in present_people:
@@ -336,7 +347,11 @@ class PcaPlotStateBuilder:
                 # 辞書確定済み: 骨格が残っている限り在室（顔認識不要）。
                 if people_id in self._confirmed_people:
                     self._present_last_seen[self._confirmed_people[people_id]] = now
+                    # 骨格IDセッション維持（色付け点を消さないため）
+                    self._present_people_last_seen[people_id] = now
                     continue
+                # 未確定でも骨格が見えている間は people 在室を更新する。
+                self._present_people_last_seen[people_id] = now
                 # pose 側の確定名（末尾?なし）も在室扱い。
                 face_name = (pose.face_name or '').strip()
                 if (
@@ -353,19 +368,16 @@ class PcaPlotStateBuilder:
             self._latest_history = msg
             for user in msg.users:
                 people_id = user.people_id
-                if people_id in self._confirmed_people:
-                    # 確定済み: 骨格が認識履歴に残っている間も在室を更新（people_detection の補助）。
-                    user_id = self._confirmed_people[people_id]
-                    self._present_last_seen[user_id] = now
-                    continue
-                # 辞書確定前は face_id が既存 user_* でも unlabeled として表示する。
-                # （確定後に labeled_new へ promote されるまでのギャップを埋める）
                 fns: Set[int] = set()
                 for face in user.face_info:
                     fns.update(int(fn) for fn in face.features_num)
-                # 未確定 people を在室として記録し、その unlabeled 特徴番号を更新する。
+                # 未ラベル点は確定前後を問わず出し続ける（在室 people の特徴番号を追跡）。
                 self._present_people_last_seen[people_id] = now
                 self._people_feature_nums[people_id] = fns
+                if people_id in self._confirmed_people:
+                    # 確定済みユーザーの在室も更新する。
+                    user_id = self._confirmed_people[people_id]
+                    self._present_last_seen[user_id] = now
 
     def on_dictionary_update(self, people_id: str, name: str) -> Optional[PcaSegmentClosed]:
         if not name or name == 'none':
@@ -375,9 +387,9 @@ class PcaPlotStateBuilder:
             self._confirmed_people[people_id] = name
             # 確定直後から在室扱い（骨格追跡が来るまでの空白を埋める）。
             self._present_last_seen[name] = time.monotonic()
-            # 確定した people は未確定の在室追跡から外す（未確定プロットとしては消す）。
-            self._present_people_last_seen.pop(people_id, None)
-            self._people_feature_nums.pop(people_id, None)
+            # 今回の確定では「今未ラベルとして見えている点」だけを色付けする。
+            # recognition_history の過去 features_num を全部昇格すると全特徴相当になるため。
+            candidate_fns: Set[int] = set()
             if self._latest_history is not None:
                 for user in self._latest_history.users:
                     if user.people_id != people_id:
@@ -385,16 +397,32 @@ class PcaPlotStateBuilder:
                     for face in user.face_info:
                         if not should_promote_face_for_user(face.id, name):
                             continue
-                        for fn in face.features_num:
-                            fn_int = int(fn)
-                            promoted.append(fn_int)
-                            pt = self._feature_map.get(fn_int)
-                            if pt is not None:
-                                self._labeled_new[name].append(
-                                    PcaPlotPoint(x=pt[0], y=pt[1], feature_num=fn_int)
-                                )
-                            self._unlabeled.pop(fn_int, None)
-                            self._promoted_feature_nums.add(fn_int)
+                        candidate_fns.update(int(fn) for fn in face.features_num)
+            # いま unlabeled にある点 ∩ 今回バケットの点 だけを色付けへ移す
+            promote_fns = sorted(
+                fn for fn in candidate_fns if fn in self._unlabeled
+            )
+            # 同じ骨格IDセッション中は色付け点を消さず追加する
+            if name not in self._labeled_new:
+                self._labeled_new[name] = []
+            existing_fns = {
+                int(p.feature_num)
+                for p in self._labeled_new[name]
+                if p.feature_num is not None
+            }
+            for fn_int in promote_fns:
+                if fn_int in existing_fns:
+                    self._unlabeled.pop(fn_int, None)
+                    self._promoted_feature_nums.add(fn_int)
+                    continue
+                pt = self._feature_map.get(fn_int) or self._unlabeled.get(fn_int)
+                if pt is not None:
+                    self._labeled_new[name].append(
+                        PcaPlotPoint(x=pt[0], y=pt[1], feature_num=fn_int)
+                    )
+                self._unlabeled.pop(fn_int, None)
+                self._promoted_feature_nums.add(fn_int)
+                promoted.append(fn_int)
             promoted = sorted(set(promoted))
         return PcaSegmentClosed(
             timestamp=_now_iso(),
@@ -444,10 +472,18 @@ class PcaPlotStateBuilder:
                 for fn, pt in sorted(self._unlabeled.items())
                 if fn in present_fns
             ]
-            # 今映っているユーザーのプロット（dictionary / labeled_new）だけを含める。
+            # 今映っているユーザーのプロットは骨格IDセッション単位。
+            # - unlabeled: 常に表示（確定後に増えた点も含む）
+            # - labeled_new: 同じ骨格IDで確定した色付け点（骨格IDが生きている間は増えてよい）
+            # - 骨格IDが消えたら色付け点はリセット（別骨格での再登場は未ラベルから）
+            # dictionary(ディスク全特徴)はライブプロットに出さない。
             present = self.present_user_ids_locked()
-            dict_shown = sum(1 for k in self._dictionary if k in present)
-            labeled_shown = sum(1 for k in self._labeled_new if k in present)
+            labeled_new = {
+                k: list(v) for k, v in self._labeled_new.items() if k in present and v
+            }
+            dictionary: Dict[str, List[PcaPlotPoint]] = {}
+            dict_shown = len(dictionary)
+            labeled_shown = len(labeled_new)
             # デバッグ: 点の生成有無と在室フィルタ通過後の件数を並べて出す。
             # unlabeled_total>0 かつ unlabeled_shown==0 なら「点はあるがフィルタで全除外」。
             print(
@@ -463,12 +499,8 @@ class PcaPlotStateBuilder:
             return PcaPlotState(
                 timestamp=_now_iso(),
                 sequence=self._sequence,
-                dictionary={
-                    k: list(v) for k, v in self._dictionary.items() if k in present
-                },
-                labeled_new={
-                    k: list(v) for k, v in self._labeled_new.items() if k in present
-                },
+                dictionary=dictionary,
+                labeled_new=labeled_new,
                 unlabeled=unlabeled,
                 trajectories_pre_confirm=trajectories,
             )
@@ -532,8 +564,10 @@ class PcaPlotHub:
                 payload.get('type') == 'pca_unlabeled_update'
                 and self._latest_state is not None
             ):
+                # unlabeled のみ更新。dictionary はライブでは使わないので空を維持する。
                 self._latest_state = {
                     **self._latest_state,
+                    'dictionary': {},
                     'unlabeled': payload.get('unlabeled', []),
                     'sequence': payload.get('sequence', self._latest_state.get('sequence', 0)),
                     'timestamp': payload.get(

@@ -17,7 +17,11 @@ from PIL import Image
 
 from shigure_core.nodes.node_image_preview import ImagePreviewNode
 from shigure_core.nodes.profile_insightface import ProfileInsightFace, InsightFaceResult
-from shigure_core.util.face_models_dir import face_models_signature, get_face_models_dir
+from shigure_core.util.face_models_dir import (
+    face_models_signature,
+    get_face_models_dir,
+    sync_all_user_file_prefixes,
+)
 from shigure_core.util.pca_model import build_pca_model
 
 from sklearn.semi_supervised import LabelPropagation
@@ -143,10 +147,20 @@ class PeopleRecognitionNode(ImagePreviewNode):
         - ディスク上の user_* は内容をディスク基準で置き換える
         - ディスクから消えたユーザーはメモリからも削除する
         - save_registration=false などでディスクに無いメモリ専用ユーザーは残す
+        - ディレクトリ名とファイル接頭辞の不一致（手動リネーム後の user_newN_*）を揃える
         """
         signature = face_models_signature(DIRECTORY)
         if not force and signature == self._face_models_signature:
             return False
+
+        # user_new1 → user_aono のようにディレクトリだけ変えた場合、中の
+        # user_new1_*.npy/.jpg もディレクトリ名に合わせてリネームする。
+        renamed = sync_all_user_file_prefixes(DIRECTORY)
+        if renamed:
+            self.get_logger().info(
+                f'[dict_sync] renamed {renamed} file(s) to match user dir names'
+            )
+            signature = face_models_signature(DIRECTORY)
 
         disk_dictionary, disk_profile = self._load_dictionaries_from_disk()
         disk_users = set(disk_dictionary.keys()) | set(disk_profile.keys())
