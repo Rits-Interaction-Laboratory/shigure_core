@@ -39,6 +39,8 @@ FAISS_FALLBACK_MIN_VOTE_RATIO = 0.5
 MIN_DET_SCORE = 0.4  # 顔検出器(det_score)の採用しきい値の既定。param min_det_score で実行中変更可
 # 新規ユーザーとして辞書登録する最低特徴数（この数を超えたら dictionary_renew で登録判定）。
 MIN_FEATURES_FOR_NEW_USER = 10
+# 1ユーザーあたりの正面特徴・画像の上限。到達後は dictionary_renew で追加保存しない。
+MAX_FEATURES_PER_USER = 100
 
 # 顔辞書(face_models)。登録先・追跡ノード・APIの参照先と共通化する。
 DIRECTORY = str(get_face_models_dir())
@@ -498,16 +500,39 @@ class PeopleRecognitionNode(ImagePreviewNode):
                 max_idx = max(max_idx, int(suffix))
         return max_idx
 
+    def count_user_features(self, user_name: str) -> int:
+        """ユーザーの正面特徴数を返す（メモリとディスクの大きい方）."""
+        mem_count = len(self.dictionary.get(user_name, []))
+        if not self.save_registration:
+            return mem_count
+        user_dir = os.path.join(DIRECTORY, user_name)
+        if not os.path.isdir(user_dir):
+            return mem_count
+        disk_count = len(glob.glob(os.path.join(user_dir, f'{user_name}_*.npy')))
+        return max(mem_count, disk_count)
+
     def save_features_for_user(
         self,
         user_name: str,
         features_num: list,
     ) -> None:
-        """Persist feature_num list to dictionary memory and optionally disk."""
+        """Persist feature_num list to dictionary memory and optionally disk.
+
+        1ユーザーあたり MAX_FEATURES_PER_USER 件を超える正面特徴・画像は追加しない。
+        """
         # 辞書にユーザーを登録
         if user_name not in self.dictionary:
             self.dictionary[user_name] = []
         self._ensure_profile_user_entry(user_name)
+
+        current_count = self.count_user_features(user_name)
+        remaining = MAX_FEATURES_PER_USER - current_count
+        if remaining <= 0:
+            self.get_logger().info(
+                f'[dict_renew] skip save: {user_name} already has '
+                f'{current_count} feature(s) (limit={MAX_FEATURES_PER_USER})'
+            )
+            return
 
         user_dir = None
         disk_idx = 1
@@ -520,8 +545,10 @@ class PeopleRecognitionNode(ImagePreviewNode):
             disk_idx = self.max_disk_feature_index(user_dir, user_name) + 1
 
         saved = 0
-        # 特徴ベクトルを保存
+        # 特徴ベクトルを保存（上限まで）
         for num in features_num:
+            if saved >= remaining:
+                break
             if num not in self.all_features:
                 continue
             feature = self.all_features[num]["feature"]
