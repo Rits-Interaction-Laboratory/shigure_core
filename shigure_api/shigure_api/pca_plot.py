@@ -344,17 +344,10 @@ class PcaPlotStateBuilder:
                     user_id = self._confirmed_people[people_id]
                     self._present_last_seen[user_id] = now
                     continue
+                # 辞書確定前は face_id が既存 user_* でも unlabeled として表示する。
+                # （確定後に labeled_new へ promote されるまでのギャップを埋める）
                 fns: Set[int] = set()
                 for face in user.face_info:
-                    # 非正面(@profile)も含め、未認識(unknown)の顔だけを unlabeled 対象にする。
-                    # 登録ユーザーに一致した顔（'user_x' / 'user_x@profile'）は除外する。
-                    base_id = (
-                        face.id[: -len('@profile')]
-                        if face.id.endswith('@profile')
-                        else face.id
-                    )
-                    if base_id != 'unknown':
-                        continue
                     fns.update(int(fn) for fn in face.features_num)
                 # 未確定 people を在室として記録し、その unlabeled 特徴番号を更新する。
                 self._present_people_last_seen[people_id] = now
@@ -477,11 +470,10 @@ class PcaPlotStateBuilder:
             # 退室（在室タイムアウト超過）した未確定 people の軌跡は出さない。
             if people_id not in self._present_people_last_seen:
                 continue
+            # 確定前は既存 user_* 照合結果も含め、未ラベル軌跡として描く。
             feature_nums: List[int] = []
             for face in user.face_info:
                 if face.id.endswith('@profile'):
-                    continue
-                if face.id != 'unknown':
                     continue
                 feature_nums.extend(int(fn) for fn in face.features_num)
             feature_nums = sorted(set(feature_nums))

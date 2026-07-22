@@ -34,7 +34,7 @@ LP_CONFIDENCE_THRESHOLD = 0.7
 FAISS_FALLBACK_MIN_VOTE_RATIO = 0.5
 MIN_DET_SCORE = 0.4  # 顔検出器(det_score)の採用しきい値の既定。param min_det_score で実行中変更可
 # 新規ユーザーとして辞書登録する最低特徴数（この数を超えたら dictionary_renew で登録判定）。
-MIN_FEATURES_FOR_NEW_USER = 20
+MIN_FEATURES_FOR_NEW_USER = 10
 
 # 顔辞書(face_models)。登録先・追跡ノード・APIの参照先と共通化する。
 DIRECTORY = str(get_face_models_dir())
@@ -368,7 +368,7 @@ class PeopleRecognitionNode(ImagePreviewNode):
         self.publisher.publish(self.recognition_results)
 
         # 10秒ごとに辞書更新を実行
-        if time.time() - self.last_renew_time > 10:
+        if time.time() - self.last_renew_time > 2:
             if self.last_recognition_history is not None:  # 最後に受信したデータが存在する場合のみ更新
                 self.dictionary_renew(self.last_recognition_history)
                 self.last_recognition_history = None  # 更新後にリセット
@@ -548,7 +548,7 @@ class PeopleRecognitionNode(ImagePreviewNode):
 
                 average_score = face.accumulate_score / face.total_features
                 print("average_score: ", average_score)
-                if face.accumulate_score > 30 and average_score > 0.6:
+                if face.accumulate_score > 3 and average_score > 0.6:
                     self.save_features_for_user(best_user, features_num)
                     # 辞書内容をトピックで配信
                     self.update_dictionary(people_id, best_user)
