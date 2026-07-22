@@ -409,7 +409,19 @@ class PeopleRecognitionNode(ImagePreviewNode):
         self.feature_pub.publish(feat_msg)
 
         return face_id, score, box, embedding.astype(np.float32).tolist()
-            
+
+    @staticmethod
+    def max_disk_feature_index(user_dir: str, user_name: str) -> int:
+        """ディスク上の正面特徴ファイルから最大連番を返す（無ければ0）."""
+        prefix = f'{user_name}_'
+        max_idx = 0
+        for path in glob.glob(os.path.join(user_dir, f'{prefix}*.npy')):
+            stem = os.path.splitext(os.path.basename(path))[0]
+            suffix = stem[len(prefix):]
+            if suffix.isdigit():
+                max_idx = max(max_idx, int(suffix))
+        return max_idx
+
     def save_features_for_user(
         self,
         user_name: str,
@@ -422,10 +434,14 @@ class PeopleRecognitionNode(ImagePreviewNode):
         self._ensure_profile_user_entry(user_name)
 
         user_dir = None
+        disk_idx = 1
         if self.save_registration:
             # 新しいディレクトリを作成
             user_dir = os.path.join(DIRECTORY, user_name)
             os.makedirs(user_dir, exist_ok=True)
+            # 再起動後も既存ファイルの最大連番の続きから保存する
+            # （セッション内 feature_num をファイル名に使うと小さい番号で上書きされるため）
+            disk_idx = self.max_disk_feature_index(user_dir, user_name) + 1
 
         saved = 0
         # 特徴ベクトルを保存
@@ -435,18 +451,19 @@ class PeopleRecognitionNode(ImagePreviewNode):
             feature = self.all_features[num]["feature"]
             self.dictionary[user_name].append(feature)
             if self.save_registration and user_dir is not None:
-                # 保存処理
-                feature_path = os.path.join(user_dir, f"{user_name}_{num}.npy")
+                # 保存処理（ディスク連番はユーザー単位で単調増加）
+                feature_path = os.path.join(user_dir, f"{user_name}_{disk_idx}.npy")
                 np.save(feature_path, feature)
                 image = self.all_images.get(num)
                 if image is not None:
                     # 顔画像保存
-                    image_path = os.path.join(user_dir, f"{user_name}_{num}.jpg")
+                    image_path = os.path.join(user_dir, f"{user_name}_{disk_idx}.jpg")
                     if isinstance(image, np.ndarray):
                         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
                         Image.fromarray(image).save(image_path, format="JPEG")
                     else:
                         image.save(image_path, format="JPEG")
+                disk_idx += 1
             # all_features から削除
             del self.all_features[num]
             if num in self.all_images:
