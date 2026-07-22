@@ -5,14 +5,12 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from shigure_core.util.face_models_dir import get_face_models_dir
+
 
 def _default_face_models_dir() -> Path:
-    # SHIGURE_FACE_MODELS_DIR 環境変数があれば最優先。
-    # 無ければ固定の永続パス ~/.shigure/face_models（shigure_core 側ノードの既定と一致させること）。
-    env = os.environ.get('SHIGURE_FACE_MODELS_DIR')
-    if env:
-        return Path(env).expanduser()
-    return Path('~/.shigure/face_models').expanduser()
+    """shigure_core側と共通の顔モデル保存先を返す."""
+    return get_face_models_dir()
 
 
 FACE_MODELS_DIR = _default_face_models_dir()

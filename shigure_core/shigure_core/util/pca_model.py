@@ -9,6 +9,8 @@ from typing import Iterator, Optional
 
 import numpy as np
 
+from shigure_core.util.face_models_dir import get_face_models_dir
+
 
 @dataclass(frozen=True)
 class PcaBuildResult:
@@ -111,13 +113,7 @@ def build_pca_model(
 def main() -> None:
     import argparse
 
-    # SHIGURE_FACE_MODELS_DIR 環境変数があれば最優先、無ければ固定の永続パス ~/.shigure/face_models。
-    import os
-    _env = os.environ.get('SHIGURE_FACE_MODELS_DIR')
-    default_face_models_dir = (
-        Path(_env).expanduser() if _env
-        else Path('~/.shigure/face_models').expanduser()
-    )
+    default_face_models_dir = get_face_models_dir()
 
     parser = argparse.ArgumentParser(description='Rebuild pca_model.pkl from face_models')
     parser.add_argument(

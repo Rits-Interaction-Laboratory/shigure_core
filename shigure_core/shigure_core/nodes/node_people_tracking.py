@@ -21,17 +21,12 @@ from shigure_core.nodes.node_image_preview import ImagePreviewNode
 from shigure_core.nodes.people_tracking.logic import PeopleTrackingLogic
 from shigure_core.nodes.people_tracking.tracking_info import TrackingInfo
 from shigure_core.util import compressed_depth_util, pose_key_points_util
+from shigure_core.util.face_models_dir import get_face_models_dir
 
 # 横顔プロフィール特徴の保存間隔（フレーム）。過剰保存を防ぐ。
 PROFILE_SAVE_INTERVAL_FRAMES = 3
-# 顔辞書(face_models)ディレクトリ。node_face_models / people_recognition と一致させる。
-# SHIGURE_FACE_MODELS_DIR 環境変数があれば最優先。無ければ固定の永続パス ~/.shigure/face_models。
-_env_face_models_dir = os.environ.get('SHIGURE_FACE_MODELS_DIR')
-DIRECTORY = (
-    os.path.expanduser(_env_face_models_dir)
-    if _env_face_models_dir
-    else os.path.expanduser('~/.shigure/face_models')
-)
+# 顔辞書(face_models)ディレクトリ。登録・認識・APIと共通化する。
+DIRECTORY = str(get_face_models_dir())
 
 
 class PeopleTrackingNode(ImagePreviewNode):

@@ -9,16 +9,10 @@ from sensor_msgs.msg import CompressedImage
 import message_filters
 
 from shigure_core.nodes.profile_insightface import ProfileInsightFace
+from shigure_core.util.face_models_dir import get_face_models_dir
 
 # 顔特徴(.npy)と顔画像(.jpg)の保存先。people_recognition / shigure_api が読む辞書と同じ場所。
-# SHIGURE_FACE_MODELS_DIR 環境変数があれば最優先。無ければ固定の永続パス ~/.shigure/face_models。
-# （env 未設定でも全ノード・shigure_api が同じ場所を見る／ビルドで消えない／別PCでも同挙動）
-_env_face_models_dir = os.environ.get('SHIGURE_FACE_MODELS_DIR')
-FACE_MODELS_DIR = (
-    os.path.expanduser(_env_face_models_dir)
-    if _env_face_models_dir
-    else os.path.expanduser('~/.shigure/face_models')
-)
+FACE_MODELS_DIR = str(get_face_models_dir())
 
 
 class FaceCaptureNode(Node):

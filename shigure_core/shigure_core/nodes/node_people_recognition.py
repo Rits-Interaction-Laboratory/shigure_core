@@ -17,6 +17,7 @@ from PIL import Image
 
 from shigure_core.nodes.node_image_preview import ImagePreviewNode
 from shigure_core.nodes.profile_insightface import ProfileInsightFace, InsightFaceResult
+from shigure_core.util.face_models_dir import get_face_models_dir
 from shigure_core.util.pca_model import build_pca_model
 
 from sklearn.semi_supervised import LabelPropagation
@@ -35,14 +36,8 @@ MIN_DET_SCORE = 0.4  # 顔検出器(det_score)の採用しきい値の既定。p
 # 新規ユーザーとして辞書登録する最低特徴数（この数を超えたら dictionary_renew で登録判定）。
 MIN_FEATURES_FOR_NEW_USER = 20
 
-# 顔辞書(face_models)。node_face_models の登録先・shigure_api の参照先と一致させること。
-# SHIGURE_FACE_MODELS_DIR 環境変数があれば最優先。無ければ固定の永続パス ~/.shigure/face_models。
-_env_face_models_dir = os.environ.get('SHIGURE_FACE_MODELS_DIR')
-DIRECTORY = (
-    os.path.expanduser(_env_face_models_dir)
-    if _env_face_models_dir
-    else os.path.expanduser('~/.shigure/face_models')
-)
+# 顔辞書(face_models)。登録先・追跡ノード・APIの参照先と共通化する。
+DIRECTORY = str(get_face_models_dir())
 
 class PeopleRecognitionNode(ImagePreviewNode):
 
@@ -59,12 +54,12 @@ class PeopleRecognitionNode(ImagePreviewNode):
 
         # 顔登録データ(.npy/.jpg/pca_model)をディスクへ永続化するか。
         # デバッグ窓表示用の is_debug_mode とは独立させる（表示だけしたい/保存だけしたいを分離）。
-        # 長期稼働のストレージ節約のため既定 false。実行中に切替可:
-        #   ros2 param set /people_recognition_node save_registration true
+        # メモリ辞書とディスクを同期するため既定 true。実行中に切替可:
+        #   ros2 param set /people_recognition_node save_registration false
         save_registration_descriptor = ParameterDescriptor(
             type=ParameterType.PARAMETER_BOOL,
             description='true のとき新規/更新した顔特徴・画像・PCAモデルをディスクへ保存する。')
-        self.declare_parameter('save_registration', False, save_registration_descriptor)
+        self.declare_parameter('save_registration', True, save_registration_descriptor)
         self.save_registration: bool = \
             self.get_parameter('save_registration').get_parameter_value().bool_value
 
