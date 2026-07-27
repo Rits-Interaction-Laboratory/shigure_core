@@ -11,6 +11,7 @@ from shigure_core_msgs.msg import FaceRecognitionResult, FaceInfo, RecognitionHi
 
 import os
 import glob
+import hashlib
 import time
 from pathlib import Path
 from PIL import Image
@@ -58,6 +59,9 @@ class PeopleRecognitionNode(ImagePreviewNode):
         self.all_features = {}
         self.all_images = {}
         self.last_recognition_history = None  # 最後に受信したrecognition_history
+        # 保存済み特徴・画像のハッシュ集合（クロスユーザー重複登録防止）
+        self.saved_feature_hashes = set()
+        self.saved_image_hashes = set()
 
         # 顔登録データ(.npy/.jpg/pca_model)をディスクへ永続化するか。
         # デバッグ窓表示用の is_debug_mode とは独立させる（表示だけしたい/保存だけしたいを分離）。
@@ -199,6 +203,7 @@ class PeopleRecognitionNode(ImagePreviewNode):
             f'[dict_sync] disk users={sorted(self._disk_backed_users)} '
             f'memory users={sorted(self.dictionary.keys())}'
         )
+        self.rebuild_saved_hashes()
         return True
 
     def _on_set_parameters_people_recognition(self, params: List[Parameter]) -> SetParametersResult:
@@ -500,6 +505,85 @@ class PeopleRecognitionNode(ImagePreviewNode):
                 max_idx = max(max_idx, int(suffix))
         return max_idx
 
+    def compute_feature_hash(self, feature) -> str:
+        """正規化済み特徴ベクトルの内容ハッシュを返す。"""
+        vec = np.asarray(feature, dtype=np.float32).reshape(-1).copy()
+        faiss.normalize_L2(vec.reshape(1, -1))
+        return hashlib.md5(vec.tobytes()).hexdigest()
+
+    def compute_image_hash(self, image) -> str:
+        """顔画像(JPG相当)の内容ハッシュを返す。"""
+        if isinstance(image, np.ndarray):
+            arr = np.ascontiguousarray(image)
+        else:
+            arr = np.ascontiguousarray(np.array(image))
+        return hashlib.md5(arr.tobytes()).hexdigest()
+
+    def rebuild_saved_feature_hashes(self) -> None:
+        """辞書内の全正面特徴から保存済み特徴ハッシュ集合を再構築する。"""
+        self.saved_feature_hashes = set()
+        for features in self.dictionary.values():
+            for feature in features:
+                self.saved_feature_hashes.add(self.compute_feature_hash(feature))
+
+    def rebuild_saved_image_hashes(self) -> None:
+        """ディスク上の正面顔JPGから保存済み画像ハッシュ集合を再構築する。"""
+        self.saved_image_hashes = set()
+        for user_dir in glob.glob(os.path.join(DIRECTORY, 'user_*')):
+            for image_path in glob.glob(os.path.join(user_dir, '*.jpg')):
+                image = cv2.imread(image_path)
+                if image is None:
+                    continue
+                self.saved_image_hashes.add(self.compute_image_hash(image))
+
+    def rebuild_saved_hashes(self) -> None:
+        """保存済み特徴・画像ハッシュ集合を辞書/ディスクから再構築する。"""
+        self.rebuild_saved_feature_hashes()
+        self.rebuild_saved_image_hashes()
+
+    def is_feature_duplicate(self, feature) -> bool:
+        """特徴ハッシュが既存辞書と一致するか判定する。"""
+        return self.compute_feature_hash(feature) in self.saved_feature_hashes
+
+    def is_image_duplicate(self, image) -> bool:
+        """画像内容ハッシュが既に保存済みか判定する。"""
+        return self.compute_image_hash(image) in self.saved_image_hashes
+
+    def find_user_for_feature_hash(self, feature_hash: str) -> str | None:
+        """特徴ハッシュに一致する既存ユーザーを返す。無ければ None。"""
+        for user_id, features in self.dictionary.items():
+            for feature in features:
+                if self.compute_feature_hash(feature) == feature_hash:
+                    return user_id
+        return None
+
+    def find_existing_user_for_features(self, features: np.ndarray) -> str | None:
+        """保存候補特徴群のうち、ハッシュ一致する特徴があればその user_id を返す。"""
+        if not self.dictionary:
+            return None
+        votes: Counter = Counter()
+        for feature in features:
+            feature_hash = self.compute_feature_hash(feature)
+            if feature_hash not in self.saved_feature_hashes:
+                continue
+            user_id = self.find_user_for_feature_hash(feature_hash)
+            if user_id is not None:
+                votes[user_id] += 1
+        if not votes:
+            return None
+        return votes.most_common(1)[0][0]
+
+    def release_pending_feature(self, num: int) -> None:
+        """all_features / all_images から未保存の feature_num を破棄する。"""
+        self.all_features.pop(num, None)
+        self.all_images.pop(num, None)
+
+    def register_saved_hashes(self, feature, image=None) -> None:
+        """保存した特徴・画像のハッシュを集合へ登録する。"""
+        self.saved_feature_hashes.add(self.compute_feature_hash(feature))
+        if image is not None:
+            self.saved_image_hashes.add(self.compute_image_hash(image))
+
     def count_user_features(self, user_name: str) -> int:
         """ユーザーの正面特徴数を返す（メモリとディスクの大きい方）."""
         mem_count = len(self.dictionary.get(user_name, []))
@@ -515,10 +599,11 @@ class PeopleRecognitionNode(ImagePreviewNode):
         self,
         user_name: str,
         features_num: list,
-    ) -> None:
+    ) -> int:
         """Persist feature_num list to dictionary memory and optionally disk.
 
         1ユーザーあたり MAX_FEATURES_PER_USER 件を超える正面特徴・画像は追加しない。
+        既存辞書と重複する特徴/画像はスキップする。
         """
         # 辞書にユーザーを登録
         if user_name not in self.dictionary:
@@ -532,7 +617,7 @@ class PeopleRecognitionNode(ImagePreviewNode):
                 f'[dict_renew] skip save: {user_name} already has '
                 f'{current_count} feature(s) (limit={MAX_FEATURES_PER_USER})'
             )
-            return
+            return 0
 
         user_dir = None
         disk_idx = 1
@@ -545,6 +630,7 @@ class PeopleRecognitionNode(ImagePreviewNode):
             disk_idx = self.max_disk_feature_index(user_dir, user_name) + 1
 
         saved = 0
+        skipped = 0
         # 特徴ベクトルを保存（上限まで）
         for num in features_num:
             if saved >= remaining:
@@ -552,26 +638,44 @@ class PeopleRecognitionNode(ImagePreviewNode):
             if num not in self.all_features:
                 continue
             feature = self.all_features[num]["feature"]
+            image = self.all_images.get(num)
+
+            if self.is_feature_duplicate(feature):
+                self.get_logger().info(
+                    f'[dict_renew] skip duplicate feature: feature_num={num}'
+                )
+                self.release_pending_feature(num)
+                skipped += 1
+                continue
+            if image is not None and self.is_image_duplicate(image):
+                self.get_logger().info(
+                    f'[dict_renew] skip duplicate image: feature_num={num}'
+                )
+                self.release_pending_feature(num)
+                skipped += 1
+                continue
+
             self.dictionary[user_name].append(feature)
             if self.save_registration and user_dir is not None:
                 # 保存処理（ディスク連番はユーザー単位で単調増加）
                 feature_path = os.path.join(user_dir, f"{user_name}_{disk_idx}.npy")
                 np.save(feature_path, feature)
-                image = self.all_images.get(num)
                 if image is not None:
                     # 顔画像保存
                     image_path = os.path.join(user_dir, f"{user_name}_{disk_idx}.jpg")
                     if isinstance(image, np.ndarray):
-                        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-                        Image.fromarray(image).save(image_path, format="JPEG")
+                        image_to_save = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+                        Image.fromarray(image_to_save).save(image_path, format="JPEG")
                     else:
                         image.save(image_path, format="JPEG")
                 disk_idx += 1
-            # all_features から削除
-            del self.all_features[num]
-            if num in self.all_images:
-                del self.all_images[num]
+            self.register_saved_hashes(feature, image)
+            self.release_pending_feature(num)
             saved += 1
+        if skipped:
+            self.get_logger().info(
+                f'[dict_renew] skipped {skipped} duplicate feature(s) for {user_name}'
+            )
         if saved:
             print(
                 f"Saved {saved} feature(s) to {user_name} "
@@ -581,6 +685,7 @@ class PeopleRecognitionNode(ImagePreviewNode):
                 # 直後のディスク同期タイマーで再読込されないよう署名を更新する
                 self._disk_backed_users.add(user_name)
                 self._face_models_signature = face_models_signature(DIRECTORY)
+        return saved
 
     def dictionary_renew(self, msg: RecognitionHistory):
         """
@@ -653,12 +758,30 @@ class PeopleRecognitionNode(ImagePreviewNode):
                         )
                         continue
 
+                    existing_user = self.find_existing_user_for_features(features)
+                    if existing_user:
+                        self.get_logger().info(
+                            f'[dict_renew] duplicate bucket -> merge to {existing_user} '
+                            f'(people_id={people_id}, face_id={face_id})'
+                        )
+                        saved = self.save_features_for_user(existing_user, features_num)
+                        if saved > 0:
+                            self.rebuild_pca_model_on_disk()
+                        self.update_dictionary(people_id, existing_user)
+                        continue
+
                     new_user_name = self.generate_new_user_name(self.dictionary)
                     print(f"New user detected: {new_user_name}")
-                    self.save_features_for_user(new_user_name, features_num)
-                    self.rebuild_pca_model_on_disk()
-                    # 辞書内容をトピックで配信
-                    self.update_dictionary(people_id, new_user_name)
+                    saved = self.save_features_for_user(new_user_name, features_num)
+                    if saved > 0:
+                        self.rebuild_pca_model_on_disk()
+                        self.update_dictionary(people_id, new_user_name)
+                    else:
+                        self.get_logger().info(
+                            f'[dict_renew] skip new-user: all features duplicate '
+                            f'(people_id={people_id}, face_id={face_id})'
+                        )
+                        self.update_dictionary(people_id, "none")
                     continue
 
                 # 既存の user の場合、face_id が LP 結果と一致するときのみ特徴を辞書に追加
