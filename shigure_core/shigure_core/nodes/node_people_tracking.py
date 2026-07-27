@@ -210,12 +210,68 @@ class PeopleTrackingNode(ImagePreviewNode):
         box_x, box_y, box_width, box_height = box
         return box_x <= x <= box_x + box_width and box_y <= y <= box_y + box_height
 
+    @staticmethod
+    def squared_distance_to_box_center(point, box):
+        """点と矩形中心の二乗距離。box=[x, y, w, h]。"""
+        x, y = point
+        box_x, box_y, box_width, box_height = box
+        center_x = box_x + box_width / 2.0
+        center_y = box_y + box_height / 2.0
+        dx = x - center_x
+        dy = y - center_y
+        return dx * dx + dy * dy
+
+    def find_best_people_id_for_face(self, face_box):
+        """
+        顔boxに頭部が入る骨格のうち、頭部がbox中心に最も近い people_id を1人だけ返す.
+
+        複数骨格の頭が同一boxに入る混線を防ぐため、最近傍1人に排他割り当てする。
+        候補が無ければ None。
+        """
+        best_people_id = None
+        best_dist = float('inf')
+        for people_id, people in self.tracking_info.get_people_dict().items():
+            openpose_pose_key_points = people[-1]
+            if not openpose_pose_key_points.pose_key_points:
+                continue
+            head = openpose_pose_key_points.pose_key_points[0]
+            head_point = (head.x, head.y)
+            if not PeopleTrackingNode.is_point_in_box(head_point, face_box):
+                continue
+            dist = PeopleTrackingNode.squared_distance_to_box_center(head_point, face_box)
+            if dist < best_dist:
+                best_dist = dist
+                best_people_id = people_id
+        return best_people_id
+
+    def is_feature_num_assigned(self, feature_num):
+        """feature_num が既にいずれかの体IDへ記録済みか判定する（二重登録防止）。"""
+        for bucket in self.recognition_history.values():
+            for data in bucket.values():
+                if feature_num in data.get('features_num', []):
+                    return True
+        return False
+
+    def accumulate_face_recognition(self, people_id, face_id, score, feature_num):
+        """体IDへ顔認識スコアを累積する。"""
+        bucket = self.recognition_history.setdefault(people_id, {})
+        if face_id in bucket:
+            bucket[face_id]['score'] += score
+            bucket[face_id]['features_num'].append(feature_num)
+            bucket[face_id]['total_features'] += 1
+        else:
+            bucket[face_id] = {
+                'score': score,
+                'features_num': [feature_num],
+                'total_features': 1,
+            }
+
     def face_recognition_callback(self, msg: FaceRecognitionResult):
         """
         顔認識ノードの検出結果を受け取り、各顔と追跡中の人物(体ID)を頭部座標で対応付ける.
 
-        頭部キーポイント(OpenPoseインデックス0)が顔boxに入っていれば、その体IDに顔IDのスコアを
-        フレームをまたいで累積する。単発ではなく累積投票で確からしさを高める。
+        各顔は頭部がbox内に入る骨格のうち中心に最も近い1人だけへ紐付ける。
+        同一 feature_num は一度だけ記録し、フレームをまたいで累積投票で確からしさを高める。
         """
         # 横顔プロフィール保存で参照するため、最新の顔検出結果を保持する。
         self.current_face_data = msg
@@ -231,26 +287,14 @@ class PeopleTrackingNode(ImagePreviewNode):
             # （描画・横顔保存用の current_face_data は上で保持済み）
             if face_id.endswith('@profile'):
                 continue
+            if self.is_feature_num_assigned(feature_num):
+                continue
 
-            for people_id, people in self.tracking_info.get_people_dict().items():
-                openpose_pose_key_points = people[-1]
-                if not openpose_pose_key_points.pose_key_points:
-                    continue
-                head = openpose_pose_key_points.pose_key_points[0]
-                head_point = (head.x, head.y)
+            best_people_id = self.find_best_people_id_for_face(face_box)
+            if best_people_id is None:
+                continue
 
-                if PeopleTrackingNode.is_point_in_box(head_point, face_box):
-                    bucket = self.recognition_history.setdefault(people_id, {})
-                    if face_id in bucket:
-                        bucket[face_id]['score'] += score
-                        bucket[face_id]['features_num'].append(feature_num)
-                        bucket[face_id]['total_features'] += 1
-                    else:
-                        bucket[face_id] = {
-                            'score': score,
-                            'features_num': [feature_num],
-                            'total_features': 1,
-                        }
+            self.accumulate_face_recognition(best_people_id, face_id, score, feature_num)
 
         self._recognition_history_publisher.publish(self.create_recognition_history_message())
 
