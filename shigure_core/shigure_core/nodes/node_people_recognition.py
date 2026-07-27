@@ -12,7 +12,9 @@ from shigure_core_msgs.msg import FaceRecognitionResult, FaceInfo, RecognitionHi
 import os
 import glob
 import hashlib
+import json
 import time
+from datetime import datetime
 from pathlib import Path
 from PIL import Image
 
@@ -45,6 +47,7 @@ MAX_FEATURES_PER_USER = 100
 
 # 顔辞書(face_models)。登録先・追跡ノード・APIの参照先と共通化する。
 DIRECTORY = str(get_face_models_dir())
+REGISTRATION_MEMO_PATH = os.path.join(DIRECTORY, 'registration_memo.jsonl')
 
 
 class PeopleRecognitionNode(ImagePreviewNode):
@@ -595,10 +598,44 @@ class PeopleRecognitionNode(ImagePreviewNode):
         disk_count = len(glob.glob(os.path.join(user_dir, f'{user_name}_*.npy')))
         return max(mem_count, disk_count)
 
+    def append_registration_memo(
+        self,
+        *,
+        user_name: str,
+        route: str,
+        source: str,
+        people_id: str,
+        face_id: str,
+        requested_feature_nums: list,
+        saved_items: list,
+        skipped_feature_nums: list,
+    ) -> None:
+        """登録履歴を jsonl へ追記する。route には通過関数の経路を入れる。"""
+        memo = {
+            'timestamp': datetime.now().isoformat(timespec='seconds'),
+            'user_name': user_name,
+            'route': route,
+            'source': source,
+            'people_id': people_id,
+            'face_id': face_id,
+            'requested_feature_nums': requested_feature_nums,
+            'saved_feature_nums': [item['feature_num'] for item in saved_items],
+            'skipped_feature_nums': skipped_feature_nums,
+            'saved_count': len(saved_items),
+            'items': saved_items,
+        }
+        os.makedirs(os.path.dirname(REGISTRATION_MEMO_PATH), exist_ok=True)
+        with open(REGISTRATION_MEMO_PATH, 'a', encoding='utf-8') as memo_file:
+            memo_file.write(json.dumps(memo, ensure_ascii=False) + '\n')
+
     def save_features_for_user(
         self,
         user_name: str,
         features_num: list,
+        route: str = 'unknown -> save_features_for_user',
+        source: str = 'unknown',
+        people_id: str = '',
+        face_id: str = '',
     ) -> int:
         """Persist feature_num list to dictionary memory and optionally disk.
 
@@ -631,6 +668,8 @@ class PeopleRecognitionNode(ImagePreviewNode):
 
         saved = 0
         skipped = 0
+        saved_items = []
+        skipped_feature_nums = []
         # 特徴ベクトルを保存（上限まで）
         for num in features_num:
             if saved >= remaining:
@@ -646,6 +685,7 @@ class PeopleRecognitionNode(ImagePreviewNode):
                 )
                 self.release_pending_feature(num)
                 skipped += 1
+                skipped_feature_nums.append(num)
                 continue
             if image is not None and self.is_image_duplicate(image):
                 self.get_logger().info(
@@ -653,9 +693,14 @@ class PeopleRecognitionNode(ImagePreviewNode):
                 )
                 self.release_pending_feature(num)
                 skipped += 1
+                skipped_feature_nums.append(num)
                 continue
 
             self.dictionary[user_name].append(feature)
+            feature_hash = self.compute_feature_hash(feature)
+            image_hash = self.compute_image_hash(image) if image is not None else None
+            feature_path = None
+            image_path = None
             if self.save_registration and user_dir is not None:
                 # 保存処理（ディスク連番はユーザー単位で単調増加）
                 feature_path = os.path.join(user_dir, f"{user_name}_{disk_idx}.npy")
@@ -669,6 +714,13 @@ class PeopleRecognitionNode(ImagePreviewNode):
                     else:
                         image.save(image_path, format="JPEG")
                 disk_idx += 1
+            saved_items.append({
+                'feature_num': num,
+                'feature_path': feature_path,
+                'image_path': image_path,
+                'feature_hash': feature_hash,
+                'image_hash': image_hash,
+            })
             self.register_saved_hashes(feature, image)
             self.release_pending_feature(num)
             saved += 1
@@ -680,6 +732,16 @@ class PeopleRecognitionNode(ImagePreviewNode):
             print(
                 f"Saved {saved} feature(s) to {user_name} "
                 f"(total={len(self.dictionary[user_name])})"
+            )
+            self.append_registration_memo(
+                user_name=user_name,
+                route=route,
+                source=source,
+                people_id=people_id,
+                face_id=face_id,
+                requested_feature_nums=features_num,
+                saved_items=saved_items,
+                skipped_feature_nums=skipped_feature_nums,
             )
             if self.save_registration:
                 # 直後のディスク同期タイマーで再読込されないよう署名を更新する
@@ -764,7 +826,15 @@ class PeopleRecognitionNode(ImagePreviewNode):
                             f'[dict_renew] duplicate bucket -> merge to {existing_user} '
                             f'(people_id={people_id}, face_id={face_id})'
                         )
-                        saved = self.save_features_for_user(existing_user, features_num)
+                        saved = self.save_features_for_user(
+                            existing_user,
+                            features_num,
+                            route='dictionary_renew(unknown -> existing hash match) -> '
+                                  'save_features_for_user',
+                            source='dictionary_renew',
+                            people_id=people_id,
+                            face_id=face_id,
+                        )
                         if saved > 0:
                             self.rebuild_pca_model_on_disk()
                         self.update_dictionary(people_id, existing_user)
@@ -772,7 +842,15 @@ class PeopleRecognitionNode(ImagePreviewNode):
 
                     new_user_name = self.generate_new_user_name(self.dictionary)
                     print(f"New user detected: {new_user_name}")
-                    saved = self.save_features_for_user(new_user_name, features_num)
+                    saved = self.save_features_for_user(
+                        new_user_name,
+                        features_num,
+                        route='dictionary_renew(unknown -> new_user) -> '
+                              'save_features_for_user',
+                        source='dictionary_renew',
+                        people_id=people_id,
+                        face_id=face_id,
+                    )
                     if saved > 0:
                         self.rebuild_pca_model_on_disk()
                         self.update_dictionary(people_id, new_user_name)
@@ -796,7 +874,15 @@ class PeopleRecognitionNode(ImagePreviewNode):
                 average_score = face.accumulate_score / face.total_features
                 print("average_score: ", average_score)
                 if face.accumulate_score > 3 and average_score > 0.6:
-                    self.save_features_for_user(best_user, features_num)
+                    self.save_features_for_user(
+                        best_user,
+                        features_num,
+                        route='dictionary_renew(existing_user) -> '
+                              'save_features_for_user',
+                        source='dictionary_renew',
+                        people_id=people_id,
+                        face_id=face_id,
+                    )
                     # 辞書内容をトピックで配信
                     self.update_dictionary(people_id, best_user)
                 else:
