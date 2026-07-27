@@ -33,17 +33,28 @@ from collections import Counter
 from std_msgs.msg import Header
 import faiss
 
+from shigure_core.nodes.people_recognition.unknown_enrollment import (
+    DBSCAN_MIN_SAMPLES,
+    GALLERY_KNN_K,
+    dbscan_cluster_features,
+    feature_centroid,
+    find_gallery_user_by_knn,
+    match_centroid_to_gallery,
+    select_dense_clusters,
+)
+
 # COSINE_THRESHOLD = 0.363
 COSINE_THRESHOLD = 0.4
 PROFILE_COSINE_THRESHOLD = 0.4
 NORML2_THRESHOLD = 1.128
 LP_CONFIDENCE_THRESHOLD = 0.7
-FAISS_FALLBACK_MIN_VOTE_RATIO = 0.5
 MIN_DET_SCORE = 0.4  # 顔検出器(det_score)の採用しきい値の既定。param min_det_score で実行中変更可
-# 新規ユーザーとして辞書登録する最低特徴数（この数を超えたら dictionary_renew で登録判定）。
+# 新規ユーザー候補として未ラベル池へ送る最低特徴数（即 new user にはしない）。
 MIN_FEATURES_FOR_NEW_USER = 10
 # 1ユーザーあたりの正面特徴・画像の上限。到達後は dictionary_renew で追加保存しない。
 MAX_FEATURES_PER_USER = 100
+# 未ラベル池の特徴数上限（古いものから破棄してメモリ肥大を防ぐ）。
+MAX_UNLABELED_POOL_SIZE = 500
 
 # 顔辞書(face_models)。登録先・追跡ノード・APIの参照先と共通化する。
 DIRECTORY = str(get_face_models_dir())
@@ -65,6 +76,10 @@ class PeopleRecognitionNode(ImagePreviewNode):
         # 保存済み特徴・画像のハッシュ集合（クロスユーザー重複登録防止）
         self.saved_feature_hashes = set()
         self.saved_image_hashes = set()
+        # unknown バケットの未ラベル池。
+        # {feature_num: {'people_id', 'face_id', 'added_at'}}
+        # 実体ベクトルは all_features / all_images 側に残し、DBSCAN 後に保存 or 破棄する。
+        self.unlabeled_pool = {}
 
         # 顔登録データ(.npy/.jpg/pca_model)をディスクへ永続化するか。
         # デバッグ窓表示用の is_debug_mode とは独立させる（表示だけしたい/保存だけしたいを分離）。
@@ -338,82 +353,232 @@ class PeopleRecognitionNode(ImagePreviewNode):
         else:
             return "unknown", 0.0
 
-    def faiss_fallback_user(
+    def generate_new_user_name(self, dictionary):
+        """未使用の user_newN 名を返す（最大番号+1。欠番があっても衝突しない）."""
+        max_idx = 0
+        for key in dictionary.keys():
+            if not key.startswith('user_new'):
+                continue
+            suffix = key[len('user_new'):]
+            if suffix.isdigit():
+                max_idx = max(max_idx, int(suffix))
+        # 未ラベル池処理中に連続採番するため、メモリ上の最大+1を使う
+        return f'user_new{max_idx + 1}'
+
+    def gallery_force_merge_user(
         self,
         features: np.ndarray,
         people_id: str = '',
         face_id: str = '',
         threshold: float = COSINE_THRESHOLD,
-        min_vote_ratio: float = FAISS_FALLBACK_MIN_VOTE_RATIO,
+        k: int = GALLERY_KNN_K,
     ) -> str:
-        """LP が unknown のとき、辞書を Faiss で再照合して既存ユーザーを探す。"""
+        """ギャラリー kNN 照合。閾値ヒットがあれば必ず既存 user を返す（new user 禁止用）."""
         pid = people_id or '?'
         fid = face_id or '?'
-        if not self.dictionary:
-            return "unknown"
-
-        features_list = []
-        user_ids = []
-        query_dim = np.asarray(features[0], dtype=np.float32).reshape(-1).shape[0]
-        skipped_dim = 0
-
-        for user_id, dict_features in self.dictionary.items():
-            for feature in dict_features:
-                feature_vec = np.squeeze(np.asarray(feature, dtype=np.float32))
-                if feature_vec.shape[0] != query_dim:
-                    skipped_dim += 1
-                    continue
-                features_list.append(feature_vec)
-                user_ids.append(user_id)
-
-        if skipped_dim:
-            self.get_logger().warn(
-                f'[Faiss] skipped {skipped_dim} dictionary feature(s) with dim != {query_dim}'
-            )
-        if not features_list:
-            return "unknown"
-
-        index = self.create_faiss_index(features_list)
-        query_features = self.normalize_features(np.asarray(features, dtype=np.float32))
-        distances, indices = index.search(query_features, 1)
-
-        votes: Counter = Counter()
-        n_features = len(query_features)
-        for i in range(n_features):
-            best_score = float(distances[i][0])
-            best_index = int(indices[i][0])
-            if best_score > threshold:
-                votes[user_ids[best_index]] += 1
-
-        if not votes:
-            self.get_logger().info(
-                f'[Faiss] people_id={pid} face_id={fid} LP=unknown, no match above {threshold:g}'
-            )
-            return "unknown"
-
-        best_user, vote_count = votes.most_common(1)[0]
-        if vote_count / n_features < min_vote_ratio:
-            self.get_logger().info(
-                f'[Faiss] people_id={pid} face_id={fid} LP=unknown, weak consensus '
-                f'{best_user}={vote_count}/{n_features} (need >={min_vote_ratio:.0%})'
-            )
-            return "unknown"
-
-        vote_parts = ', '.join(f'{uid}={cnt}' for uid, cnt in votes.most_common(5))
-        self.get_logger().info(
-            f'[Faiss] people_id={pid} face_id={fid} LP=unknown -> {best_user} '
-            f'votes={vote_count}/{n_features} ({vote_parts})'
+        user_id, info = find_gallery_user_by_knn(
+            features, self.dictionary, threshold=threshold, k=k
         )
-        return best_user
-        
-    def generate_new_user_name(self, dictionary):
-        current_users = [key for key in dictionary.keys() if key.startswith("user_")]
-        
-        # 現在のユーザー数をカウント
-        user_count = len(current_users)
+        if user_id is None:
+            self.get_logger().info(
+                f'[GalleryKNN] people_id={pid} face_id={fid} no hit '
+                f'(best_score={info.get("best_score", 0):.3f}, '
+                f'threshold={threshold:g}, n={info.get("n_queries", 0)})'
+            )
+            return 'unknown'
+        self.get_logger().info(
+            f'[GalleryKNN] people_id={pid} face_id={fid} -> {user_id} '
+            f'votes={info.get("vote_count", 0)}/{info.get("n_queries", 0)} '
+            f'best_score={info.get("best_score", 0):.3f} votes={info.get("votes", {})}'
+        )
+        return user_id
 
-        # 新しいユーザー名を生成
-        return f"user_new{user_count + 1}"
+    def add_features_to_unlabeled_pool(
+        self,
+        features_num: list,
+        people_id: str = '',
+        face_id: str = '',
+    ) -> int:
+        """unknown 特徴を未ラベル池へ追加する（即 new user しない）."""
+        added = 0
+        now = time.time()
+        for num in features_num:
+            if num not in self.all_features:
+                continue
+            if num in self.unlabeled_pool:
+                continue
+            # 既に辞書へ保存済みの完全一致特徴は池に入れない
+            feature = self.all_features[num]['feature']
+            if self.is_feature_duplicate(feature):
+                self.release_pending_feature(num)
+                continue
+            self.unlabeled_pool[num] = {
+                'people_id': people_id,
+                'face_id': face_id,
+                'added_at': now,
+            }
+            added += 1
+
+        # 上限超過時は古い順に破棄
+        overflow = len(self.unlabeled_pool) - MAX_UNLABELED_POOL_SIZE
+        if overflow > 0:
+            oldest = sorted(
+                self.unlabeled_pool.items(),
+                key=lambda item: item[1].get('added_at', 0.0),
+            )[:overflow]
+            for num, _meta in oldest:
+                self.unlabeled_pool.pop(num, None)
+                self.release_pending_feature(num)
+            self.get_logger().warn(
+                f'[UnlabeledPool] dropped {overflow} oldest feature(s) '
+                f'(limit={MAX_UNLABELED_POOL_SIZE})'
+            )
+
+        if added:
+            self.get_logger().info(
+                f'[UnlabeledPool] added={added} pool_size={len(self.unlabeled_pool)} '
+                f'(people_id={people_id or "?"}, face_id={face_id or "?"})'
+            )
+        return added
+
+    def process_unlabeled_pool_dbscan(self) -> int:
+        """未ラベル池を DBSCAN し、密集クラスタだけを既存マージ or new user する.
+
+        Returns:
+            今回保存した特徴数の合計。
+        """
+        # 実体が消えたエントリを掃除
+        stale = [num for num in self.unlabeled_pool if num not in self.all_features]
+        for num in stale:
+            self.unlabeled_pool.pop(num, None)
+
+        pool_nums = sorted(self.unlabeled_pool.keys())
+        min_samples = max(DBSCAN_MIN_SAMPLES, MIN_FEATURES_FOR_NEW_USER)
+        if len(pool_nums) < min_samples:
+            return 0
+
+        features_list = [self.all_features[num]['feature'] for num in pool_nums]
+        features = np.stack(features_list)
+        eps = 1.0 - COSINE_THRESHOLD
+        labels = dbscan_cluster_features(
+            features,
+            eps=eps,
+            min_samples=min_samples,
+        )
+        clusters = select_dense_clusters(labels)
+        noise_count = int(np.sum(labels < 0))
+        self.get_logger().info(
+            f'[DBSCAN] pool={len(pool_nums)} clusters={len(clusters)} '
+            f'noise={noise_count} eps={eps:g} min_samples={min_samples}'
+        )
+        if not clusters:
+            return 0
+
+        total_saved = 0
+        for label, member_idx in clusters:
+            member_nums = [pool_nums[i] for i in member_idx.tolist()]
+            member_feats = features[member_idx]
+            people_ids = sorted({
+                self.unlabeled_pool[n].get('people_id', '')
+                for n in member_nums
+                if n in self.unlabeled_pool
+            })
+            face_ids = sorted({
+                self.unlabeled_pool[n].get('face_id', '')
+                for n in member_nums
+                if n in self.unlabeled_pool
+            })
+            people_id = people_ids[0] if len(people_ids) == 1 else ','.join(people_ids)
+            face_id = face_ids[0] if len(face_ids) == 1 else ','.join(face_ids)
+
+            # クラスタ全体の kNN + 重心照合（どちらかヒットで既存マージ）
+            merge_user, knn_info = find_gallery_user_by_knn(
+                member_feats,
+                self.dictionary,
+                threshold=COSINE_THRESHOLD,
+                k=GALLERY_KNN_K,
+            )
+            if merge_user is None:
+                centroid = feature_centroid(member_feats)
+                merge_user, cent_info = match_centroid_to_gallery(
+                    centroid,
+                    self.dictionary,
+                    threshold=COSINE_THRESHOLD,
+                    k=GALLERY_KNN_K,
+                )
+                if merge_user is not None:
+                    knn_info = cent_info
+
+            if merge_user is not None:
+                self.get_logger().info(
+                    f'[DBSCAN] cluster={label} n={len(member_nums)} '
+                    f'-> merge {merge_user} (best_score={knn_info.get("best_score", 0):.3f})'
+                )
+                saved = self.save_features_for_user(
+                    merge_user,
+                    member_nums,
+                    route='unlabeled_pool(DBSCAN -> gallery merge) -> '
+                          'save_features_for_user',
+                    source='unlabeled_pool_dbscan',
+                    people_id=people_id,
+                    face_id=face_id,
+                )
+            else:
+                # ハッシュ一致の最終ガード
+                existing_user = self.find_existing_user_for_features(member_feats)
+                if existing_user:
+                    merge_user = existing_user
+                    self.get_logger().info(
+                        f'[DBSCAN] cluster={label} n={len(member_nums)} '
+                        f'-> hash merge {merge_user}'
+                    )
+                    saved = self.save_features_for_user(
+                        merge_user,
+                        member_nums,
+                        route='unlabeled_pool(DBSCAN -> hash merge) -> '
+                              'save_features_for_user',
+                        source='unlabeled_pool_dbscan',
+                        people_id=people_id,
+                        face_id=face_id,
+                    )
+                else:
+                    new_user_name = self.generate_new_user_name(self.dictionary)
+                    self.get_logger().info(
+                        f'[DBSCAN] cluster={label} n={len(member_nums)} '
+                        f'-> new user {new_user_name}'
+                    )
+                    print(f'New user detected: {new_user_name}')
+                    saved = self.save_features_for_user(
+                        new_user_name,
+                        member_nums,
+                        route='unlabeled_pool(DBSCAN -> new_user) -> '
+                              'save_features_for_user',
+                        source='unlabeled_pool_dbscan',
+                        people_id=people_id,
+                        face_id=face_id,
+                    )
+                    merge_user = new_user_name if saved > 0 else None
+
+            # 池から除去（save 済みは release 済み、未保存分も池からは外す）
+            for num in member_nums:
+                self.unlabeled_pool.pop(num, None)
+                # 保存されなかった残りは破棄して再登録ループを防ぐ
+                if num in self.all_features:
+                    self.release_pending_feature(num)
+
+            if saved > 0:
+                total_saved += saved
+                self.rebuild_pca_model_on_disk()
+                if merge_user and people_ids:
+                    # 単一 people_id のときだけ downstream に確定名を流す
+                    if len(people_ids) == 1 and people_ids[0]:
+                        self.update_dictionary(people_ids[0], merge_user)
+
+        if total_saved:
+            self.get_logger().info(
+                f'[DBSCAN] saved_total={total_saved} remaining_pool={len(self.unlabeled_pool)}'
+            )
+        return total_saved
 
     def callback(self, color_img_src: CompressedImage):
         self.frame_count_up()
@@ -453,11 +618,13 @@ class PeopleRecognitionNode(ImagePreviewNode):
 
         self.publisher.publish(self.recognition_results)
 
-        # 10秒ごとに辞書更新を実行
+        # 数秒ごとに辞書更新 + 未ラベル池の DBSCAN 登録判定
         if time.time() - self.last_renew_time > 2:
             if self.last_recognition_history is not None:  # 最後に受信したデータが存在する場合のみ更新
                 self.dictionary_renew(self.last_recognition_history)
                 self.last_recognition_history = None  # 更新後にリセット
+            # recognition_history が無くても池に溜まっていれば DBSCAN を回す
+            self.process_unlabeled_pool_dbscan()
             self.last_renew_time = time.time()
 
     def callback_recognition_history(self, msg: RecognitionHistory):
@@ -750,13 +917,14 @@ class PeopleRecognitionNode(ImagePreviewNode):
         return saved
 
     def dictionary_renew(self, msg: RecognitionHistory):
-        """
-        10秒に1回呼び出される想定の関数。
-        recognition_history.users に格納されている各ユーザーの features_num が
-        MIN_FEATURES_FOR_NEW_USER 件を超えていたら、
-        特徴を辞書に統合 (既存 or 新規) して、その後 all_features から削除する。
-        ラベル伝播法を用いて未ラベルデータにラベルを付け、信頼度が低いものを新規ユーザーとして追加します。
+        """recognition_history に基づき辞書を更新する.
+
         face_id ごとに評価し、同一 people_id 内の別 face_id とは混ぜない。
+        LP が unknown のときは常にギャラリー kNN で既存救済を試みる。
+        それでも unknown のバケットは即 new user せず、次の2段で扱う:
+
+        1. ハッシュ一致なら既存へマージ
+        2. 未ヒットは未ラベル池へ送り、定期 DBSCAN で密集クラスタだけ登録
         """
         print("辞書の更新を開始します")
         recognition_history = msg
@@ -796,27 +964,32 @@ class PeopleRecognitionNode(ImagePreviewNode):
                 if not best_user:
                     continue
 
-                faiss_rescued = False
+                # LP が unknown なら常にギャラリー kNN で既存へ救済を試みる
+                gallery_rescued = False
                 if best_user.startswith("unknown"):
-                    faiss_user = self.faiss_fallback_user(
-                        features, people_id=people_id, face_id=face_id
+                    gallery_user = self.gallery_force_merge_user(
+                        features,
+                        people_id=people_id,
+                        face_id=face_id,
+                        threshold=COSINE_THRESHOLD,
                     )
-                    if not faiss_user.startswith("unknown"):
-                        best_user = faiss_user
-                        faiss_rescued = True
+                    if not gallery_user.startswith('unknown'):
+                        best_user = gallery_user
+                        gallery_rescued = True
 
                 print(
                     f"Selected user: {best_user} "
                     f"(people_id={people_id}, face_id={face_id}, n={len(features_num)}, "
-                    f"faiss_rescued={faiss_rescued})"
+                    f"gallery_rescued={gallery_rescued})"
                 )
 
-                # 新しいユーザー登録の条件を満たす場合
+                # ギャラリーでも unknown: face_id=unknown のみ池行き（即 new user 禁止）
                 if best_user.startswith("unknown"):
                     if face_id != "unknown":
                         self.get_logger().info(
-                            f'[dict_renew] skip new-user: people_id={people_id} '
-                            f'face_id={face_id} LP=unknown (only unknown bucket registers)'
+                            f'[dict_renew] skip pool: people_id={people_id} '
+                            f'face_id={face_id} LP=unknown gallery=miss '
+                            f'(only unknown bucket enters unlabeled pool)'
                         )
                         continue
 
@@ -840,12 +1013,28 @@ class PeopleRecognitionNode(ImagePreviewNode):
                         self.update_dictionary(people_id, existing_user)
                         continue
 
-                    new_user_name = self.generate_new_user_name(self.dictionary)
-                    print(f"New user detected: {new_user_name}")
+                    # 未ヒットは未ラベル池へ（DBSCAN 後にのみ new user）
+                    self.add_features_to_unlabeled_pool(
+                        features_num, people_id=people_id, face_id=face_id
+                    )
+                    self.update_dictionary(people_id, "none")
+                    continue
+
+                # 既存の user の場合、face_id が LP 結果と一致するときのみ特徴を辞書に追加
+                # ギャラリー kNN で救済した場合は face_id 不問で既存ユーザーとして扱う
+                if face_id != best_user and not gallery_rescued:
+                    self.get_logger().info(
+                        f'[dict_renew] skip existing-user: people_id={people_id} '
+                        f'face_id={face_id} LP={best_user} (face_id must match)'
+                    )
+                    continue
+
+                # ギャラリー救済時は unknown 由来で累積スコアが無い／不一致でもゲートを通す
+                if gallery_rescued:
                     saved = self.save_features_for_user(
-                        new_user_name,
+                        best_user,
                         features_num,
-                        route='dictionary_renew(unknown -> new_user) -> '
+                        route='dictionary_renew(gallery_rescued) -> '
                               'save_features_for_user',
                         source='dictionary_renew',
                         people_id=people_id,
@@ -853,22 +1042,7 @@ class PeopleRecognitionNode(ImagePreviewNode):
                     )
                     if saved > 0:
                         self.rebuild_pca_model_on_disk()
-                        self.update_dictionary(people_id, new_user_name)
-                    else:
-                        self.get_logger().info(
-                            f'[dict_renew] skip new-user: all features duplicate '
-                            f'(people_id={people_id}, face_id={face_id})'
-                        )
-                        self.update_dictionary(people_id, "none")
-                    continue
-
-                # 既存の user の場合、face_id が LP 結果と一致するときのみ特徴を辞書に追加
-                # Faiss で unknown から救済した場合は face_id=unknown でも既存ユーザーとして扱う
-                if face_id != best_user and not faiss_rescued:
-                    self.get_logger().info(
-                        f'[dict_renew] skip existing-user: people_id={people_id} '
-                        f'face_id={face_id} LP={best_user} (face_id must match)'
-                    )
+                    self.update_dictionary(people_id, best_user)
                     continue
 
                 average_score = face.accumulate_score / face.total_features
