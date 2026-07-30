@@ -36,6 +36,7 @@ import faiss
 from shigure_core.nodes.people_recognition.unknown_enrollment import (
     DBSCAN_MIN_SAMPLES,
     GALLERY_KNN_K,
+    GALLERY_RESCUE_MIN_VOTE_RATIO,
     dbscan_cluster_features,
     feature_centroid,
     find_gallery_user_by_knn,
@@ -365,31 +366,42 @@ class PeopleRecognitionNode(ImagePreviewNode):
         # 未ラベル池処理中に連続採番するため、メモリ上の最大+1を使う
         return f'user_new{max_idx + 1}'
 
-    def gallery_force_merge_user(
+    def gallery_rescue_decide(
         self,
         features: np.ndarray,
         people_id: str = '',
         face_id: str = '',
         threshold: float = COSINE_THRESHOLD,
         k: int = GALLERY_KNN_K,
+        min_vote_ratio: float = GALLERY_RESCUE_MIN_VOTE_RATIO,
     ) -> str:
-        """ギャラリー kNN 照合。閾値ヒットがあれば必ず既存 user を返す（new user 禁止用）."""
+        """ギャラリー救済判定。投票比率ゲートを満たせば既存 user_id を返す."""
         pid = people_id or '?'
         fid = face_id or '?'
         user_id, info = find_gallery_user_by_knn(
-            features, self.dictionary, threshold=threshold, k=k
+            features,
+            self.dictionary,
+            threshold=threshold,
+            k=k,
+            min_vote_ratio=min_vote_ratio,
         )
+        n_queries = int(info.get('n_queries', 0))
+        vote_ratio = float(info.get('vote_ratio', 0.0))
         if user_id is None:
             self.get_logger().info(
-                f'[GalleryKNN] people_id={pid} face_id={fid} no hit '
+                f'[GalleryRescue] people_id={pid} face_id={fid} reject '
                 f'(best_score={info.get("best_score", 0):.3f}, '
-                f'threshold={threshold:g}, n={info.get("n_queries", 0)})'
+                f'vote_ratio={vote_ratio:.1%} need>={min_vote_ratio:.0%}, '
+                f'votes={info.get("votes", {})}, n={n_queries})'
             )
             return 'unknown'
+
         self.get_logger().info(
-            f'[GalleryKNN] people_id={pid} face_id={fid} -> {user_id} '
-            f'votes={info.get("vote_count", 0)}/{info.get("n_queries", 0)} '
-            f'best_score={info.get("best_score", 0):.3f} votes={info.get("votes", {})}'
+            f'[GalleryRescue] people_id={pid} face_id={fid} -> {user_id} '
+            f'votes={info.get("vote_count", 0)}/{n_queries} '
+            f'({vote_ratio:.1%} >= {min_vote_ratio:.0%}) '
+            f'best_score={info.get("best_score", 0):.3f} '
+            f'votes={info.get("votes", {})}'
         )
         return user_id
 
@@ -1006,12 +1018,14 @@ class PeopleRecognitionNode(ImagePreviewNode):
                     continue
 
                 face_id = face.id
-                features_num = [int(fn) for fn in face.features_num]
+                features_num = [
+                    int(fn) for fn in face.features_num
+                    if int(fn) in self.all_features
+                ]
                 # features_num の各番号に対応する特徴が存在するかをチェック
                 features_list = [
                     self.all_features[num]["feature"]
                     for num in features_num
-                    if num in self.all_features
                 ]
                 # features_list が空でないことを確認してから np.stack を呼び出す
                 if not features_list:
@@ -1028,10 +1042,10 @@ class PeopleRecognitionNode(ImagePreviewNode):
                 if not best_user:
                     continue
 
-                # LP が unknown なら常にギャラリー kNN で既存へ救済を試みる
+                # LP が unknown ならギャラリー救済（投票比率ゲート付き）
                 gallery_rescued = False
                 if best_user.startswith("unknown"):
-                    gallery_user = self.gallery_force_merge_user(
+                    gallery_user = self.gallery_rescue_decide(
                         features,
                         people_id=people_id,
                         face_id=face_id,
@@ -1082,7 +1096,7 @@ class PeopleRecognitionNode(ImagePreviewNode):
                     continue
 
                 # 既存の user の場合、face_id が LP 結果と一致するときのみ特徴を辞書に追加
-                # ギャラリー kNN で救済した場合は face_id 不問で既存ユーザーとして扱う
+                # ギャラリー救済時は face_id 不問（バケット全体を保存）
                 if face_id != best_user and not gallery_rescued:
                     self.get_logger().info(
                         f'[dict_renew] skip existing-user: people_id={people_id} '
@@ -1090,7 +1104,7 @@ class PeopleRecognitionNode(ImagePreviewNode):
                     )
                     continue
 
-                # ギャラリー救済: スコアゲートなしで保存＋青枠
+                # ギャラリー救済: バケット全特徴を保存＋青枠
                 if gallery_rescued:
                     self.save_and_confirm_existing_user(
                         people_id,
