@@ -523,11 +523,13 @@ class PeopleRecognitionNode(ImagePreviewNode):
                     people_id=people_id,
                     face_id=face_id,
                 )
+                is_existing_merge = True
             else:
                 # ハッシュ一致の最終ガード
                 existing_user = self.find_existing_user_for_features(member_feats)
                 if existing_user:
                     merge_user = existing_user
+                    is_existing_merge = True
                     self.get_logger().info(
                         f'[DBSCAN] cluster={label} n={len(member_nums)} '
                         f'-> hash merge {merge_user}'
@@ -542,6 +544,7 @@ class PeopleRecognitionNode(ImagePreviewNode):
                         face_id=face_id,
                     )
                 else:
+                    is_existing_merge = False
                     new_user_name = self.generate_new_user_name(self.dictionary)
                     self.get_logger().info(
                         f'[DBSCAN] cluster={label} n={len(member_nums)} '
@@ -569,10 +572,17 @@ class PeopleRecognitionNode(ImagePreviewNode):
             if saved > 0:
                 total_saved += saved
                 self.rebuild_pca_model_on_disk()
-                if merge_user and people_ids:
-                    # 単一 people_id のときだけ downstream に確定名を流す
-                    if len(people_ids) == 1 and people_ids[0]:
-                        self.update_dictionary(people_ids[0], merge_user)
+
+            # 既存マージ: 保存条件を満たしたので saved=0 でも青枠
+            # 新規: 実際に作成できたときだけ青枠
+            should_confirm = False
+            if is_existing_merge and merge_user:
+                should_confirm = True
+            elif merge_user and saved > 0:
+                should_confirm = True
+            if should_confirm and people_ids:
+                if len(people_ids) == 1 and people_ids[0]:
+                    self.update_dictionary(people_ids[0], merge_user)
 
         if total_saved:
             self.get_logger().info(
@@ -918,16 +928,17 @@ class PeopleRecognitionNode(ImagePreviewNode):
 
     @staticmethod
     def meets_existing_feature_add_gate(face) -> bool:
-        """既存ユーザーへ特徴追加（および青枠確定）する累積スコア条件.
+        """通常経路で既存ユーザーへ特徴追加する累積スコア条件.
 
         accumulate_score > 3 かつ 平均スコア > 0.6 のときだけ True。
+        ギャラリー救済・ハッシュ一致・DBSCAN 既存マージでは使わない。
         """
         if face.total_features <= 0:
             return False
         average_score = face.accumulate_score / face.total_features
         return face.accumulate_score > 3 and average_score > 0.6
 
-    def confirm_existing_user_if_saved(
+    def save_and_confirm_existing_user(
         self,
         people_id: str,
         user_name: str,
@@ -935,29 +946,31 @@ class PeopleRecognitionNode(ImagePreviewNode):
         *,
         route: str,
         face_id: str = '',
+        source: str = 'dictionary_renew',
     ) -> int:
-        """既存ユーザーへ保存し、1件以上保存できたときだけ確定名を通知する.
+        """既存ユーザーへ保存を試し、保存条件を満たしたとして確定名を通知する.
+
+        重複・上限で saved=0 でも青枠（/dictionary_update で名前）にする。
 
         Returns:
-            保存件数。0 のときは青枠にしない（update_dictionary none）。
+            保存件数。
         """
         saved = self.save_features_for_user(
             user_name,
             features_num,
             route=route,
-            source='dictionary_renew',
+            source=source,
             people_id=people_id,
             face_id=face_id,
         )
         if saved > 0:
             self.rebuild_pca_model_on_disk()
-            self.update_dictionary(people_id, user_name)
         else:
             self.get_logger().info(
-                f'[dict_renew] no confirm: saved=0 for {user_name} '
+                f'[dict_renew] confirm without new files: saved=0 for {user_name} '
                 f'(people_id={people_id}, face_id={face_id or "?"})'
             )
-            self.update_dictionary(people_id, "none")
+        self.update_dictionary(people_id, user_name)
         return saved
 
     def dictionary_renew(self, msg: RecognitionHistory):
@@ -970,8 +983,12 @@ class PeopleRecognitionNode(ImagePreviewNode):
         1. ハッシュ一致なら既存へマージ
         2. 未ヒットは未ラベル池へ送り、定期 DBSCAN で密集クラスタだけ登録
 
-        既存ユーザー確定（青枠）は、既存追加ゲートを満たし特徴を1件以上
-        保存できたときにだけ /dictionary_update で名前を流す。
+        既存ユーザー確定（青枠）は、既存へ保存する条件を満たしたときに出す
+        （保存件数0でも可）:
+
+        - 通常: face_id 一致 + 累積>3 かつ平均>0.6
+        - ギャラリー救済: LP=unknown → ギャラリー kNN ヒット（スコアゲートなし）
+        - ハッシュ一致: 既存と同一特徴（スコアゲートなし）
         """
         print("辞書の更新を開始します")
         recognition_history = msg
@@ -1042,20 +1059,12 @@ class PeopleRecognitionNode(ImagePreviewNode):
 
                     existing_user = self.find_existing_user_for_features(features)
                     if existing_user:
-                        # ハッシュ一致でも既存追加ゲート＋保存成功時のみ青枠
-                        if not self.meets_existing_feature_add_gate(face):
-                            self.get_logger().info(
-                                f'[dict_renew] hash match but gate fail -> no confirm '
-                                f'(people_id={people_id}, face_id={face_id}, '
-                                f'user={existing_user})'
-                            )
-                            self.update_dictionary(people_id, "none")
-                            continue
+                        # ハッシュ一致 → 既存へ保存条件満たす → 青枠
                         self.get_logger().info(
                             f'[dict_renew] duplicate bucket -> merge to {existing_user} '
                             f'(people_id={people_id}, face_id={face_id})'
                         )
-                        self.confirm_existing_user_if_saved(
+                        self.save_and_confirm_existing_user(
                             people_id,
                             existing_user,
                             features_num,
@@ -1081,33 +1090,36 @@ class PeopleRecognitionNode(ImagePreviewNode):
                     )
                     continue
 
-                # 既存追加ゲート（累積>3 かつ 平均>0.6）。救済経路も同じ条件。
-                average_score = (
-                    face.accumulate_score / face.total_features
-                    if face.total_features > 0 else 0.0
-                )
+                # ギャラリー救済: スコアゲートなしで保存＋青枠
+                if gallery_rescued:
+                    self.save_and_confirm_existing_user(
+                        people_id,
+                        best_user,
+                        features_num,
+                        route='dictionary_renew(gallery_rescued) -> '
+                              'save_features_for_user',
+                        face_id=face_id,
+                    )
+                    continue
+
+                # 通常の既存追加: 累積>3 かつ 平均>0.6 が保存条件 → 満たせば青枠
+                average_score = face.accumulate_score / face.total_features
                 print("average_score: ", average_score)
                 if not self.meets_existing_feature_add_gate(face):
                     self.get_logger().info(
                         f'[dict_renew] existing gate fail -> no confirm '
                         f'(people_id={people_id}, face_id={face_id}, '
                         f'user={best_user}, accumulate={face.accumulate_score:.3f}, '
-                        f'avg={average_score:.3f}, gallery_rescued={gallery_rescued})'
+                        f'avg={average_score:.3f})'
                     )
                     self.update_dictionary(people_id, "none")
                     continue
 
-                route = (
-                    'dictionary_renew(gallery_rescued) -> save_features_for_user'
-                    if gallery_rescued
-                    else 'dictionary_renew(existing_user) -> save_features_for_user'
-                )
-                # 1件以上保存できたときだけ確定名を通知（青枠）
-                self.confirm_existing_user_if_saved(
+                self.save_and_confirm_existing_user(
                     people_id,
                     best_user,
                     features_num,
-                    route=route,
+                    route='dictionary_renew(existing_user) -> save_features_for_user',
                     face_id=face_id,
                 )
 
