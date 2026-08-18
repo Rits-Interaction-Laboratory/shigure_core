@@ -85,10 +85,11 @@ class PeopleTrackingNode(ImagePreviewNode):
             10
         )
         # 追跡デバッグ画像(オーバーレイ)の配信先。毎フレーム現フレームを配信する（shigure_api のWeb表示用）。
+        # shigure_api 購読側と同じ BEST_EFFORT にする（QoS 不一致による取りこぼし防止）。
         self._debug_image_publisher = self.create_publisher(
             DebugImage,
             '/shigure/tracking_debug_image',
-            10
+            shigure_qos,
         )
         # 横顔プロフィール特徴の配信先。people_recognition が購読して辞書へ追加する。
         self._profile_feature_publisher = self.create_publisher(
