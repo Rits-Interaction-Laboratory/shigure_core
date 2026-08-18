@@ -14,6 +14,7 @@ setup(
     version='0.0.1',
     packages=[package_name, node_package_name, node_package_name + '.common_model',
               node_package_name + '.people_tracking',
+              node_package_name + '.people_recognition',
               node_package_name + '.object_detection', node_package_name + '.object_tracking',
               node_package_name + '.contact_detection', node_package_name + '.record_event',
               node_package_name + '.yolox_object_detection',

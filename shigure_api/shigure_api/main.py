@@ -32,7 +32,7 @@ def main() -> None:
     args, _ = parser.parse_known_args()
 
     import shigure_api.config as config
-    from shigure_api.app import hub, init_pca_builder, pca_hub, tracking_debug_hub
+    from shigure_api.app import app, hub, init_pca_builder, pca_hub, tracking_debug_hub
     from shigure_api.pca_plot import state_to_dict
 
     config.FACE_MODELS_DIR = Path(args.face_models_dir).expanduser()
@@ -79,8 +79,11 @@ def main() -> None:
     )
 
     try:
+        # 文字列 'shigure_api.app:app' だと再 import で Hub が二重化し、
+        # ROS コールバックと WebSocket が別インスタンスを見ることがある。
+        # 同じモジュールの app オブジェクトを直接渡す。
         uvicorn.run(
-            'shigure_api.app:app',
+            app,
             host=args.host,
             port=args.port,
             log_level='info',

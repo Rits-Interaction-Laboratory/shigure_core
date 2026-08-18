@@ -375,7 +375,7 @@ class PeopleRecognitionNode(ImagePreviewNode):
         k: int = GALLERY_KNN_K,
         min_vote_ratio: float = GALLERY_RESCUE_MIN_VOTE_RATIO,
     ) -> str:
-        """ギャラリー救済判定。投票比率ゲートを満たせば既存 user_id を返す."""
+        """ギャラリー救済判定。閾値超え票があれば既存 user_id を返す."""
         pid = people_id or '?'
         fid = face_id or '?'
         user_id, info = find_gallery_user_by_knn(
@@ -1042,7 +1042,7 @@ class PeopleRecognitionNode(ImagePreviewNode):
                 if not best_user:
                     continue
 
-                # LP が unknown ならギャラリー救済（投票比率ゲート付き）
+                # LP が unknown ならギャラリー救済（閾値超え1票でも可）
                 gallery_rescued = False
                 if best_user.startswith("unknown"):
                     gallery_user = self.gallery_rescue_decide(
