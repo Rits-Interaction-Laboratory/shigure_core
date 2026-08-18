@@ -106,6 +106,8 @@ class ProfileInsightFace:
             x1, y1, x2, y2 = face.bbox.astype(int)
             w = max(1, x2 - x1)
             h = max(1, y2 - y1)
+            if w < 40 or h < 40:
+                continue
             embedding = np.asarray(face.embedding, dtype=np.float32).reshape(-1)
             det_score = float(getattr(face, "det_score", 0.0))
             pitch, yaw, roll = 0.0, 0.0, 0.0
