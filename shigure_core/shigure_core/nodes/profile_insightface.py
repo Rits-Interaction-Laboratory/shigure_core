@@ -9,6 +9,7 @@ from typing import List, Optional, Tuple
 import numpy as np
 
 FRONTAL_YAW_THRESHOLD = 30.0
+FRONTAL_PITCH_THRESHOLD = 20.0
 
 
 @dataclass
@@ -24,7 +25,7 @@ class InsightFaceResult:
 
     @property
     def is_frontal(self) -> bool:
-        return ProfileInsightFace.is_frontal(self.yaw)
+        return ProfileInsightFace.is_frontal(self.yaw, self.pitch)
 
 
 class ProfileInsightFace:
@@ -79,8 +80,13 @@ class ProfileInsightFace:
             self._app.prepare(ctx_id=-1, det_size=self._det_size)
 
     @staticmethod
-    def is_frontal(yaw: float, threshold: float = FRONTAL_YAW_THRESHOLD) -> bool:
-        return abs(yaw) < threshold
+    def is_frontal(
+        yaw: float,
+        pitch: float = 0.0,
+        yaw_threshold: float = FRONTAL_YAW_THRESHOLD,
+        pitch_threshold: float = FRONTAL_PITCH_THRESHOLD,
+    ) -> bool:
+        return abs(yaw) < yaw_threshold and abs(pitch) < pitch_threshold
 
     @staticmethod
     def is_point_in_box(point: Tuple[float, float], box: Tuple[int, int, int, int]) -> bool:
