@@ -605,9 +605,15 @@ class PeopleTrackingNode(ImagePreviewNode):
             top = max(0, fy)
             right = min(width - 1, fx + fw)
             bottom = min(height - 1, fy + fh)
-            # 顔ID(faiss最近傍Top1)が実名なら緑、unknownなら灰の細枠。
-            fid = face_info.id.replace('@profile', '')
-            face_color = (128, 128, 128) if fid.startswith('unknown') else (0, 200, 0)
+            # 顔枠色:
+            #   横顔(@profile、角度未達) → 黄
+            #   正面かつ実名           → 緑
+            #   正面かつ unknown       → 灰
+            if face_info.id.endswith('@profile'):
+                face_color = (0, 220, 220)
+            else:
+                fid = face_info.id
+                face_color = (128, 128, 128) if fid.startswith('unknown') else (0, 200, 0)
             cv2.rectangle(color_img, (left, top), (right, bottom), face_color, thickness=2)
 
     def _publish_tracking_debug_image(self, color_img: np.ndarray) -> None:
