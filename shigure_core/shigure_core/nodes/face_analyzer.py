@@ -34,10 +34,14 @@ class DetectedFace:
     yaw: float = 0.0
     pitch: float = 0.0
     roll: float = 0.0
+    # 3D landmark から pose が取れたときだけ True。欠損時の (0,0) を正面扱いしない。
+    pose_valid: bool = False
 
     @property
     def is_frontal(self) -> bool:
-        """yaw/pitch が正面しきい値内なら True."""
+        """pose が有効かつ yaw/pitch が正面しきい値内なら True."""
+        if not self.pose_valid:
+            return False
         return FaceAnalyzer.is_frontal(self.yaw, self.pitch)
 
 
@@ -151,11 +155,13 @@ class FaceAnalyzer:
                 continue
             det_score = float(getattr(face, 'det_score', 0.0))
             pitch, yaw, roll = 0.0, 0.0, 0.0
+            pose_valid = False
             pose = getattr(face, 'pose', None)
             if pose is not None and len(pose) >= 3:
                 pitch, yaw, roll = (
                     float(pose[0]), float(pose[1]), float(pose[2])
                 )
+                pose_valid = True
             results.append(DetectedFace(
                 bbox=(x1, y1, w, h),
                 embedding=embedding,
@@ -163,6 +169,7 @@ class FaceAnalyzer:
                 yaw=yaw,
                 pitch=pitch,
                 roll=roll,
+                pose_valid=pose_valid,
             ))
         return results
 

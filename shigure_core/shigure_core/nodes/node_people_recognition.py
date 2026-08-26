@@ -19,7 +19,12 @@ from pathlib import Path
 from PIL import Image
 
 from shigure_core.nodes.node_image_preview import ImagePreviewNode
-from shigure_core.nodes.face_analyzer import DetectedFace, FaceAnalyzer
+from shigure_core.nodes.face_analyzer import (
+    DetectedFace,
+    FaceAnalyzer,
+    FRONTAL_PITCH_THRESHOLD,
+    FRONTAL_YAW_THRESHOLD,
+)
 from shigure_core.util.face_models_dir import (
     face_models_signature,
     get_face_models_dir,
@@ -405,6 +410,23 @@ class PeopleRecognitionNode(ImagePreviewNode):
         )
         return user_id
 
+    @staticmethod
+    def is_frontal_feature_entry(entry: dict) -> bool:
+        """all_features エントリが正面登録可能か判定する.
+
+        pose 欠損や閾値超えは False。横顔の新規登録・辞書混入を防ぐ。
+        """
+        if not entry.get('pose_valid', False):
+            return False
+        yaw = float(entry.get('yaw', 0.0))
+        pitch = float(entry.get('pitch', 0.0))
+        return FaceAnalyzer.is_frontal(
+            yaw,
+            pitch,
+            yaw_threshold=FRONTAL_YAW_THRESHOLD,
+            pitch_threshold=FRONTAL_PITCH_THRESHOLD,
+        )
+
     def add_features_to_unlabeled_pool(
         self,
         features_num: list,
@@ -413,14 +435,26 @@ class PeopleRecognitionNode(ImagePreviewNode):
     ) -> int:
         """unknown 特徴を未ラベル池へ追加する（即 new user しない）."""
         added = 0
+        skipped_profile = 0
         now = time.time()
         for num in features_num:
             if num not in self.all_features:
                 continue
             if num in self.unlabeled_pool:
                 continue
+            entry = self.all_features[num]
+            # 横顔・pose 欠損は新規登録候補にしない
+            if not self.is_frontal_feature_entry(entry):
+                self.get_logger().info(
+                    f'[UnlabeledPool] skip non-frontal: feature_num={num} '
+                    f'yaw={entry.get("yaw", "?")} pitch={entry.get("pitch", "?")} '
+                    f'pose_valid={entry.get("pose_valid", False)}'
+                )
+                self.release_pending_feature(num)
+                skipped_profile += 1
+                continue
             # 既に辞書へ保存済みの完全一致特徴は池に入れない
-            feature = self.all_features[num]['feature']
+            feature = entry['feature']
             if self.is_feature_duplicate(feature):
                 self.release_pending_feature(num)
                 continue
@@ -446,6 +480,11 @@ class PeopleRecognitionNode(ImagePreviewNode):
                 f'(limit={MAX_UNLABELED_POOL_SIZE})'
             )
 
+        if skipped_profile:
+            self.get_logger().info(
+                f'[UnlabeledPool] skipped {skipped_profile} non-frontal '
+                f'feature(s) (people_id={people_id or "?"})'
+            )
         if added:
             self.get_logger().info(
                 f'[UnlabeledPool] added={added} pool_size={len(self.unlabeled_pool)} '
@@ -655,11 +694,14 @@ class PeopleRecognitionNode(ImagePreviewNode):
             user_id, score = self.matching(embedding, self.dictionary, COSINE_THRESHOLD)
             face_id = user_id
 
-            # 特徴とfeature_numをall_featuresに追加
+            # 特徴とfeature_numをall_featuresに追加（角度は保存時に再検証する）
             self.all_features[self.feature_num] = {
                 "feature": embedding,
                 "user_id": user_id,
-                "score": score
+                "score": score,
+                "yaw": float(detected_face.yaw),
+                "pitch": float(detected_face.pitch),
+                "pose_valid": bool(detected_face.pose_valid),
             }
 
             x, y, w, h = detected_face.bbox
@@ -823,6 +865,7 @@ class PeopleRecognitionNode(ImagePreviewNode):
 
         1ユーザーあたり MAX_FEATURES_PER_USER 件を超える正面特徴・画像は追加しない。
         既存辞書と重複する特徴/画像はスキップする。
+        pose 欠損・横顔（yaw/pitch しきい値外）は保存しない。
         """
         # 辞書にユーザーを登録
         if user_name not in self.dictionary:
@@ -850,6 +893,7 @@ class PeopleRecognitionNode(ImagePreviewNode):
 
         saved = 0
         skipped = 0
+        skipped_profile = 0
         saved_items = []
         skipped_feature_nums = []
         # 特徴ベクトルを保存（上限まで）
@@ -858,7 +902,19 @@ class PeopleRecognitionNode(ImagePreviewNode):
                 break
             if num not in self.all_features:
                 continue
-            feature = self.all_features[num]["feature"]
+            entry = self.all_features[num]
+            # 横顔・pose 欠損は正面辞書へ保存しない
+            if not self.is_frontal_feature_entry(entry):
+                self.get_logger().info(
+                    f'[dict_renew] skip non-frontal: feature_num={num} '
+                    f'yaw={entry.get("yaw", "?")} pitch={entry.get("pitch", "?")} '
+                    f'pose_valid={entry.get("pose_valid", False)}'
+                )
+                self.release_pending_feature(num)
+                skipped_profile += 1
+                skipped_feature_nums.append(num)
+                continue
+            feature = entry["feature"]
             image = self.all_images.get(num)
 
             if self.is_feature_duplicate(feature):
@@ -909,6 +965,11 @@ class PeopleRecognitionNode(ImagePreviewNode):
         if skipped:
             self.get_logger().info(
                 f'[dict_renew] skipped {skipped} duplicate feature(s) for {user_name}'
+            )
+        if skipped_profile:
+            self.get_logger().info(
+                f'[dict_renew] skipped {skipped_profile} non-frontal '
+                f'feature(s) for {user_name}'
             )
         if saved:
             print(
