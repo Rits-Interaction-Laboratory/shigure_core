@@ -19,7 +19,7 @@ from pathlib import Path
 from PIL import Image
 
 from shigure_core.nodes.node_image_preview import ImagePreviewNode
-from shigure_core.nodes.profile_insightface import ProfileInsightFace, InsightFaceResult
+from shigure_core.nodes.face_analyzer import DetectedFace, FaceAnalyzer
 from shigure_core.util.face_models_dir import (
     face_models_signature,
     get_face_models_dir,
@@ -38,13 +38,13 @@ from shigure_core.nodes.people_recognition.unknown_enrollment import (
     GALLERY_KNN_K,
     GALLERY_RESCUE_MIN_VOTE_RATIO,
     dbscan_cluster_features,
-    feature_centroid,
     find_gallery_user_by_knn,
-    match_centroid_to_gallery,
     select_dense_clusters,
 )
 
 # COSINE_THRESHOLD = 0.363
+# AdaFace (L2 正規化 512次元) の初期しきい値。スコア分布が ArcFace と違うので
+# 実データで取り直すこと。
 COSINE_THRESHOLD = 0.4
 PROFILE_COSINE_THRESHOLD = 0.4
 NORML2_THRESHOLD = 1.128
@@ -126,9 +126,9 @@ class PeopleRecognitionNode(ImagePreviewNode):
         self.feature_pub = self.create_publisher(FeatureInfo, '/feature_info', 10)
 
         # モデルロード #############################################################
-        self.insightface = ProfileInsightFace()
-        if not self.insightface.available:
-            raise RuntimeError("insightface is not installed")
+        self.face_analyzer = FaceAnalyzer()
+        if not self.face_analyzer.available:
+            raise RuntimeError("insightface or onnxruntime is not installed")
 
         # 特徴を読み込む（手動でディスクの user_* を消した場合は照合前に再同期する）
         self.dictionary = {}
@@ -456,6 +456,8 @@ class PeopleRecognitionNode(ImagePreviewNode):
     def process_unlabeled_pool_dbscan(self) -> int:
         """未ラベル池を DBSCAN し、密集クラスタだけを既存マージ or new user する.
 
+        既存マージはクラスタ全体の kNN（票が半数以上）のみ。重心照合は使わない。
+
         Returns:
             今回保存した特徴数の合計。
         """
@@ -503,23 +505,14 @@ class PeopleRecognitionNode(ImagePreviewNode):
             people_id = people_ids[0] if len(people_ids) == 1 else ','.join(people_ids)
             face_id = face_ids[0] if len(face_ids) == 1 else ','.join(face_ids)
 
-            # クラスタ全体の kNN + 重心照合（どちらかヒットで既存マージ）
+            # クラスタ全体の kNN（半数以上）だけで既存マージする。重心照合はしない。
             merge_user, knn_info = find_gallery_user_by_knn(
                 member_feats,
                 self.dictionary,
                 threshold=COSINE_THRESHOLD,
                 k=GALLERY_KNN_K,
+                min_vote_ratio=GALLERY_RESCUE_MIN_VOTE_RATIO,
             )
-            if merge_user is None:
-                centroid = feature_centroid(member_feats)
-                merge_user, cent_info = match_centroid_to_gallery(
-                    centroid,
-                    self.dictionary,
-                    threshold=COSINE_THRESHOLD,
-                    k=GALLERY_KNN_K,
-                )
-                if merge_user is not None:
-                    knn_info = cent_info
 
             if merge_user is not None:
                 self.get_logger().info(
@@ -609,7 +602,7 @@ class PeopleRecognitionNode(ImagePreviewNode):
         cap_height, cap_width = color_img.shape[:2]
 
         # 検出実施 #############################################################
-        detected_faces = self.insightface.detect_faces(color_img)
+        detected_faces = self.face_analyzer.detect_faces(color_img)
 
         # Create header with timestamp
         header = Header()
@@ -619,21 +612,21 @@ class PeopleRecognitionNode(ImagePreviewNode):
         self.recognition_results = FaceRecognitionResult()
         self.recognition_results.header = header
 
-        for iface_face in detected_faces:
+        for detected_face in detected_faces:
 
             # 顔の四角形の位置を取得
-            x, y, w, h = iface_face.bbox
+            x, y, w, h = detected_face.bbox
 
             # 顔の座標が画像範囲外にある場合、スキップ
             if x < 20 or y < 20 or x + w > cap_width -20 or y + h > cap_height -20:
                 continue  # 画面外の顔を無視
 
             # 検出信頼度が低い顔は照合・辞書蓄積の対象外（param min_det_score で調整可）
-            if iface_face.det_score < self.min_det_score:
+            if detected_face.det_score < self.min_det_score:
                 continue
 
             face_info = FaceInfo()
-            face_info.id, face_info.score, face_info.box, face_info.embedding = self.identify_face(iface_face, color_img)
+            face_info.id, face_info.score, face_info.box, face_info.embedding = self.identify_face(detected_face, color_img)
             face_info.feature_num = self.feature_num
             self.recognition_results.faces.append(face_info)
             self.feature_num = self.feature_num + 1
@@ -653,10 +646,10 @@ class PeopleRecognitionNode(ImagePreviewNode):
         # recognition_history を受け取るが、辞書更新時まで保持しておく
         self.last_recognition_history = msg  # 最後に受信したデータを保存
     
-    def identify_face(self, iface_face: InsightFaceResult, image):
-        embedding = iface_face.embedding.copy()
-        box = [int(v) for v in iface_face.bbox]
-        is_frontal = iface_face.is_frontal
+    def identify_face(self, detected_face: DetectedFace, image):
+        embedding = detected_face.embedding.copy()
+        box = [int(v) for v in detected_face.bbox]
+        is_frontal = detected_face.is_frontal
 
         if is_frontal:
             user_id, score = self.matching(embedding, self.dictionary, COSINE_THRESHOLD)
@@ -669,7 +662,7 @@ class PeopleRecognitionNode(ImagePreviewNode):
                 "score": score
             }
 
-            x, y, w, h = iface_face.bbox
+            x, y, w, h = detected_face.bbox
             self.all_images[self.feature_num] = image[y:y + h, x:x + w].copy()
         else:
             user_id, score = self.matching(embedding, self.profile_dictionary, PROFILE_COSINE_THRESHOLD)
@@ -1042,7 +1035,7 @@ class PeopleRecognitionNode(ImagePreviewNode):
                 if not best_user:
                     continue
 
-                # LP が unknown ならギャラリー救済（閾値超え1票でも可）
+                # LP が unknown ならギャラリー救済（閾値超え票が半数以上なら既存へ）
                 gallery_rescued = False
                 if best_user.startswith("unknown"):
                     gallery_user = self.gallery_rescue_decide(

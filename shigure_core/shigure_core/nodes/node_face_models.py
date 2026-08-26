@@ -8,7 +8,7 @@ from rclpy.qos import QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import CompressedImage
 import message_filters
 
-from shigure_core.nodes.profile_insightface import ProfileInsightFace
+from shigure_core.nodes.face_analyzer import FaceAnalyzer
 from shigure_core.util.face_models_dir import get_face_models_dir
 
 # 顔特徴(.npy)と顔画像(.jpg)の保存先。people_recognition / shigure_api が読む辞書と同じ場所。
@@ -38,9 +38,9 @@ class FaceCaptureNode(Node):
         self.get_logger().info(f"保存先: {self.save_directory}")
 
         # モデルの読み込み
-        self.insightface = ProfileInsightFace()
-        if not self.insightface.available:
-            raise RuntimeError("insightface is not installed")
+        self.face_analyzer = FaceAnalyzer()
+        if not self.face_analyzer.available:
+            raise RuntimeError("insightface or onnxruntime is not installed")
 
         # 撮影枚数のカウント
         self.feature_count = len(glob.glob(os.path.join(self.save_directory, "*.npy")))
@@ -60,16 +60,16 @@ class FaceCaptureNode(Node):
         resized_image = cv2.resize(color_img, (1280, 720))
 
         # 顔検出
-        detected_faces = self.insightface.detect_faces(resized_image)
+        detected_faces = self.face_analyzer.detect_faces(resized_image)
 
         # 検出された顔がある場合
         if detected_faces is not None:
-            for iface_face in detected_faces:
-                if not iface_face.is_frontal:
+            for detected_face in detected_faces:
+                if not detected_face.is_frontal:
                     continue
 
                 # 顔の四角形の位置を取得
-                x, y, w, h = iface_face.bbox
+                x, y, w, h = detected_face.bbox
                 print(x, y, w, h)
 
                 # 画像の幅と高さ
@@ -84,7 +84,7 @@ class FaceCaptureNode(Node):
                 face_crop = resized_image[y:y + h, x:x + w]
 
                 # 顔画像と特徴ベクトルを保存
-                self.save_face_data(face_crop, iface_face.embedding)
+                self.save_face_data(face_crop, detected_face.embedding)
 
     def save_face_data(self, face_image, feature_vector):
         # 保存するファイル名を設定。命名は '{user_id}_{num}'（= 'user_{name}_{num}'）に統一する。
