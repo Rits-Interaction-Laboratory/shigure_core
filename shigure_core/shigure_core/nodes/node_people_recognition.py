@@ -842,7 +842,7 @@ class PeopleRecognitionNode(ImagePreviewNode):
     ) -> None:
         """登録履歴を jsonl へ追記する。route には通過関数の経路を入れる。"""
         memo = {
-            'timestamp': dtateime.now().isoformat(timespec='seconds'),
+            'timestamp': datetime.now().isoformat(timespec='seconds'),
             'user_name': user_name,
             'route': route,
             'source': source,
