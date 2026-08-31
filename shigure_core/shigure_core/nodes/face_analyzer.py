@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 
 FRONTAL_YAW_THRESHOLD = 30.0
 FRONTAL_PITCH_THRESHOLD = 20.0
+FRONTAL_ROLL_THRESHOLD = 30.0
 MIN_FACE_SIZE = 40
 
 
@@ -39,10 +40,10 @@ class DetectedFace:
 
     @property
     def is_frontal(self) -> bool:
-        """pose が有効かつ yaw/pitch が正面しきい値内なら True."""
+        """pose が有効かつ yaw/pitch/roll が正面しきい値内なら True."""
         if not self.pose_valid:
             return False
-        return FaceAnalyzer.is_frontal(self.yaw, self.pitch)
+        return FaceAnalyzer.is_frontal(self.yaw, self.pitch, self.roll)
 
 
 class FaceAnalyzer:
@@ -98,11 +99,17 @@ class FaceAnalyzer:
     def is_frontal(
         yaw: float,
         pitch: float = 0.0,
+        roll: float = 0.0,
         yaw_threshold: float = FRONTAL_YAW_THRESHOLD,
         pitch_threshold: float = FRONTAL_PITCH_THRESHOLD,
+        roll_threshold: float = FRONTAL_ROLL_THRESHOLD,
     ) -> bool:
-        """yaw/pitch がしきい値未満なら正面とみなす."""
-        return abs(yaw) < yaw_threshold and abs(pitch) < pitch_threshold
+        """yaw/pitch/roll がしきい値未満なら正面とみなす."""
+        return (
+            abs(yaw) < yaw_threshold
+            and abs(pitch) < pitch_threshold
+            and abs(roll) < roll_threshold
+        )
 
     @staticmethod
     def is_point_in_box(

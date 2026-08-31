@@ -23,6 +23,7 @@ from shigure_core.nodes.face_analyzer import (
     DetectedFace,
     FaceAnalyzer,
     FRONTAL_PITCH_THRESHOLD,
+    FRONTAL_ROLL_THRESHOLD,
     FRONTAL_YAW_THRESHOLD,
 )
 from shigure_core.util.face_models_dir import (
@@ -414,17 +415,20 @@ class PeopleRecognitionNode(ImagePreviewNode):
     def is_frontal_feature_entry(entry: dict) -> bool:
         """all_features エントリが正面登録可能か判定する.
 
-        pose 欠損や閾値超えは False。横顔の新規登録・辞書混入を防ぐ。
+        pose 欠損や閾値超えは False。横顔・傾きの新規登録・辞書混入を防ぐ。
         """
         if not entry.get('pose_valid', False):
             return False
         yaw = float(entry.get('yaw', 0.0))
         pitch = float(entry.get('pitch', 0.0))
+        roll = float(entry.get('roll', 0.0))
         return FaceAnalyzer.is_frontal(
             yaw,
             pitch,
+            roll,
             yaw_threshold=FRONTAL_YAW_THRESHOLD,
             pitch_threshold=FRONTAL_PITCH_THRESHOLD,
+            roll_threshold=FRONTAL_ROLL_THRESHOLD,
         )
 
     def add_features_to_unlabeled_pool(
@@ -448,6 +452,7 @@ class PeopleRecognitionNode(ImagePreviewNode):
                 self.get_logger().info(
                     f'[UnlabeledPool] skip non-frontal: feature_num={num} '
                     f'yaw={entry.get("yaw", "?")} pitch={entry.get("pitch", "?")} '
+                    f'roll={entry.get("roll", "?")} '
                     f'pose_valid={entry.get("pose_valid", False)}'
                 )
                 self.release_pending_feature(num)
@@ -701,6 +706,7 @@ class PeopleRecognitionNode(ImagePreviewNode):
                 "score": score,
                 "yaw": float(detected_face.yaw),
                 "pitch": float(detected_face.pitch),
+                "roll": float(detected_face.roll),
                 "pose_valid": bool(detected_face.pose_valid),
             }
 
@@ -836,7 +842,7 @@ class PeopleRecognitionNode(ImagePreviewNode):
     ) -> None:
         """登録履歴を jsonl へ追記する。route には通過関数の経路を入れる。"""
         memo = {
-            'timestamp': datetime.now().isoformat(timespec='seconds'),
+            'timestamp': dtateime.now().isoformat(timespec='seconds'),
             'user_name': user_name,
             'route': route,
             'source': source,
@@ -865,7 +871,7 @@ class PeopleRecognitionNode(ImagePreviewNode):
 
         1ユーザーあたり MAX_FEATURES_PER_USER 件を超える正面特徴・画像は追加しない。
         既存辞書と重複する特徴/画像はスキップする。
-        pose 欠損・横顔（yaw/pitch しきい値外）は保存しない。
+        pose 欠損・横顔・傾き（yaw/pitch/roll しきい値外）は保存しない。
         """
         # 辞書にユーザーを登録
         if user_name not in self.dictionary:
@@ -903,11 +909,12 @@ class PeopleRecognitionNode(ImagePreviewNode):
             if num not in self.all_features:
                 continue
             entry = self.all_features[num]
-            # 横顔・pose 欠損は正面辞書へ保存しない
+            # 横顔・傾き・pose 欠損は正面辞書へ保存しない
             if not self.is_frontal_feature_entry(entry):
                 self.get_logger().info(
                     f'[dict_renew] skip non-frontal: feature_num={num} '
                     f'yaw={entry.get("yaw", "?")} pitch={entry.get("pitch", "?")} '
+                    f'roll={entry.get("roll", "?")} '
                     f'pose_valid={entry.get("pose_valid", False)}'
                 )
                 self.release_pending_feature(num)
