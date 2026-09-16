@@ -1,11 +1,11 @@
-"""unknown 顔特徴の登録判定（ギャラリー kNN マージ + DBSCAN 新規判定）.
+"""unknown 顔特徴の登録判定（ギャラリー kNN 救済 + DBSCAN 新規判定）.
 
 Node 層から ROS2 非依存のアルゴリズムだけを切り出している。
 新規ユーザー判定は次の2段:
 
-1. 既存ギャラリーへ閾値付き kNN / max cos 照合 → ヒットなら既存へ強制マージ
+1. 既存ギャラリーへ閾値付き kNN 照合。閾値超え票が半数以上なら既存へ救済
 2. 未ヒットは未ラベル池へ。DBSCAN で密集クラスタだけを候補人物にし、
-   クラスタ中心を再度ギャラリー照合してから new user にする
+   クラスタ全体を同じ kNN（半数以上）で再照合してから new user にする
 """
 
 from collections import Counter
@@ -19,6 +19,8 @@ from sklearn.cluster import DBSCAN
 GALLERY_COSINE_THRESHOLD = 0.4
 # Faiss kNN の近傍数（分裂 ID への票割れ耐性用）.
 GALLERY_KNN_K = 10
+# ギャラリー救済: 閾値超え Top1 票の最小比率。0.5 なら半数以上で既存へマージ.
+GALLERY_RESCUE_MIN_VOTE_RATIO = 0.5
 # DBSCAN: cosine 距離 = 1 - cos。cos>=閾値を近傍とみなす.
 DBSCAN_EPS = 1.0 - GALLERY_COSINE_THRESHOLD
 # DBSCAN の最小点数（従来の MIN_FEATURES_FOR_NEW_USER 相当）.
@@ -56,24 +58,19 @@ def flatten_dictionary(
     return np.stack(rows).astype(np.float32), user_ids
 
 
-def feature_centroid(features: np.ndarray) -> np.ndarray:
-    """L2 正規化後の平均を再正規化した重心ベクトルを返す."""
-    norms = normalize_l2(features)
-    centroid = norms.mean(axis=0)
-    centroid = centroid.astype(np.float32).reshape(1, -1)
-    faiss.normalize_L2(centroid)
-    return centroid.reshape(-1)
-
-
 def find_gallery_user_by_knn(
     query_features: np.ndarray,
     dictionary: Dict[str, Sequence[np.ndarray]],
     threshold: float = GALLERY_COSINE_THRESHOLD,
     k: int = GALLERY_KNN_K,
+    min_vote_ratio: float = GALLERY_RESCUE_MIN_VOTE_RATIO,
 ) -> Tuple[Optional[str], dict]:
     """クエリ特徴群をギャラリーへ kNN 照合し、ヒットすれば user_id を返す.
 
-    閾値以上の近傍があれば必ず既存ユーザーを返す（投票比率不足でも new user にしない）。
+    各クエリは閾値超えの最近傍（Top1）に1票。当選ユーザーへの票が
+    n_queries * min_vote_ratio 未満ならヒットなしとする。
+    info['matched_indices'] に当選ユーザーへ閾値超えしたクエリ index を入れる。
+
     返り値: (user_id or None, デバッグ情報 dict)
     """
     info = {
@@ -83,6 +80,9 @@ def find_gallery_user_by_knn(
         'vote_count': 0,
         'n_queries': 0,
         'votes': {},
+        'matched_indices': [],
+        'vote_ratio': 0.0,
+        'min_vote_ratio': float(min_vote_ratio),
     }
     if not dictionary:
         return None, info
@@ -100,16 +100,17 @@ def find_gallery_user_by_knn(
     index.add(index_feats)
 
     q = normalize_l2(queries)
-    info['n_queries'] = int(q.shape[0])
+    n_queries = int(q.shape[0])
+    info['n_queries'] = n_queries
     knn = min(k, index_feats.shape[0])
     distances, indices = index.search(q, knn)
 
-    votes: Counter = Counter()
-    score_sums: Counter = Counter()
-    best_score = -1.0
-    best_user_for_score = None
-
-    for i in range(q.shape[0]):
+    # クエリごと Top1（スコア最大）が閾値超えならその user に1票
+    per_query_user: List[Optional[str]] = []
+    per_query_score: List[float] = []
+    for i in range(n_queries):
+        best_u = None
+        best_s = -1.0
         for j in range(knn):
             score = float(distances[i][j])
             idx = int(indices[i][j])
@@ -117,46 +118,45 @@ def find_gallery_user_by_knn(
                 continue
             if score <= threshold:
                 continue
-            user_id = user_ids[idx]
-            votes[user_id] += 1
-            score_sums[user_id] += score
-            if score > best_score:
-                best_score = score
-                best_user_for_score = user_id
+            if score > best_s:
+                best_s = score
+                best_u = user_ids[idx]
+        per_query_user.append(best_u)
+        per_query_score.append(best_s if best_u is not None else 0.0)
 
-    info['best_score'] = float(best_score) if best_score >= 0 else 0.0
+    votes: Counter = Counter(u for u in per_query_user if u is not None)
     info['votes'] = dict(votes)
-
     if not votes:
         return None, info
 
-    # 票数優先、同票ならスコア合計が大きいユーザー
     best_user, vote_count = max(
         votes.items(),
-        key=lambda item: (item[1], score_sums[item[0]]),
+        key=lambda item: (
+            item[1],
+            sum(
+                per_query_score[i]
+                for i, u in enumerate(per_query_user)
+                if u == item[0]
+            ),
+        ),
     )
-    info['hit'] = True
+    vote_ratio = vote_count / n_queries if n_queries else 0.0
+    matched_indices = [
+        i for i, u in enumerate(per_query_user) if u == best_user
+    ]
+    matched_scores = [per_query_score[i] for i in matched_indices]
     info['best_user'] = best_user
     info['vote_count'] = int(vote_count)
-    # max cos のユーザーと票数が食い違う場合は票の勝者を採用（分裂耐性）
-    if best_user_for_score is not None and best_user_for_score != best_user:
-        info['max_score_user'] = best_user_for_score
+    info['vote_ratio'] = float(vote_ratio)
+    info['matched_indices'] = matched_indices
+    info['best_score'] = float(max(matched_scores)) if matched_scores else 0.0
+
+    if vote_ratio < min_vote_ratio:
+        info['hit'] = False
+        return None, info
+
+    info['hit'] = True
     return best_user, info
-
-
-def match_centroid_to_gallery(
-    centroid: np.ndarray,
-    dictionary: Dict[str, Sequence[np.ndarray]],
-    threshold: float = GALLERY_COSINE_THRESHOLD,
-    k: int = GALLERY_KNN_K,
-) -> Tuple[Optional[str], dict]:
-    """クラスタ重心をギャラリーへ照合する."""
-    return find_gallery_user_by_knn(
-        centroid.reshape(1, -1),
-        dictionary,
-        threshold=threshold,
-        k=k,
-    )
 
 
 def dbscan_cluster_features(
