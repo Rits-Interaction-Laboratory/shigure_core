@@ -307,6 +307,14 @@ def create_app() -> FastAPI:
         finally:
             await pca_hub.disconnect(websocket)
 
+    @app.get('/api/tracking_debug/stats')
+    def tracking_debug_stats(
+        x_api_key: str | None = Header(default=None, alias='X-API-Key'),
+    ) -> dict:
+        """追跡デバッグ画像の送出待ち枚数を返す."""
+        _verify_api_key(x_api_key)
+        return tracking_debug_hub.stats()
+
     @app.websocket('/ws/tracking_debug')
     async def ws_tracking_debug(websocket: WebSocket) -> None:
         if API_KEY:
@@ -322,6 +330,22 @@ def create_app() -> FastAPI:
             pass
         finally:
             await tracking_debug_hub.disconnect(websocket)
+
+    @app.websocket('/ws/tracking_debug_stats')
+    async def ws_tracking_debug_stats(websocket: WebSocket) -> None:
+        if API_KEY:
+            key = websocket.query_params.get('api_key')
+            if key != API_KEY:
+                await websocket.close(code=4401, reason='Invalid API key')
+                return
+        await tracking_debug_hub.connect_stats(websocket)
+        try:
+            while True:
+                await websocket.receive_text()
+        except WebSocketDisconnect:
+            pass
+        finally:
+            await tracking_debug_hub.disconnect_stats(websocket)
 
     return app
 

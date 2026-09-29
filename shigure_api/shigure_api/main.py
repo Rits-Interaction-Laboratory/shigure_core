@@ -74,6 +74,7 @@ def main() -> None:
         f'WebSocket: ws://{args.host}:{args.port}/ws/events  '
         f'PCA plot: ws://{args.host}:{args.port}/ws/pca_plot  '
         f'Tracking debug: ws://{args.host}:{args.port}/ws/tracking_debug  '
+        f'Tracking debug stats: ws://{args.host}:{args.port}/ws/tracking_debug_stats  '
         f'face_models={config.FACE_MODELS_DIR}  '
         f'show_full_dictionary={config.PCA_SHOW_FULL_DICTIONARY}'
     )
