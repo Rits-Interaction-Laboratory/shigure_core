@@ -4,3 +4,7 @@ setuptools~=39.0.1
 numpy~=1.13.3
 matplotlib~=2.1.1
 mysql-connector-python~=8.0.23
+fastapi
+uvicorn
+pydantic
+httpx

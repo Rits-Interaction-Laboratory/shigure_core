@@ -14,11 +14,29 @@ def generate_launch_description():
         ),
         Node(
             package="shigure_core",
+            executable="bbox_visualizer",
+            prefix="gnome-terminal --tab -t 'bbox_visualizer' --",
+            parameters=[
+                {"show_window": True},
+            ],
+        ),
+        Node(
+            package="shigure_core",
             executable="object_tracking",
             prefix="gnome-terminal --tab -t 'object_tracking' --",
             parameters=[
-                {"is_debug_mode": False},               
+                {"is_debug_mode": False},
             ],
+        ),
+        Node(
+            package="shigure_core",
+            executable="object_history",
+            prefix="gnome-terminal --tab -t 'object_history' --",
+        ),
+        Node(
+            package="shigure_core",
+            executable="object_tracking_event_history",
+            prefix="gnome-terminal --tab -t 'object_tracking_event_history' --",
         ),
         Node(
             package="shigure_core",

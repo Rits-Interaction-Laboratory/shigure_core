@@ -1,0 +1,18 @@
+CREATE TABLE IF NOT EXISTS `object_tracking_summary` (
+  `object_id` VARCHAR(100) NOT NULL,
+  `class_id` VARCHAR(100) NOT NULL,
+  `bring_in_at` DATETIME NOT NULL,
+  `bring_in_x` FLOAT NOT NULL,
+  `bring_in_y` FLOAT NOT NULL,
+  `bring_in_z` FLOAT NOT NULL,
+  `bring_in_width` FLOAT NOT NULL,
+  `bring_in_height` FLOAT NOT NULL,
+  `bring_in_depth` FLOAT NOT NULL,
+  `take_out_at` DATETIME NULL,
+  `take_out_x` FLOAT NULL,
+  `take_out_y` FLOAT NULL,
+  `take_out_z` FLOAT NULL,
+  `take_out_width` FLOAT NULL,
+  `take_out_height` FLOAT NULL,
+  `take_out_depth` FLOAT NULL,
+  PRIMARY KEY (`object_id`));

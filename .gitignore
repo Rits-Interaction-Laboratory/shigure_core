@@ -1,3 +1,8 @@
+# colcon build artifacts
+build/
+install/
+log/
+
 # Detection events
 events/*
 

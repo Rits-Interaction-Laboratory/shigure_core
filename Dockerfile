@@ -8,7 +8,7 @@ RUN apt-get update && apt-get install -y \
     tmux \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip3 install "numpy<2" mysql-connector-python pandas
+RUN pip3 install "numpy<2" mysql-connector-python pandas fastapi uvicorn pydantic opencv-contrib-python
 
 WORKDIR /ros2_ws/src
 COPY bbox_ex_msgs/ bbox_ex_msgs/
