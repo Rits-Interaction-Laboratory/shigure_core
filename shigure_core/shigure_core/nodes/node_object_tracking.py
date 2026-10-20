@@ -140,6 +140,7 @@ class ObjectTrackingNode(ImagePreviewNode):
             tracked_object.object_id = object_id
             tracked_object.action = stay_object.action
             tracked_object.bounding_box = stay_object.bounding_box
+            tracked_object.class_id = stay_object.class_id
 
             bounding_box = stay_object.bounding_box
             left = min(int(bounding_box.x), width - 1)

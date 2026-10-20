@@ -13,11 +13,29 @@ def generate_launch_description():
         ),
         Node(
             package="shigure_core",
+            executable="bbox_visualizer",
+            prefix="xterm -T 'bbox_visualizer' -e",
+            parameters=[
+                {"show_window": True},
+            ],
+        ),
+        Node(
+            package="shigure_core",
             executable="object_tracking",
             prefix="xterm -T 'object_tracking' -e",
             parameters=[
                 {"is_debug_mode": True},
             ],
+        ),
+        Node(
+            package="shigure_core",
+            executable="object_history",
+            prefix="xterm -T 'object_history' -e",
+        ),
+        Node(
+            package="shigure_core",
+            executable="object_tracking_event_history",
+            prefix="xterm -T 'object_tracking_event_history' -e",
         ),
         Node(
             package="shigure_core",

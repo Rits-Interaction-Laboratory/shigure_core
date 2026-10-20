@@ -1,0 +1,15 @@
+CREATE TABLE IF NOT EXISTS `object_history` (
+  `id` INT NOT NULL AUTO_INCREMENT,
+  `object_id` VARCHAR(100) NOT NULL,
+  `class_id` VARCHAR(100) NOT NULL,
+  `x` FLOAT NOT NULL,
+  `y` FLOAT NOT NULL,
+  `z` FLOAT NOT NULL,
+  `width` FLOAT NOT NULL,
+  `height` FLOAT NOT NULL,
+  `depth` FLOAT NOT NULL,
+  `bring_in_at` DATETIME NOT NULL,
+  `take_out_at` DATETIME NULL,
+  `last_seen_at` DATETIME NOT NULL,
+  PRIMARY KEY (`id`),
+  INDEX `idx_object_history_object_id` (`object_id`));

@@ -194,11 +194,12 @@ class YoloxObjectDetectionNode(ImagePreviewNode):
 				
 	def create_msg(self, frame_object_list: List[FrameObject], detected_object_list: DetectedObjectList) -> DetectedObjectList:
 		for frame_object in frame_object_list:
-			action, bounding_box_src, _, mask_img, _, _ = frame_object.item.items
+			action, bounding_box_src, _, mask_img, _, class_id = frame_object.item.items
 			x, y, width, height = bounding_box_src.items
-			
+
 			detected_object = DetectedObject()
 			detected_object.action = action.value
+			detected_object.class_id = class_id
 			detected_object.mask = self.bridge.cv2_to_compressed_imgmsg(mask_img, 'png')
 			#print(detected_object.action)
 			bounding_box = BoundingBox()
