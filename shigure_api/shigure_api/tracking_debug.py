@@ -64,6 +64,12 @@ class TrackingDebugHub:
         }
 
     def enqueue(self, payload: Dict[str, Any]) -> None:
+        """ライブ表示は最新フレームだけで足りるので、溜まっている分は捨ててから入れる."""
+        try:
+            while True:
+                self._thread_queue.get_nowait()
+        except queue.Empty:
+            pass
         self._thread_queue.put_nowait(payload)
 
     async def _broadcast_loop(self) -> None:
