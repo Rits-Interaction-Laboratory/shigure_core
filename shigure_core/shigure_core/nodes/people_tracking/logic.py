@@ -17,7 +17,7 @@ class PeopleTrackingLogic:
 
     @staticmethod
     def execute(depth_img: np.ndarray, key_points_list: PoseKeyPointsList, tracking_info: TrackingInfo,
-                k: np.ndarray, threshold_distance: int = 1000, threshold_person: float = 0.3,
+                k: np.ndarray, threshold_distance: int = 1000, threshold_person: float = 0.15,
                 neck_index: int = 1) -> TrackingInfo:
         height, width = depth_img.shape[:2]
 
