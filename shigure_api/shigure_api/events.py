@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Literal, Optional
 
 from pydantic import BaseModel, Field
+
+# 入室時刻は日本時間（秒精度、+09:00）で返す。
+JST = timezone(timedelta(hours=9))
 
 UserEventType = Literal[
     'user_registered',
@@ -28,6 +31,18 @@ class UserSummary(BaseModel):
     user_id: str
     feature_count: int
     profile_feature_count: int = 0
+
+
+class UserEntered(BaseModel):
+    """ユーザー確定（新規登録を含む）時に送る入室通知.
+
+    user_id は辞書名（例: user_青葉 / user_new16）。
+    display_name は user_ を除いた表示名（例: 青葉 / new16）。
+    """
+
+    user_id: str
+    display_name: str
+    entered_at: str
 
 
 class ContactCandidate(BaseModel):
@@ -77,6 +92,46 @@ def contact_row_to_model(row: Dict[str, Any]) -> ContactCandidate:
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def now_jst_iso() -> str:
+    """現在時刻を日本時間の ISO8601（秒精度）で返す."""
+    return datetime.now(JST).isoformat(timespec='seconds')
+
+
+def ros_stamp_to_jst_iso(sec: int, nanosec: int) -> str:
+    """ROS 時刻を日本時間の ISO8601（秒精度）へ変換する."""
+    if sec <= 0 and nanosec <= 0:
+        return now_jst_iso()
+    moment = datetime.fromtimestamp(sec + nanosec / 1_000_000_000, tz=JST)
+    return moment.isoformat(timespec='seconds')
+
+
+def display_name_from_user_id(user_id: str) -> str:
+    """辞書の user_id から表示名を返す（user_ 接頭辞は除く）."""
+    prefix = 'user_'
+    if user_id.startswith(prefix) and len(user_id) > len(prefix):
+        return user_id[len(prefix):]
+    return user_id
+
+
+def entry_from_dictionary_update(
+    people_id: str,
+    name: str,
+    entered_at: str,
+) -> Optional[UserEntered]:
+    """確定または新規登録のときだけ入室通知を作る.
+
+    登録失敗（name が空または none）のときは None。
+    """
+    event = event_from_dictionary_update(people_id, name)
+    if event is None or event.type not in ('user_registered', 'user_confirmed'):
+        return None
+    return UserEntered(
+        user_id=event.user_id,
+        display_name=display_name_from_user_id(event.user_id),
+        entered_at=entered_at,
+    )
 
 
 def event_from_dictionary_update(people_id: str, name: str) -> Optional[UserEvent]:

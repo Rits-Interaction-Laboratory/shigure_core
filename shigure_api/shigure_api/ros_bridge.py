@@ -31,7 +31,13 @@ from shigure_api.config import (
     RECOGNITION_SCORE_THRESHOLD,
     TRACKING_DEBUG_IMAGE_TOPIC,
 )
-from shigure_api.events import event_from_dictionary_update, event_from_face_recognition, recognition_scores_to_dict
+from shigure_api.events import (
+    entry_from_dictionary_update,
+    event_from_dictionary_update,
+    event_from_face_recognition,
+    recognition_scores_to_dict,
+    ros_stamp_to_jst_iso,
+)
 from shigure_api.pca_plot import (
     PcaPlotStateBuilder,
     segment_closed_to_dict,
@@ -52,6 +58,7 @@ class RosEventBridge(Node):
         on_pca_payload: Optional[Callable[[dict], None]] = None,
         on_tracking_debug: Optional[Callable[[dict], None]] = None,
         on_recognition_scores: Optional[Callable[[dict], None]] = None,
+        on_entry: Optional[Callable] = None,
     ):
         super().__init__('shigure_api_bridge')
         self._on_event = on_event
@@ -59,7 +66,10 @@ class RosEventBridge(Node):
         self._on_pca_payload = on_pca_payload
         self._on_tracking_debug = on_tracking_debug
         self._on_recognition_scores = on_recognition_scores
+        self._on_entry = on_entry
         self._recognition_last_sent: Dict[str, float] = {}
+        # 同じ追跡IDへの再確定では入室通知を繰り返さない。
+        self._entry_sent: Dict[str, str] = {}
         # PCAプロットに反映済みの在室ユーザー集合（変化検知用）。
         self._pca_present_published: frozenset = frozenset()
         self._face_models_signature = face_models_signature(FACE_MODELS_DIR)
@@ -132,6 +142,36 @@ class RosEventBridge(Node):
         except Exception as exc:
             self.get_logger().error(f'Failed to emit event: {exc}')
 
+    def _emit_entry(self, entry) -> None:
+        if self._on_entry is None:
+            return
+        try:
+            self._on_entry(entry)
+        except Exception as exc:
+            self.get_logger().error(f'Failed to emit entry: {exc}')
+
+    def _maybe_emit_entry(self, msg: DictionaryUpdate) -> None:
+        """ユーザー確定（新規登録を含む）の初回だけ入室 JSON を送る."""
+        name = msg.name
+        people_id = msg.people_id
+        if not name or name == 'none':
+            return
+        with self._lock:
+            if self._entry_sent.get(people_id) == name:
+                return
+            self._entry_sent[people_id] = name
+        entered_at = ros_stamp_to_jst_iso(
+            int(msg.header.stamp.sec),
+            int(msg.header.stamp.nanosec),
+        )
+        entry = entry_from_dictionary_update(people_id, name, entered_at)
+        if entry is None:
+            return
+        self.get_logger().info(
+            f'User entered: user_id={entry.user_id} display_name={entry.display_name}'
+        )
+        self._emit_entry(entry)
+
     def _emit_pca(self, payload: dict) -> None:
         if self._on_pca_payload is None:
             return
@@ -200,6 +240,7 @@ class RosEventBridge(Node):
         if event is not None:
             self.get_logger().info(f'Dictionary update: {event.type} user_id={event.user_id}')
             self._emit(event)
+        self._maybe_emit_entry(msg)
 
         if self._pca_builder is not None:
             closed = self._pca_builder.on_dictionary_update(msg.people_id, msg.name)
@@ -285,6 +326,7 @@ def run_ros_bridge(
     on_pca_payload: Optional[Callable[[dict], None]] = None,
     on_tracking_debug: Optional[Callable[[dict], None]] = None,
     on_recognition_scores: Optional[Callable[[dict], None]] = None,
+    on_entry: Optional[Callable] = None,
 ) -> None:
     rclpy.init()
     node = RosEventBridge(
@@ -293,6 +335,7 @@ def run_ros_bridge(
         on_pca_payload=on_pca_payload,
         on_tracking_debug=on_tracking_debug,
         on_recognition_scores=on_recognition_scores,
+        on_entry=on_entry,
     )
     try:
         while rclpy.ok() and not stop_event.is_set():

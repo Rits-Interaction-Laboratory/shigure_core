@@ -32,7 +32,7 @@ def main() -> None:
     args, _ = parser.parse_known_args()
 
     import shigure_api.config as config
-    from shigure_api.app import app, hub, init_pca_builder, pca_hub, tracking_debug_hub
+    from shigure_api.app import app, entry_hub, hub, init_pca_builder, pca_hub, tracking_debug_hub
     from shigure_api.pca_plot import state_to_dict
 
     config.FACE_MODELS_DIR = Path(args.face_models_dir).expanduser()
@@ -55,6 +55,9 @@ def main() -> None:
     def on_recognition_scores(payload: dict) -> None:
         hub.enqueue_recognition_scores(payload)
 
+    def on_entry(entry) -> None:
+        entry_hub.enqueue(entry)
+
     ros_thread = threading.Thread(
         target=run_ros_bridge,
         args=(on_event, stop_event),
@@ -63,6 +66,7 @@ def main() -> None:
             'on_pca_payload': on_pca_payload,
             'on_tracking_debug': on_tracking_debug,
             'on_recognition_scores': on_recognition_scores,
+            'on_entry': on_entry,
         },
         name='shigure_ros_bridge',
         daemon=True,
@@ -72,6 +76,7 @@ def main() -> None:
     print(
         f'Shigure API: http://{args.host}:{args.port}  '
         f'WebSocket: ws://{args.host}:{args.port}/ws/events  '
+        f'Entries: ws://{args.host}:{args.port}/ws/entries  '
         f'PCA plot: ws://{args.host}:{args.port}/ws/pca_plot  '
         f'Tracking debug: ws://{args.host}:{args.port}/ws/tracking_debug  '
         f'Tracking debug stats: ws://{args.host}:{args.port}/ws/tracking_debug_stats  '
