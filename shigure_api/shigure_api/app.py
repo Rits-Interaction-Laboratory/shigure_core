@@ -20,7 +20,15 @@ from shigure_api.config import (
     PCA_TRAJECTORY_MAX_POINTS,
     default_pca_model_path,
 )
-from shigure_api.events import ContactCandidate, UserEvent, UserSummary, contact_row_to_model, user_event_to_dict
+from shigure_api.events import (
+    ContactCandidate,
+    UserEntered,
+    UserEvent,
+    UserSummary,
+    contact_row_to_model,
+    display_name_from_user_id,
+    user_event_to_dict,
+)
 
 from shigure_api.feature_images import find_face_image_path, load_face_thumbnail
 from shigure_api.pca_plot import PcaPlotHub, PcaPlotStateBuilder, state_to_dict
@@ -100,7 +108,107 @@ class EventHub:
         return [user_event_to_dict(e) for e in self._history[-limit:]]
 
 
+class EntryHub:
+    """確定・新規登録の入室通知を WebSocket クライアントへ送る."""
+
+    def __init__(self) -> None:
+        self._clients: Set[WebSocket] = set()
+        self._lock = asyncio.Lock()
+        self._thread_queue: queue.Queue[UserEntered] = queue.Queue()
+        self._history: List[UserEntered] = []
+        self._history_limit = 100
+
+    async def start(self) -> None:
+        asyncio.create_task(self._broadcast_loop())
+
+    def enqueue(self, entry: UserEntered) -> None:
+        """ROS コールバックスレッドから入室通知を投入する."""
+        self._thread_queue.put_nowait(entry)
+
+    async def broadcast(self, payloads: List[dict]) -> None:
+        async with self._lock:
+            dead: List[WebSocket] = []
+            for ws in self._clients:
+                try:
+                    for payload in payloads:
+                        await ws.send_json(payload)
+                except Exception:
+                    dead.append(ws)
+            for ws in dead:
+                self._clients.discard(ws)
+
+    async def _broadcast_loop(self) -> None:
+        while True:
+            entry = await asyncio.to_thread(self._thread_queue.get)
+            self._history.append(entry)
+            if len(self._history) > self._history_limit:
+                self._history = self._history[-self._history_limit:]
+            await self.broadcast([entry.model_dump()])
+
+    async def connect(self, websocket: WebSocket) -> None:
+        await websocket.accept()
+        async with self._lock:
+            self._clients.add(websocket)
+        for item in self.recent_entries(limit=20):
+            await websocket.send_json(item)
+
+    async def disconnect(self, websocket: WebSocket) -> None:
+        async with self._lock:
+            self._clients.discard(websocket)
+
+    def recent_entries(self, limit: int = 50) -> List[dict]:
+        return [entry.model_dump() for entry in self._history[-limit:]]
+
+
+class UserNamesHub:
+    """入室通知と同じタイミングで、全ユーザー名を WebSocket へ送る."""
+
+    def __init__(self) -> None:
+        self._clients: Set[WebSocket] = set()
+        self._lock = asyncio.Lock()
+        self._thread_queue: queue.Queue[dict] = queue.Queue()
+        self._latest: Optional[dict] = None
+
+    async def start(self) -> None:
+        asyncio.create_task(self._broadcast_loop())
+
+    def enqueue(self, payload: dict) -> None:
+        """ROS コールバックスレッドから全ユーザー名を投入する."""
+        self._thread_queue.put_nowait(payload)
+
+    async def broadcast(self, payload: dict) -> None:
+        async with self._lock:
+            dead: List[WebSocket] = []
+            for ws in self._clients:
+                try:
+                    await ws.send_json(payload)
+                except Exception:
+                    dead.append(ws)
+            for ws in dead:
+                self._clients.discard(ws)
+
+    async def _broadcast_loop(self) -> None:
+        while True:
+            payload = await asyncio.to_thread(self._thread_queue.get)
+            self._latest = payload
+            await self.broadcast(payload)
+
+    async def connect(self, websocket: WebSocket) -> None:
+        await websocket.accept()
+        async with self._lock:
+            self._clients.add(websocket)
+            latest = self._latest
+        if latest is not None:
+            await websocket.send_json(latest)
+
+    async def disconnect(self, websocket: WebSocket) -> None:
+        async with self._lock:
+            self._clients.discard(websocket)
+
+
 hub = EventHub()
+entry_hub = EntryHub()
+user_names_hub = UserNamesHub()
 pca_hub = PcaPlotHub()
 tracking_debug_hub = TrackingDebugHub()
 pca_builder: PcaPlotStateBuilder | None = None
@@ -157,9 +265,36 @@ def _scan_users(face_models_dir: Path) -> List[UserSummary]:
     return users
 
 
+def list_user_names(face_models_dir: Path, extra_user_id: str | None = None) -> dict:
+    """顔辞書にある全ユーザーの名前だけを返す.
+
+    各要素は user_id と display_name のみ。直前に確定したユーザーが
+    まだディスクに無い場合は extra_user_id を加えて含める。
+    """
+    user_ids: List[str] = []
+    if face_models_dir.is_dir():
+        for user_dir in sorted(face_models_dir.glob('user_*')):
+            if user_dir.is_dir():
+                user_ids.append(user_dir.name)
+    if extra_user_id and extra_user_id not in user_ids:
+        user_ids.append(extra_user_id)
+        user_ids.sort()
+    return {
+        'users': [
+            {
+                'user_id': user_id,
+                'display_name': display_name_from_user_id(user_id),
+            }
+            for user_id in user_ids
+        ],
+    }
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await hub.start()
+    await entry_hub.start()
+    await user_names_hub.start()
     await pca_hub.start()
     await tracking_debug_hub.start()
     yield
@@ -229,6 +364,23 @@ def create_app() -> FastAPI:
         _verify_api_key(x_api_key)
         return {'events': hub.recent_events(limit=limit)}
 
+    @app.get('/entries/recent')
+    def recent_entries(
+        limit: int = 50,
+        x_api_key: str | None = Header(default=None, alias='X-API-Key'),
+    ) -> dict:
+        """ユーザー確定（新規登録を含む）の入室通知履歴を返す."""
+        _verify_api_key(x_api_key)
+        return {'entries': entry_hub.recent_entries(limit=limit)}
+
+    @app.get('/user_names')
+    def get_user_names(
+        x_api_key: str | None = Header(default=None, alias='X-API-Key'),
+    ) -> dict:
+        """全ユーザーの名前（user_id と display_name）だけを返す."""
+        _verify_api_key(x_api_key)
+        return list_user_names(FACE_MODELS_DIR)
+
     @app.get('/contacts', response_model=List[ContactCandidate])
     def list_contacts(
         date_from: datetime = Query(alias='from', description='時間窓の開始 (ISO8601)'),
@@ -290,6 +442,40 @@ def create_app() -> FastAPI:
             pass
         finally:
             await hub.disconnect(websocket)
+
+    @app.websocket('/ws/entries')
+    async def ws_entries(websocket: WebSocket) -> None:
+        """確定・新規登録のたびに入室 JSON を送る."""
+        if API_KEY:
+            key = websocket.query_params.get('api_key')
+            if key != API_KEY:
+                await websocket.close(code=4401, reason='Invalid API key')
+                return
+        await entry_hub.connect(websocket)
+        try:
+            while True:
+                await websocket.receive_text()
+        except WebSocketDisconnect:
+            pass
+        finally:
+            await entry_hub.disconnect(websocket)
+
+    @app.websocket('/ws/user_names')
+    async def ws_user_names(websocket: WebSocket) -> None:
+        """入室通知と同じタイミングで全ユーザー名を送る."""
+        if API_KEY:
+            key = websocket.query_params.get('api_key')
+            if key != API_KEY:
+                await websocket.close(code=4401, reason='Invalid API key')
+                return
+        await user_names_hub.connect(websocket)
+        try:
+            while True:
+                await websocket.receive_text()
+        except WebSocketDisconnect:
+            pass
+        finally:
+            await user_names_hub.disconnect(websocket)
 
     @app.websocket('/ws/pca_plot')
     async def ws_pca_plot(websocket: WebSocket) -> None:
