@@ -1,6 +1,6 @@
 """InsightFace 検出 + AdaFace 埋め込みのラッパー.
 
-検出・yaw/pitch は InsightFace (buffalo_s の SCRFD / 3D landmark)、
+検出・yaw/pitch/roll は InsightFace (buffalo_s の SCRFD / 3D landmark)、
 認識ベクトルだけ AdaFace ONNX で計算する。buffalo の ArcFace は読まない。
 """
 
@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 FRONTAL_YAW_THRESHOLD = 30.0
 FRONTAL_PITCH_THRESHOLD = 20.0
-FRONTAL_ROLL_THRESHOLD = 30.0
+FRONTAL_ROLL_THRESHOLD = 20.0
 MIN_FACE_SIZE = 40
 
 
@@ -35,7 +35,7 @@ class DetectedFace:
     yaw: float = 0.0
     pitch: float = 0.0
     roll: float = 0.0
-    # 3D landmark から pose が取れたときだけ True。欠損時の (0,0) を正面扱いしない。
+    # 3D landmark から pose が取れたときだけ True。欠損時の (0,0,0) を正面扱いしない。
     pose_valid: bool = False
 
     @property

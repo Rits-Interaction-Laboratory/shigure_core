@@ -415,7 +415,7 @@ class PeopleRecognitionNode(ImagePreviewNode):
     def is_frontal_feature_entry(entry: dict) -> bool:
         """all_features エントリが正面登録可能か判定する.
 
-        pose 欠損や閾値超えは False。横顔・傾きの新規登録・辞書混入を防ぐ。
+        pose 欠損や閾値超えは False。横顔の新規登録・辞書混入を防ぐ。
         """
         if not entry.get('pose_valid', False):
             return False
@@ -451,7 +451,8 @@ class PeopleRecognitionNode(ImagePreviewNode):
             if not self.is_frontal_feature_entry(entry):
                 self.get_logger().info(
                     f'[UnlabeledPool] skip non-frontal: feature_num={num} '
-                    f'yaw={entry.get("yaw", "?")} pitch={entry.get("pitch", "?")} '
+                    f'yaw={entry.get("yaw", "?")} '
+                    f'pitch={entry.get("pitch", "?")} '
                     f'roll={entry.get("roll", "?")} '
                     f'pose_valid={entry.get("pose_valid", False)}'
                 )
@@ -871,7 +872,7 @@ class PeopleRecognitionNode(ImagePreviewNode):
 
         1ユーザーあたり MAX_FEATURES_PER_USER 件を超える正面特徴・画像は追加しない。
         既存辞書と重複する特徴/画像はスキップする。
-        pose 欠損・横顔・傾き（yaw/pitch/roll しきい値外）は保存しない。
+        pose 欠損・横顔（yaw/pitch/roll しきい値外）は保存しない。
         """
         # 辞書にユーザーを登録
         if user_name not in self.dictionary:
@@ -909,11 +910,12 @@ class PeopleRecognitionNode(ImagePreviewNode):
             if num not in self.all_features:
                 continue
             entry = self.all_features[num]
-            # 横顔・傾き・pose 欠損は正面辞書へ保存しない
+            # 横顔・pose 欠損は正面辞書へ保存しない
             if not self.is_frontal_feature_entry(entry):
                 self.get_logger().info(
                     f'[dict_renew] skip non-frontal: feature_num={num} '
-                    f'yaw={entry.get("yaw", "?")} pitch={entry.get("pitch", "?")} '
+                    f'yaw={entry.get("yaw", "?")} '
+                    f'pitch={entry.get("pitch", "?")} '
                     f'roll={entry.get("roll", "?")} '
                     f'pose_valid={entry.get("pose_valid", False)}'
                 )
