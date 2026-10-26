@@ -32,7 +32,16 @@ def main() -> None:
     args, _ = parser.parse_known_args()
 
     import shigure_api.config as config
-    from shigure_api.app import app, entry_hub, hub, init_pca_builder, pca_hub, tracking_debug_hub
+    from shigure_api.app import (
+        app,
+        entry_hub,
+        hub,
+        init_pca_builder,
+        list_user_names,
+        pca_hub,
+        tracking_debug_hub,
+        user_names_hub,
+    )
     from shigure_api.pca_plot import state_to_dict
 
     config.FACE_MODELS_DIR = Path(args.face_models_dir).expanduser()
@@ -57,6 +66,10 @@ def main() -> None:
 
     def on_entry(entry) -> None:
         entry_hub.enqueue(entry)
+        # 入室通知と同じ確定タイミングで、名前だけの全ユーザー一覧も送る。
+        user_names_hub.enqueue(
+            list_user_names(config.FACE_MODELS_DIR, extra_user_id=entry.user_id)
+        )
 
     ros_thread = threading.Thread(
         target=run_ros_bridge,
@@ -77,6 +90,7 @@ def main() -> None:
         f'Shigure API: http://{args.host}:{args.port}  '
         f'WebSocket: ws://{args.host}:{args.port}/ws/events  '
         f'Entries: ws://{args.host}:{args.port}/ws/entries  '
+        f'User names: ws://{args.host}:{args.port}/ws/user_names  '
         f'PCA plot: ws://{args.host}:{args.port}/ws/pca_plot  '
         f'Tracking debug: ws://{args.host}:{args.port}/ws/tracking_debug  '
         f'Tracking debug stats: ws://{args.host}:{args.port}/ws/tracking_debug_stats  '
