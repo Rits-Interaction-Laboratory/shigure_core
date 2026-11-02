@@ -1,4 +1,7 @@
-from typing import List
+from dataclasses import dataclass
+from typing import List, Optional
+import queue
+import threading
 
 import cv2
 import message_filters
@@ -66,6 +69,18 @@ MAX_UNLABELED_POOL_SIZE = 500
 # 顔辞書(face_models)。登録先・追跡ノード・APIの参照先と共通化する。
 DIRECTORY = str(get_face_models_dir())
 REGISTRATION_MEMO_PATH = os.path.join(DIRECTORY, 'registration_memo.jsonl')
+
+
+@dataclass
+class _SaveFeaturesJob:
+    """ディスク保存・PCA 再学習をバックグラウンドで実行するジョブ."""
+
+    user_name: str
+    features_num: list
+    route: str
+    source: str
+    people_id: str
+    face_id: str
 
 
 class PeopleRecognitionNode(ImagePreviewNode):
@@ -142,10 +157,100 @@ class PeopleRecognitionNode(ImagePreviewNode):
         # ディスク由来のユーザー集合。ディレクトリ削除時にメモリから落とす判定に使う。
         self._disk_backed_users = set()
         self._face_models_signature = None
+        self._dict_lock = threading.Lock()
         self.reload_dictionary_from_disk(force=True)
 
         # people_idとuser_idの対応付け用辞書
         self.user_id_map = {}
+
+        # 辞書更新・特徴保存はカメラコールバックと分離（確定通知は先、保存は遅延可）。
+        self._renew_queue: queue.Queue[Optional[RecognitionHistory]] = queue.Queue(maxsize=1)
+        self._save_queue: queue.Queue[Optional[_SaveFeaturesJob]] = queue.Queue()
+        self._background_stop = threading.Event()
+        self._background_thread = threading.Thread(
+            target=self._background_worker_loop,
+            name='people_recognition_background',
+            daemon=True,
+        )
+        self._background_thread.start()
+
+    def destroy_node(self) -> bool:
+        self._shutdown_background_workers()
+        return super().destroy_node()
+
+    def _shutdown_background_workers(self) -> None:
+        if self._background_stop.is_set():
+            return
+        self._background_stop.set()
+        self._save_queue.put(None)
+        try:
+            self._renew_queue.put_nowait(None)
+        except queue.Full:
+            try:
+                self._renew_queue.get_nowait()
+            except queue.Empty:
+                pass
+            self._renew_queue.put_nowait(None)
+        self._background_thread.join(timeout=3.0)
+
+    def _schedule_dictionary_renew(self, history_msg: Optional[RecognitionHistory]) -> None:
+        """辞書更新・DBSCAN をバックグラウンドへ送る（最新1件だけ保持）。"""
+        try:
+            self._renew_queue.put_nowait(history_msg)
+        except queue.Full:
+            try:
+                self._renew_queue.get_nowait()
+            except queue.Empty:
+                pass
+            self._renew_queue.put_nowait(history_msg)
+
+    def _enqueue_save_features_job(self, job: _SaveFeaturesJob) -> None:
+        self._save_queue.put(job)
+
+    def _run_save_features_job(self, job: _SaveFeaturesJob) -> None:
+        try:
+            saved = self.save_features_for_user(
+                job.user_name,
+                job.features_num,
+                route=job.route,
+                source=job.source,
+                people_id=job.people_id,
+                face_id=job.face_id,
+            )
+            if saved > 0:
+                self.rebuild_pca_model_on_disk()
+        except Exception as exc:
+            self.get_logger().error(
+                f'Background feature save failed for {job.user_name}: {exc}'
+            )
+
+    def _background_worker_loop(self) -> None:
+        while not self._background_stop.is_set():
+            handled = False
+            try:
+                save_job = self._save_queue.get(timeout=0.05)
+            except queue.Empty:
+                pass
+            else:
+                if save_job is None:
+                    break
+                self._run_save_features_job(save_job)
+                handled = True
+
+            try:
+                history = self._renew_queue.get_nowait()
+            except queue.Empty:
+                pass
+            else:
+                if self._background_stop.is_set() and history is None:
+                    break
+                if history is not None:
+                    self.dictionary_renew(history)
+                self.process_unlabeled_pool_dbscan()
+                handled = True
+
+            if not handled:
+                time.sleep(0.02)
 
     @staticmethod
     def _load_dictionaries_from_disk():
@@ -194,41 +299,42 @@ class PeopleRecognitionNode(ImagePreviewNode):
             signature = face_models_signature(DIRECTORY)
 
         disk_dictionary, disk_profile = self._load_dictionaries_from_disk()
-        disk_users = set(disk_dictionary.keys()) | set(disk_profile.keys())
-        previous_disk_users = set(self._disk_backed_users)
-        removed_users = previous_disk_users - disk_users
+        with self._dict_lock:
+            disk_users = set(disk_dictionary.keys()) | set(disk_profile.keys())
+            previous_disk_users = set(self._disk_backed_users)
+            removed_users = previous_disk_users - disk_users
 
-        # ディスク由来だったが今はディレクトリが無いユーザーをメモリから除去する
-        for user_id in removed_users:
-            self.dictionary.pop(user_id, None)
-            self.profile_dictionary.pop(user_id, None)
-
-        # ディスク上のユーザーはディスク内容で上書き（追加含む）
-        for user_id, features in disk_dictionary.items():
-            self.dictionary[user_id] = features
-        for user_id, features in disk_profile.items():
-            self.profile_dictionary[user_id] = features
-        # 正面が無く横顔だけ残っているケース向けに profile も掃除
-        for user_id in list(self.profile_dictionary.keys()):
-            if (
-                user_id in previous_disk_users
-                and user_id not in disk_profile
-                and user_id not in disk_dictionary
-            ):
+            # ディスク由来だったが今はディレクトリが無いユーザーをメモリから除去する
+            for user_id in removed_users:
+                self.dictionary.pop(user_id, None)
                 self.profile_dictionary.pop(user_id, None)
 
-        self._disk_backed_users = disk_users
-        self._face_models_signature = signature
+            # ディスク上のユーザーはディスク内容で上書き（追加含む）
+            for user_id, features in disk_dictionary.items():
+                self.dictionary[user_id] = features
+            for user_id, features in disk_profile.items():
+                self.profile_dictionary[user_id] = features
+            # 正面が無く横顔だけ残っているケース向けに profile も掃除
+            for user_id in list(self.profile_dictionary.keys()):
+                if (
+                    user_id in previous_disk_users
+                    and user_id not in disk_profile
+                    and user_id not in disk_dictionary
+                ):
+                    self.profile_dictionary.pop(user_id, None)
 
-        if removed_users:
+            self._disk_backed_users = disk_users
+            self._face_models_signature = signature
+
+            if removed_users:
+                self.get_logger().info(
+                    f'[dict_sync] removed from memory: {sorted(removed_users)}'
+                )
             self.get_logger().info(
-                f'[dict_sync] removed from memory: {sorted(removed_users)}'
+                f'[dict_sync] disk users={sorted(self._disk_backed_users)} '
+                f'memory users={sorted(self.dictionary.keys())}'
             )
-        self.get_logger().info(
-            f'[dict_sync] disk users={sorted(self._disk_backed_users)} '
-            f'memory users={sorted(self.dictionary.keys())}'
-        )
-        self.rebuild_saved_hashes()
+            self.rebuild_saved_hashes()
         return True
 
     def _on_set_parameters_people_recognition(self, params: List[Parameter]) -> SetParametersResult:
@@ -326,38 +432,38 @@ class PeopleRecognitionNode(ImagePreviewNode):
         query_dim = np.asarray(feature1, dtype=np.float32).reshape(-1).shape[0]
         skipped_dim = 0
 
-        for user_id, features in dictionary.items():
-            for feature in features:
-                feature_vec = np.squeeze(np.asarray(feature, dtype=np.float32))
-                if feature_vec.shape[0] != query_dim:
-                    skipped_dim += 1
-                    continue
-                features_list.append(feature_vec)
-                user_ids.append(user_id)  # ユーザーIDを対応付けて追加
+        with self._dict_lock:
+            for user_id, features in dictionary.items():
+                for feature in features:
+                    feature_vec = np.squeeze(np.asarray(feature, dtype=np.float32))
+                    if feature_vec.shape[0] != query_dim:
+                        skipped_dim += 1
+                        continue
+                    features_list.append(feature_vec)
+                    user_ids.append(user_id)  # ユーザーIDを対応付けて追加
 
-        if skipped_dim:
-            self.get_logger().warn(
-                f'Skipped {skipped_dim} dictionary feature(s) with dim != {query_dim}'
-            )
+            if skipped_dim:
+                self.get_logger().warn(
+                    f'Skipped {skipped_dim} dictionary feature(s) with dim != {query_dim}'
+                )
 
-        if not features_list:
-            return "unknown", 0.0
+            if not features_list:
+                return "unknown", 0.0
 
-        # Faissインデックス作成（正規化された特徴ベクトルを使う）
-        index = self.create_faiss_index(features_list)
-        
-        # クエリ特徴ベクトルを用意
-        query_feature = np.array(feature1).astype('float32').reshape(1, -1)  # クエリ特徴ベクトルの整形
-        faiss.normalize_L2(query_feature)
+            # Faissインデックス作成（正規化された特徴ベクトルを使う）
+            index = self.create_faiss_index(features_list)
 
-        distances, indices = index.search(query_feature, 1)
-        best_score = distances[0][0]
-        best_index = indices[0][0]
+            # クエリ特徴ベクトルを用意
+            query_feature = np.array(feature1).astype('float32').reshape(1, -1)
+            faiss.normalize_L2(query_feature)
 
-        if best_score > threshold:
-            best_user_id = user_ids[best_index]
-            return best_user_id, float(best_score)
-        else:
+            distances, indices = index.search(query_feature, 1)
+            best_score = distances[0][0]
+            best_index = indices[0][0]
+
+            if best_score > threshold:
+                best_user_id = user_ids[best_index]
+                return best_user_id, float(best_score)
             return "unknown", 0.0
 
     def generate_new_user_name(self, dictionary):
@@ -533,7 +639,7 @@ class PeopleRecognitionNode(ImagePreviewNode):
         if not clusters:
             return 0
 
-        total_saved = 0
+        scheduled_saves = 0
         for label, member_idx in clusters:
             member_nums = [pool_nums[i] for i in member_idx.tolist()]
             member_feats = features[member_idx]
@@ -558,87 +664,72 @@ class PeopleRecognitionNode(ImagePreviewNode):
                 k=GALLERY_KNN_K,
                 min_vote_ratio=GALLERY_RESCUE_MIN_VOTE_RATIO,
             )
+            is_existing_merge = False
+            route = ''
 
             if merge_user is not None:
+                is_existing_merge = True
+                route = (
+                    'unlabeled_pool(DBSCAN -> gallery merge) -> '
+                    'save_features_for_user'
+                )
                 self.get_logger().info(
                     f'[DBSCAN] cluster={label} n={len(member_nums)} '
                     f'-> merge {merge_user} (best_score={knn_info.get("best_score", 0):.3f})'
                 )
-                saved = self.save_features_for_user(
-                    merge_user,
-                    member_nums,
-                    route='unlabeled_pool(DBSCAN -> gallery merge) -> '
-                          'save_features_for_user',
-                    source='unlabeled_pool_dbscan',
-                    people_id=people_id,
-                    face_id=face_id,
-                )
-                is_existing_merge = True
             else:
-                # ハッシュ一致の最終ガード
                 existing_user = self.find_existing_user_for_features(member_feats)
                 if existing_user:
                     merge_user = existing_user
                     is_existing_merge = True
+                    route = (
+                        'unlabeled_pool(DBSCAN -> hash merge) -> '
+                        'save_features_for_user'
+                    )
                     self.get_logger().info(
                         f'[DBSCAN] cluster={label} n={len(member_nums)} '
                         f'-> hash merge {merge_user}'
                     )
-                    saved = self.save_features_for_user(
-                        merge_user,
-                        member_nums,
-                        route='unlabeled_pool(DBSCAN -> hash merge) -> '
-                              'save_features_for_user',
-                        source='unlabeled_pool_dbscan',
-                        people_id=people_id,
-                        face_id=face_id,
-                    )
                 else:
-                    is_existing_merge = False
-                    new_user_name = self.generate_new_user_name(self.dictionary)
+                    merge_user = self.generate_new_user_name(self.dictionary)
+                    route = (
+                        'unlabeled_pool(DBSCAN -> new_user) -> '
+                        'save_features_for_user'
+                    )
                     self.get_logger().info(
                         f'[DBSCAN] cluster={label} n={len(member_nums)} '
-                        f'-> new user {new_user_name}'
+                        f'-> new user {merge_user}'
                     )
-                    print(f'New user detected: {new_user_name}')
-                    saved = self.save_features_for_user(
-                        new_user_name,
-                        member_nums,
-                        route='unlabeled_pool(DBSCAN -> new_user) -> '
-                              'save_features_for_user',
-                        source='unlabeled_pool_dbscan',
-                        people_id=people_id,
-                        face_id=face_id,
-                    )
-                    merge_user = new_user_name if saved > 0 else None
+                    print(f'New user detected: {merge_user}')
 
-            # 池から除去（save 済みは release 済み、未保存分も池からは外す）
+            if not merge_user:
+                continue
+
+            should_confirm = bool(is_existing_merge or merge_user)
+            if should_confirm and people_ids and len(people_ids) == 1 and people_ids[0]:
+                self.update_dictionary(people_ids[0], merge_user)
+
+            self._enqueue_save_features_job(
+                _SaveFeaturesJob(
+                    user_name=merge_user,
+                    features_num=list(member_nums),
+                    route=route,
+                    source='unlabeled_pool_dbscan',
+                    people_id=people_id,
+                    face_id=face_id,
+                )
+            )
+            scheduled_saves += 1
+
             for num in member_nums:
                 self.unlabeled_pool.pop(num, None)
-                # 保存されなかった残りは破棄して再登録ループを防ぐ
-                if num in self.all_features:
-                    self.release_pending_feature(num)
 
-            if saved > 0:
-                total_saved += saved
-                self.rebuild_pca_model_on_disk()
-
-            # 既存マージ: 保存条件を満たしたので saved=0 でも青枠
-            # 新規: 実際に作成できたときだけ青枠
-            should_confirm = False
-            if is_existing_merge and merge_user:
-                should_confirm = True
-            elif merge_user and saved > 0:
-                should_confirm = True
-            if should_confirm and people_ids:
-                if len(people_ids) == 1 and people_ids[0]:
-                    self.update_dictionary(people_ids[0], merge_user)
-
-        if total_saved:
+        if scheduled_saves:
             self.get_logger().info(
-                f'[DBSCAN] saved_total={total_saved} remaining_pool={len(self.unlabeled_pool)}'
+                f'[DBSCAN] scheduled_saves={scheduled_saves} '
+                f'remaining_pool={len(self.unlabeled_pool)}'
             )
-        return total_saved
+        return scheduled_saves
 
     def callback(self, color_img_src: CompressedImage):
         self.frame_count_up()
@@ -678,13 +769,11 @@ class PeopleRecognitionNode(ImagePreviewNode):
 
         self.publisher.publish(self.recognition_results)
 
-        # 数秒ごとに辞書更新 + 未ラベル池の DBSCAN 登録判定
+        # 数秒ごとに辞書更新 + 未ラベル池の DBSCAN 登録判定（バックグラウンド）
         if time.time() - self.last_renew_time > 2:
-            if self.last_recognition_history is not None:  # 最後に受信したデータが存在する場合のみ更新
-                self.dictionary_renew(self.last_recognition_history)
-                self.last_recognition_history = None  # 更新後にリセット
-            # recognition_history が無くても池に溜まっていれば DBSCAN を回す
-            self.process_unlabeled_pool_dbscan()
+            history_snapshot = self.last_recognition_history
+            self.last_recognition_history = None
+            self._schedule_dictionary_renew(history_snapshot)
             self.last_renew_time = time.time()
 
     def callback_recognition_history(self, msg: RecognitionHistory):
@@ -874,12 +963,12 @@ class PeopleRecognitionNode(ImagePreviewNode):
         既存辞書と重複する特徴/画像はスキップする。
         pose 欠損・横顔（yaw/pitch/roll しきい値外）は保存しない。
         """
-        # 辞書にユーザーを登録
-        if user_name not in self.dictionary:
-            self.dictionary[user_name] = []
-        self._ensure_profile_user_entry(user_name)
-
-        current_count = self.count_user_features(user_name)
+        with self._dict_lock:
+            # 辞書にユーザーを登録
+            if user_name not in self.dictionary:
+                self.dictionary[user_name] = []
+            self._ensure_profile_user_entry(user_name)
+            current_count = self.count_user_features(user_name)
         remaining = MAX_FEATURES_PER_USER - current_count
         if remaining <= 0:
             self.get_logger().info(
@@ -943,7 +1032,8 @@ class PeopleRecognitionNode(ImagePreviewNode):
                 skipped_feature_nums.append(num)
                 continue
 
-            self.dictionary[user_name].append(feature)
+            with self._dict_lock:
+                self.dictionary[user_name].append(feature)
             feature_hash = self.compute_feature_hash(feature)
             image_hash = self.compute_image_hash(image) if image is not None else None
             feature_path = None
@@ -997,8 +1087,9 @@ class PeopleRecognitionNode(ImagePreviewNode):
             )
             if self.save_registration:
                 # 直後のディスク同期タイマーで再読込されないよう署名を更新する
-                self._disk_backed_users.add(user_name)
-                self._face_models_signature = face_models_signature(DIRECTORY)
+                with self._dict_lock:
+                    self._disk_backed_users.add(user_name)
+                    self._face_models_signature = face_models_signature(DIRECTORY)
         return saved
 
     @staticmethod
@@ -1028,25 +1119,20 @@ class PeopleRecognitionNode(ImagePreviewNode):
         重複・上限で saved=0 でも青枠（/dictionary_update で名前）にする。
 
         Returns:
-            保存件数。
+            保存件数（非同期保存のため常に 0。実保存はバックグラウンド）。
         """
-        saved = self.save_features_for_user(
-            user_name,
-            features_num,
-            route=route,
-            source=source,
-            people_id=people_id,
-            face_id=face_id,
-        )
-        if saved > 0:
-            self.rebuild_pca_model_on_disk()
-        else:
-            self.get_logger().info(
-                f'[dict_renew] confirm without new files: saved=0 for {user_name} '
-                f'(people_id={people_id}, face_id={face_id or "?"})'
-            )
         self.update_dictionary(people_id, user_name)
-        return saved
+        self._enqueue_save_features_job(
+            _SaveFeaturesJob(
+                user_name=user_name,
+                features_num=list(features_num),
+                route=route,
+                source=source,
+                people_id=people_id,
+                face_id=face_id,
+            )
+        )
+        return 0
 
     def dictionary_renew(self, msg: RecognitionHistory):
         """recognition_history に基づき辞書を更新する.

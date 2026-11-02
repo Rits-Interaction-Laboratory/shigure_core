@@ -23,7 +23,6 @@ from shigure_api.config import (
     FACE_RECOGNITION_TOPIC,
     FEATURE_INFO_TOPIC,
     FACE_MODELS_DIR,
-    PCA_REBUILD_ON_NEW_USER,
     PEOPLE_DETECTION_TOPIC,
     PRESENCE_TICK_SEC,
     RECOGNITION_DEBOUNCE_SEC,
@@ -44,8 +43,9 @@ from shigure_api.pca_plot import (
     state_to_dict,
     unlabeled_update_to_dict,
 )
+from shigure_api.pca_worker import PcaHeavyWorker
 from shigure_api.tracking_debug import debug_image_msg_to_payload
-from shigure_core.util.face_models_dir import face_models_signature, sync_all_user_file_prefixes
+from shigure_core.util.face_models_dir import face_models_signature
 
 
 class RosEventBridge(Node):
@@ -74,6 +74,14 @@ class RosEventBridge(Node):
         self._pca_present_published: frozenset = frozenset()
         self._face_models_signature = face_models_signature(FACE_MODELS_DIR)
         self._lock = threading.Lock()
+        self._pca_worker: Optional[PcaHeavyWorker] = None
+        if self._pca_builder is not None and self._on_pca_payload is not None:
+            self._pca_worker = PcaHeavyWorker(
+                pca_builder=self._pca_builder,
+                publish_state=self._publish_pca_state,
+                on_error=self._on_pca_worker_error,
+            )
+            self._face_models_signature = self._pca_worker.face_models_signature
 
         shigure_qos = QoSProfile(depth=10, reliability=ReliabilityPolicy.BEST_EFFORT)
         self.create_subscription(
@@ -205,29 +213,29 @@ class RosEventBridge(Node):
         self._pca_present_published = self._pca_builder.presence_signature()
         self._emit_pca(state_to_dict(self._pca_builder.build_state()))
 
+    def _enqueue_pca_heavy(self, kind: str, **kwargs) -> None:
+        if self._pca_worker is None:
+            return
+        self._pca_worker.enqueue(kind, **kwargs)
+
+    def _on_pca_worker_error(self, kind: str, exc: Exception) -> None:
+        self.get_logger().error(f'PCA worker failed ({kind}): {exc}')
+
     def _on_pca_presence_tick(self) -> None:
         """在室（確定ユーザー＋未確定people）が変化していたら、退室者を除いた最新のPCAプロットを再配信する。"""
         if self._pca_builder is None:
             return
         if self._pca_builder.presence_signature() != self._pca_present_published:
-            self._publish_pca_state()
+            self._enqueue_pca_heavy('publish_state')
 
     def _sync_face_models_from_disk_if_changed(self) -> bool:
         """手動削除などで face_models が変わっていれば PCA 辞書を再読込する."""
-        if self._pca_builder is None:
+        if self._pca_worker is None:
             return False
-        signature = face_models_signature(FACE_MODELS_DIR)
-        if signature == self._face_models_signature:
+        if not self._pca_worker.check_disk_signature_changed():
             return False
-        # ディレクトリ手動リネーム後の user_newN_* ファイル名を揃える。
-        renamed = sync_all_user_file_prefixes(FACE_MODELS_DIR)
-        if renamed:
-            self.get_logger().info(
-                f'[dict_sync] renamed {renamed} file(s) to match user dir names'
-            )
-        self._face_models_signature = face_models_signature(FACE_MODELS_DIR)
-        self._pca_builder.reload_dictionary_from_disk()
-        self.get_logger().info('[dict_sync] reloaded PCA dictionary from disk')
+        self.get_logger().info('[dict_sync] face_models changed; scheduling PCA reload')
+        self._enqueue_pca_heavy('sync_reload_publish')
         return True
 
     def _publish_unlabeled_update(self) -> None:
@@ -248,25 +256,16 @@ class RosEventBridge(Node):
                 self._emit_pca(segment_closed_to_dict(closed))
 
             if event is not None and event.type == 'user_registered':
-                if PCA_REBUILD_ON_NEW_USER:
-                    rebuilt = self._pca_builder.rebuild_pca_from_disk(
-                        registered_user_id=event.user_id
-                    )
-                    if rebuilt:
-                        self.get_logger().info(
-                            f'PCA model rebuilt after new user: {event.user_id}'
-                        )
-                self._face_models_signature = face_models_signature(FACE_MODELS_DIR)
-                self._publish_pca_state()
+                self._enqueue_pca_heavy(
+                    'rebuild_publish',
+                    registered_user_id=event.user_id,
+                )
             elif event is not None and event.type == 'user_confirmed':
-                # ディスク辞書は更新するが、今セッションの色付き点(labeled_new)は消さない。
-                self._pca_builder.reload_dictionary_from_disk()
-                self._face_models_signature = face_models_signature(FACE_MODELS_DIR)
-                self._publish_pca_state()
+                # ディスク辞書の再読込とフル state はワーカーへ（追跡デバッグ画像を塞がない）。
+                self._enqueue_pca_heavy('reload_publish')
 
     def _on_face_recognition(self, msg: FaceRecognitionResult) -> None:
-        if self._sync_face_models_from_disk_if_changed():
-            self._publish_pca_state()
+        self._sync_face_models_from_disk_if_changed()
         now = time.monotonic()
         for face in msg.faces:
             if face.score < RECOGNITION_SCORE_THRESHOLD:
@@ -302,7 +301,7 @@ class RosEventBridge(Node):
         if self._pca_builder is not None:
             # 確定済み複数人の新規点を色付けした場合はフル state を再配信する。
             if self._pca_builder.on_recognition_history(msg):
-                self._publish_pca_state()
+                self._enqueue_pca_heavy('publish_state')
 
     def _on_people_detection(self, msg: PoseKeyPointsList) -> None:
         """骨格追跡フレームごとに確定ユーザーの在室を更新する（顔検出不要）。"""
@@ -341,5 +340,7 @@ def run_ros_bridge(
         while rclpy.ok() and not stop_event.is_set():
             rclpy.spin_once(node, timeout_sec=0.1)
     finally:
+        if node._pca_worker is not None:
+            node._pca_worker.shutdown()
         node.destroy_node()
         rclpy.shutdown()
