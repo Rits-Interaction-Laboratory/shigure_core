@@ -10,7 +10,6 @@ import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy
 from shigure_core_msgs.msg import (
-    DebugImage,
     DictionaryUpdate,
     FaceRecognitionResult,
     FeatureInfo,
@@ -28,8 +27,8 @@ from shigure_api.config import (
     RECOGNITION_DEBOUNCE_SEC,
     RECOGNITION_HISTORY_TOPIC,
     RECOGNITION_SCORE_THRESHOLD,
-    TRACKING_DEBUG_IMAGE_TOPIC,
 )
+from shigure_api.tracking_debug_bridge import TrackingDebugBridge, debug_gap_since_last_ms
 from shigure_api.events import (
     entry_from_dictionary_update,
     event_from_dictionary_update,
@@ -43,8 +42,9 @@ from shigure_api.pca_plot import (
     state_to_dict,
     unlabeled_update_to_dict,
 )
+from shigure_api.perf_confirm import ENABLED as _PERF_CONFIRM
+from shigure_api.perf_confirm import perf_log as _perf_confirm_log
 from shigure_api.pca_worker import PcaHeavyWorker
-from shigure_api.tracking_debug import debug_image_msg_to_payload
 from shigure_core.util.face_models_dir import face_models_signature
 
 
@@ -56,7 +56,6 @@ class RosEventBridge(Node):
         on_event: Callable,
         pca_builder: Optional[PcaPlotStateBuilder] = None,
         on_pca_payload: Optional[Callable[[dict], None]] = None,
-        on_tracking_debug: Optional[Callable[[dict], None]] = None,
         on_recognition_scores: Optional[Callable[[dict], None]] = None,
         on_entry: Optional[Callable] = None,
     ):
@@ -64,7 +63,6 @@ class RosEventBridge(Node):
         self._on_event = on_event
         self._pca_builder = pca_builder
         self._on_pca_payload = on_pca_payload
-        self._on_tracking_debug = on_tracking_debug
         self._on_recognition_scores = on_recognition_scores
         self._on_entry = on_entry
         self._recognition_last_sent: Dict[str, float] = {}
@@ -129,17 +127,6 @@ class RosEventBridge(Node):
                 f'Recognition history listening on {RECOGNITION_HISTORY_TOPIC}'
             )
 
-        if self._on_tracking_debug is not None:
-            self.create_subscription(
-                DebugImage,
-                TRACKING_DEBUG_IMAGE_TOPIC,
-                self._on_tracking_debug_image,
-                shigure_qos,
-            )
-            self.get_logger().info(
-                f'Tracking debug images on {TRACKING_DEBUG_IMAGE_TOPIC}'
-            )
-
         self.get_logger().info(
             f'Listening on {DICTIONARY_UPDATE_TOPIC} and {FACE_RECOGNITION_TOPIC}'
         )
@@ -184,17 +171,20 @@ class RosEventBridge(Node):
         if self._on_pca_payload is None:
             return
         try:
+            if _PERF_CONFIRM:
+                b64_len = 0
+                for key in ('dictionary', 'unlabeled', 'trajectories_pre_confirm'):
+                    chunk = payload.get(key)
+                    if chunk is not None:
+                        b64_len += len(str(chunk))
+                _perf_confirm_log(
+                    'pca_enqueue',
+                    payload_type=str(payload.get('type', '')),
+                    approx_payload_chars=b64_len or len(str(payload)),
+                )
             self._on_pca_payload(payload)
         except Exception as exc:
             self.get_logger().error(f'Failed to emit PCA payload: {exc}')
-
-    def _emit_tracking_debug(self, payload: dict) -> None:
-        if self._on_tracking_debug is None:
-            return
-        try:
-            self._on_tracking_debug(payload)
-        except Exception as exc:
-            self.get_logger().error(f'Failed to emit tracking debug image: {exc}')
 
     def emit_recognition_scores(self, payload: dict) -> None:
         if self._on_recognition_scores is None:
@@ -204,14 +194,16 @@ class RosEventBridge(Node):
         except Exception as exc:
             self.get_logger().error(f'Failed to emit recognition scores: {exc}')
 
-    def _on_tracking_debug_image(self, msg: DebugImage) -> None:
-        self._emit_tracking_debug(debug_image_msg_to_payload(msg))
-
     def _publish_pca_state(self) -> None:
         if self._pca_builder is None:
             return
         self._pca_present_published = self._pca_builder.presence_signature()
-        self._emit_pca(state_to_dict(self._pca_builder.build_state()))
+        t0 = time.perf_counter()
+        state = self._pca_builder.build_state()
+        build_ms = (time.perf_counter() - t0) * 1000.0
+        if _PERF_CONFIRM:
+            _perf_confirm_log('pca_build_state_ms', ms=build_ms)
+        self._emit_pca(state_to_dict(state))
 
     def _enqueue_pca_heavy(self, kind: str, **kwargs) -> None:
         if self._pca_worker is None:
@@ -244,6 +236,8 @@ class RosEventBridge(Node):
         self._emit_pca(unlabeled_update_to_dict(self._pca_builder.build_unlabeled_update()))
 
     def _on_dictionary_update(self, msg: DictionaryUpdate) -> None:
+        gap_before_ms = debug_gap_since_last_ms() if _PERF_CONFIRM else 0.0
+        t0 = time.perf_counter()
         event = event_from_dictionary_update(msg.people_id, msg.name)
         if event is not None:
             self.get_logger().info(f'Dictionary update: {event.type} user_id={event.user_id}')
@@ -263,6 +257,12 @@ class RosEventBridge(Node):
             elif event is not None and event.type == 'user_confirmed':
                 # ディスク辞書の再読込とフル state はワーカーへ（追跡デバッグ画像を塞がない）。
                 self._enqueue_pca_heavy('reload_publish')
+        _perf_confirm_log(
+            'dictionary_update_handler_ms',
+            ms=(time.perf_counter() - t0) * 1000.0,
+            gap_since_last_debug_ms=gap_before_ms,
+            name=str(msg.name),
+        )
 
     def _on_face_recognition(self, msg: FaceRecognitionResult) -> None:
         self._sync_face_models_from_disk_if_changed()
@@ -317,6 +317,18 @@ class RosEventBridge(Node):
                 self._recognition_last_sent.pop(user_id, None)
 
 
+def _spin_tracking_debug_bridge(
+    node: TrackingDebugBridge,
+    stop_event: threading.Event,
+) -> None:
+    """追跡デバッグ専用スレッド: DebugImage のみ spin する."""
+    try:
+        while rclpy.ok() and not stop_event.is_set():
+            rclpy.spin_once(node, timeout_sec=0.05)
+    finally:
+        node.destroy_node()
+
+
 def run_ros_bridge(
     on_event: Callable,
     stop_event: threading.Event,
@@ -327,20 +339,36 @@ def run_ros_bridge(
     on_recognition_scores: Optional[Callable[[dict], None]] = None,
     on_entry: Optional[Callable] = None,
 ) -> None:
-    rclpy.init()
-    node = RosEventBridge(
+    """イベント用ノードと追跡デバッグ用ノードを別スレッドで spin する."""
+    if not rclpy.ok():
+        rclpy.init()
+    event_node = RosEventBridge(
         on_event,
         pca_builder=pca_builder,
         on_pca_payload=on_pca_payload,
-        on_tracking_debug=on_tracking_debug,
         on_recognition_scores=on_recognition_scores,
         on_entry=on_entry,
     )
+    debug_node: Optional[TrackingDebugBridge] = None
+    debug_thread: Optional[threading.Thread] = None
+    if on_tracking_debug is not None:
+        debug_node = TrackingDebugBridge(on_tracking_debug)
+        debug_thread = threading.Thread(
+            target=_spin_tracking_debug_bridge,
+            args=(debug_node, stop_event),
+            name='shigure_tracking_debug_bridge',
+            daemon=True,
+        )
+        debug_thread.start()
+
     try:
         while rclpy.ok() and not stop_event.is_set():
-            rclpy.spin_once(node, timeout_sec=0.1)
+            rclpy.spin_once(event_node, timeout_sec=0.1)
     finally:
-        if node._pca_worker is not None:
-            node._pca_worker.shutdown()
-        node.destroy_node()
-        rclpy.shutdown()
+        if debug_thread is not None:
+            debug_thread.join(timeout=5.0)
+        if event_node._pca_worker is not None:
+            event_node._pca_worker.shutdown()
+        event_node.destroy_node()
+        if rclpy.ok():
+            rclpy.shutdown()
