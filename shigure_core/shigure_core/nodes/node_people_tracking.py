@@ -141,7 +141,7 @@ class PeopleTrackingNode(ImagePreviewNode):
         self.declare_parameter('threshold_distance', 1000,
                                ParameterDescriptor(type=ParameterType.PARAMETER_INTEGER,
                                                    description='同一人物と判定する最大移動距離(mm)。'))
-        self.declare_parameter('threshold_person', 0.3,
+        self.declare_parameter('threshold_person', 0.15,
                                ParameterDescriptor(type=ParameterType.PARAMETER_DOUBLE,
                                                    description='人物として認めるOpenPose平均信頼度のしきい値。'))
         self.declare_parameter('neck_index', 1,
