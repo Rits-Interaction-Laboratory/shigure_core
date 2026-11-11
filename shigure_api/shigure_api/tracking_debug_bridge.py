@@ -6,6 +6,7 @@ import threading
 import time
 from typing import Callable, Optional
 
+from rclpy.context import Context
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy
 from shigure_core_msgs.msg import DebugImage
@@ -38,8 +39,14 @@ def debug_gap_since_last_ms() -> float:
 class TrackingDebugBridge(Node):
     """DebugImage のみ購読し WebSocket 層へ渡す."""
 
-    def __init__(self, on_tracking_debug: Callable[[dict], None]) -> None:
-        super().__init__('shigure_api_tracking_debug_bridge')
+    def __init__(
+        self,
+        on_tracking_debug: Callable[[dict], None],
+        *,
+        context: Optional[Context] = None,
+    ) -> None:
+        # context を渡すとイベント橋と wait set を共有せず別スレッドで spin できる。
+        super().__init__('shigure_api_tracking_debug_bridge', context=context)
         self._on_tracking_debug = on_tracking_debug
         self._perf_last_debug_mono: float = 0.0
         shigure_qos = QoSProfile(depth=10, reliability=ReliabilityPolicy.BEST_EFFORT)

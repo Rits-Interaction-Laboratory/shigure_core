@@ -318,15 +318,30 @@ class RosEventBridge(Node):
 
 
 def _spin_tracking_debug_bridge(
-    node: TrackingDebugBridge,
+    on_tracking_debug: Callable[[dict], None],
     stop_event: threading.Event,
 ) -> None:
-    """追跡デバッグ専用スレッド: DebugImage のみ spin する."""
+    """追跡デバッグ専用スレッド: 別 Context で DebugImage のみ spin する.
+
+    イベント橋と同じ default Context 上で並行 ``spin_once`` すると
+    ``IndexError: wait set index too big`` で落ちるため、Context を分離する。
+    スレッド分離（base64 化がイベント橋を塞がない）はそのまま維持する。
+    domain は ``ROS_DOMAIN_ID``（rclpy 既定）に従う。
+    """
+    from rclpy.context import Context
+
+    context = Context()
+    node: Optional[TrackingDebugBridge] = None
     try:
-        while rclpy.ok() and not stop_event.is_set():
+        rclpy.init(context=context)
+        node = TrackingDebugBridge(on_tracking_debug, context=context)
+        while context.ok() and not stop_event.is_set():
             rclpy.spin_once(node, timeout_sec=0.05)
     finally:
-        node.destroy_node()
+        if node is not None:
+            node.destroy_node()
+        if context.ok():
+            rclpy.shutdown(context=context)
 
 
 def run_ros_bridge(
@@ -349,13 +364,11 @@ def run_ros_bridge(
         on_recognition_scores=on_recognition_scores,
         on_entry=on_entry,
     )
-    debug_node: Optional[TrackingDebugBridge] = None
     debug_thread: Optional[threading.Thread] = None
     if on_tracking_debug is not None:
-        debug_node = TrackingDebugBridge(on_tracking_debug)
         debug_thread = threading.Thread(
             target=_spin_tracking_debug_bridge,
-            args=(debug_node, stop_event),
+            args=(on_tracking_debug, stop_event),
             name='shigure_tracking_debug_bridge',
             daemon=True,
         )
@@ -365,6 +378,8 @@ def run_ros_bridge(
         while rclpy.ok() and not stop_event.is_set():
             rclpy.spin_once(event_node, timeout_sec=0.1)
     finally:
+        # 先に stop して debug スレッドの Context を閉じる。
+        stop_event.set()
         if debug_thread is not None:
             debug_thread.join(timeout=5.0)
         if event_node._pca_worker is not None:
