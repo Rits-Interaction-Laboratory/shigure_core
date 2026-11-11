@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import queue
 import threading
+import time
 from typing import Any, Callable, Dict, Optional, Tuple
 
 from shigure_api.config import FACE_MODELS_DIR, PCA_REBUILD_ON_NEW_USER
+from shigure_api.perf_confirm import perf_log
 from shigure_core.util.face_models_dir import face_models_signature, sync_all_user_file_prefixes
 
 
@@ -75,10 +77,17 @@ class PcaHeavyWorker:
             if item is None:
                 continue
             kind, kwargs = item
+            t0 = time.perf_counter()
             try:
                 self._handle(kind, kwargs)
             except Exception as exc:
                 self._on_error(kind, exc)
+            else:
+                perf_log(
+                    'pca_worker_done',
+                    worker_kind=kind,
+                    ms=(time.perf_counter() - t0) * 1000.0,
+                )
 
     def _handle(self, kind: str, kwargs: Dict[str, Any]) -> None:
         if self._pca_builder is None:

@@ -7,6 +7,7 @@ import time
 from typing import Callable, Dict, Optional
 
 import rclpy
+from rclpy.executors import SingleThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy
 from shigure_core_msgs.msg import (
@@ -321,10 +322,10 @@ def _spin_tracking_debug_bridge(
     on_tracking_debug: Callable[[dict], None],
     stop_event: threading.Event,
 ) -> None:
-    """追跡デバッグ専用スレッド: 別 Context で DebugImage のみ spin する.
+    """追跡デバッグ専用スレッド: 別 Context + 専用 Executor で DebugImage を spin する.
 
-    イベント橋と同じ default Context 上で並行 ``spin_once`` すると
-    ``IndexError: wait set index too big`` で落ちるため、Context を分離する。
+    ``rclpy.spin_once`` は executor 未指定だと **global executor** を共有するため、
+    イベント橋と並行すると ``IndexError: wait set index too big`` になる。
     スレッド分離（base64 化がイベント橋を塞がない）はそのまま維持する。
     domain は ``ROS_DOMAIN_ID``（rclpy 既定）に従う。
     """
@@ -332,12 +333,19 @@ def _spin_tracking_debug_bridge(
 
     context = Context()
     node: Optional[TrackingDebugBridge] = None
+    executor: Optional[SingleThreadedExecutor] = None
     try:
         rclpy.init(context=context)
         node = TrackingDebugBridge(on_tracking_debug, context=context)
+        executor = SingleThreadedExecutor(context=context)
+        executor.add_node(node)
         while context.ok() and not stop_event.is_set():
-            rclpy.spin_once(node, timeout_sec=0.05)
+            executor.spin_once(timeout_sec=0.05)
     finally:
+        if executor is not None:
+            if node is not None:
+                executor.remove_node(node)
+            executor.shutdown()
         if node is not None:
             node.destroy_node()
         if context.ok():
@@ -374,9 +382,12 @@ def run_ros_bridge(
         )
         debug_thread.start()
 
+    # global executor を共有しないよう、イベント橋も専用 Executor で spin する。
+    event_executor = SingleThreadedExecutor()
+    event_executor.add_node(event_node)
     try:
         while rclpy.ok() and not stop_event.is_set():
-            rclpy.spin_once(event_node, timeout_sec=0.1)
+            event_executor.spin_once(timeout_sec=0.1)
     finally:
         # 先に stop して debug スレッドの Context を閉じる。
         stop_event.set()
@@ -384,6 +395,8 @@ def run_ros_bridge(
             debug_thread.join(timeout=5.0)
         if event_node._pca_worker is not None:
             event_node._pca_worker.shutdown()
+        event_executor.remove_node(event_node)
+        event_executor.shutdown()
         event_node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()
