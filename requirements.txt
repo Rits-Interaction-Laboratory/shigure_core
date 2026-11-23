@@ -7,8 +7,12 @@ mysql-connector-python
 pandas
 
 # 顔認識 (people_recognition)
+# GPU 推論は onnxruntime-gpu + pip の nvidia-*（cublas 等）が必要。
+# 起動時に people_recognition.adaface.ensure_onnx_cuda_lib_path が
+# site-packages/nvidia/*/lib を LD_LIBRARY_PATH へ通す。
+# CPU のみなら: pip install onnxruntime （gpu パッケージと共存不可）
 insightface
-onnxruntime
+onnxruntime-gpu
 faiss-cpu
 scikit-learn
 Pillow>=9.0.0

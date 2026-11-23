@@ -44,7 +44,10 @@ setup(
             'node_raycast_hit_detection = shigure_core.nodes.node_raycast_hit_detection:main',
             'face_models = shigure_core.nodes.node_face_models:main',
             'people_recognition = shigure_core.nodes.node_people_recognition:main',
+            'face_models_push = shigure_core.nodes.node_face_models_push:main',
             'rebuild_pca_model = shigure_core.util.pca_model:main',
+            'rebuild_adaface_embeddings = shigure_core.util.rebuild_adaface_embeddings:main',
+            'push_face_models = shigure_core.util.push_face_models:main',
         ],
     },
 )

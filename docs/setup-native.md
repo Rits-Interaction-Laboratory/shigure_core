@@ -16,7 +16,7 @@ git submodule update --init      # 初回のみ（bbox_ex_msgs）
 pip3 install -r requirements.txt
 ```
 
-GPU で InsightFace を使う場合は onnxruntime を GPU 版に差し替える：
+GPU で顔認識（InsightFace 検出 + AdaFace）を使う場合は onnxruntime を GPU 版に差し替える：
 
 ```sh
 # onnxruntime と onnxruntime-gpu を同時に入れない（CPU にフォールバックする原因）
@@ -35,7 +35,8 @@ export ROS_DOMAIN_ID=10   # ← 全端末で必須。設定漏れだと他ノー
 export LD_LIBRARY_PATH=$(python3 -c "import os,glob;print(':'.join(sorted(glob.glob(os.path.expanduser('~/.local/lib/python3.10/site-packages/nvidia/*/lib')))))"):$LD_LIBRARY_PATH
 ```
 
-- InsightFace のデバイスは自動選択。強制するなら `export SHIGURE_INSIGHTFACE_DEVICE=cpu`（または `gpu`）
+- InsightFace / AdaFace のデバイスは自動選択。強制するなら `export SHIGURE_INSIGHTFACE_DEVICE=cpu`（または `gpu`）
+- AdaFace モデルは既定 `ir18`（軽量）。精度優先なら `export SHIGURE_ADAFACE_MODEL=ir101`
 - 顔辞書の場所は既定で `~/.shigure/face_models`（リポジトリ外・永続）。変えるなら `export SHIGURE_FACE_MODELS_DIR=/path/to/dir`
 
 ## 3. ビルド
@@ -78,6 +79,8 @@ ros2 launch shigure_core shigure_core_launch.py debug_mode:=true
 | `enable_profile` | false | 横顔プロフィール特徴を `/profile_feature_add` に配信（横顔学習） | `enable_profile_insightface` |
 | `save_image` | false | 追跡デバッグ画像を**ローカルディスクに保存**（手元解析用。Web 配信は常時なので無関係） | `save_image` |
 | `save_registration` | false | people_recognition の新規/更新の顔特徴・画像・PCA モデルを .npy/.jpg でディスク保存（`is_debug_mode` とは独立） | `save_registration` |
+| `push_face_models` | false | 日本時間 3:00 に face_models を別 private リポジトリへ定時 push | `face_models_push` ノード |
+| `face_models_backup_repo` | `~/face_models_after_Adaface` | 定時 push 先の git 作業コピー | `repo_dir` |
 | `terminal` | gnome-terminal | 各ノードを開く端末（`gnome-terminal` / `xterm` / `none`）。ヘッドレス環境は `none` |  |
 | `record` | false | DB 保存系ノード（pose_save / record_event）も起動する（手順6の代わり） |  |
 | `save_root_path` | (ノード既定) | record_event のイベント画像保存先 |  |

@@ -1,0 +1,9 @@
+face_models_push_node:
+  ros__parameters:
+    # false のとき定時 push を行わない
+    enabled: true
+    # バックアップ用 git 作業コピー（private リポジトリの clone 先）
+    repo_dir: '~/face_models_after_Adaface'
+    remote: origin
+    # 日本時間の時（0-23）。既定は朝 3 時
+    push_hour_jst: 3

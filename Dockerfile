@@ -14,9 +14,11 @@ RUN apt-get update && apt-get install -y \
 COPY requirements.txt /tmp/requirements.txt
 RUN pip3 install -r /tmp/requirements.txt
 
-# insightface のモデル(buffalo_s)をビルド時にダウンロードしておく
+# insightface のモデル(buffalo_s)と AdaFace ONNX をビルド時にダウンロードしておく
 # (初回起動時のダウンロード待ち・実行時のネットワーク依存をなくすため)
 RUN python3 -c "from insightface.app import FaceAnalysis; FaceAnalysis(name='buffalo_s', providers=['CPUExecutionProvider'])"
+RUN mkdir -p /root/.insightface/models/adaface \
+    && python3 -c "import urllib.request; from pathlib import Path; p=Path('/root/.insightface/models/adaface/adaface_ir_18.onnx'); urllib.request.urlretrieve('https://github.com/yakhyo/adaface-onnx/releases/download/weights/adaface_ir_18.onnx', p)"
 
 WORKDIR /ros2_ws/src
 COPY bbox_ex_msgs/ bbox_ex_msgs/

@@ -13,8 +13,9 @@ shigure_core/resource/db/Dockerfile_migration
 shigure_core/shigure_core/nodes/past_record_script/
 shigure_core/shigure_core/nodes/yolox_object_detection/logic.py_sample
 
-# ===== 顔認識データ（個人データ・絶対にコミットしない） =====
+# ===== 顔認識データ（個人データ・コード用リポジトリには絶対にコミットしない） =====
 # 顔画像・特徴ベクトル・PCAモデルなどの辞書データ一式。
+# バックアップは別 private リポジトリ（face_models_after_Adaface）へ定時 push する。
 # 実データは既定で ~/.shigure/face_models（リポジトリ外）に置く運用。
 **/face_models/
 # 追跡デバッグ画像（save_image モードの保存先）

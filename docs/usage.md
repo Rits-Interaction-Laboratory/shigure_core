@@ -40,6 +40,15 @@ ros2 run shigure_core face_models
 
 確認： `ls ~/.shigure/face_models/`
 
+> ⚠️ **ArcFace 時代の `.npy` は AdaFace と空間が違う**。既存 jpg から埋め込みを作り直す：
+>
+> ```sh
+> ros2 run shigure_core rebuild_adaface_embeddings
+> # 確認だけ: ros2 run shigure_core rebuild_adaface_embeddings --dry-run
+> ```
+>
+> 検出できなかった jpg と、jpg が無い `.npy` は削除する。`pca_model.pkl` も再学習する。**認識パイプラインを止めてから**実行し、終わったら people_recognition を再起動する。
+
 > ⚠️ **people_recognition は起動時に一度だけ辞書を読み込む**。認識パイプラインを起動した後に登録しても反映されない（「登録したのに `face_name` が空のまま」の原因）。**登録はパイプライン起動前に**行う。後から登録した場合は people_recognition を再起動する（Docker なら `docker compose restart shigure_core`）。
 
 ## 記録の開始・終了（← この信号を送るまで DB に保存されない）
@@ -154,7 +163,8 @@ ros2 param set /contact_detection_node  is_debug_mode false  # 持込/持去窓�
 ## 調整パラメータ
 
 ```sh
-# face_name を確定する累積スコア閾値（既定3.0、コサイン類似度の累積和。小さいほど早く名前が出る）
+# 暫定 face_name（末尾?＝赤枠）を出す累積スコア閾値（既定3.0。小さいほど早く暫定名が出る）
+# 確定名（?なし＝青枠）は /dictionary_update 起点で、PCA 未ラベル色付けと同じタイミング
 ros2 param set /people_tracking_node face_name_score_threshold 2.0
 ```
 
@@ -168,10 +178,11 @@ ros2 param set /people_tracking_node face_name_score_threshold 2.0
 |---|---|
 | `ros2 node list` が実態と食い違う | `ros2 node list --no-daemon` で見る（デーモンが古いノードをキャッシュする）。端末で `export ROS_DOMAIN_ID=10` を徹底 |
 | 同名ノードが2つ（object_tracking / yolox_object_detection） | 別PC側で該当ノードを停止（センサ系は残す） |
-| `face_name` が空のまま | ①`/face_recognition/results` の id が実名か（unknown なら辞書未ロード/未登録）②閾値を下げる（§調整パラメータ）③登録は people_recognition 起動**前**に。後から登録したら people_recognition を再起動 |
+| `face_name` が空のまま | ①`/face_recognition/results` の id が実名か（unknown なら辞書未ロード/未登録）②暫定名が出ないなら閾値を下げる（§調整パラメータ）③確定名（?なし）は `/dictionary_update` 待ち④登録は people_recognition 起動**前**に。後から登録したら people_recognition を再起動 |
 | people_recognition が落ちる（別人が入った瞬間 等） | 修正済み（LabelPropagation の n_neighbors をサンプル数でクリップ）。再ビルドを確認 |
 | `ImportError: cannot import name 'FaceRecognitionResult' ...` で people_tracking / people_recognition が即終了 | `shigure_core_msgs` のビルドが古い（`__init__.py` が新 msg を export していない）。**クリーン再ビルド**する: `rm -rf build/shigure_core_msgs install/shigure_core_msgs && colcon build --packages-select shigure_core_msgs --symlink-install`。**msg を追加/変更した後・msg を含むブランチを merge/pull した後は必ずクリーン再ビルド** |
 | GPU が使われず CPU にフォールバック | `onnxruntime` と `onnxruntime-gpu` の重複を解消（`pip uninstall onnxruntime onnxruntime-gpu; pip install onnxruntime-gpu`）＋ `LD_LIBRARY_PATH`（[setup-native.md](setup-native.md#2-環境変数作業する端末で毎回)） |
+| 差し替え後に別人へ当たる / 全員 unknown | ArcFace の `.npy` が残っている。パイプラインを止めて `ros2 run shigure_core rebuild_adaface_embeddings` を実行し、people_recognition を再起動する。しきい値 `COSINE_THRESHOLD` の再調整も検討 |
 | record_event がイベントを保存しない | ①**まず全端末の `ROS_DOMAIN_ID` 一致を確認**（不一致だとトピック未受信で無反応）②`/HL2/pose_record_signal`=`Start` を送ったか（§記録の開始・終了、`/shigure/current_pose_id` が流れているか）③`/shigure/contacted` 自体が流れているか |
 
 ## Rviz での確認（オプション）
@@ -187,5 +198,31 @@ ros2 run rviz2 rviz2
 
 ## 個人データの取り扱い（重要）
 
-- **顔画像・特徴（face_models 配下）は個人データ。リポジトリに絶対にコミットしない**。`.gitignore` で `**/face_models/` を除外済み。実データは `~/.shigure/face_models`（リポジトリ外）に置く
+- **顔画像・特徴（face_models 配下）は個人データ。コード用リポジトリ（shigure_core）には絶対にコミットしない**。`.gitignore` で `**/face_models/` を除外済み。実データは `~/.shigure/face_models`（リポジトリ外）に置く
+- バックアップが必要なら **別の private リポジトリ**（例: `face_models_after_Adaface`）へ定時 push する。公開リポジトリへは絶対に載せない
 - 誤って公開リポジトリに push した場合、ブランチ削除・PR クローズだけでは消えない。GitHub Support（Private Information Removal）へ削除依頼が必要
+
+### face_models の定時バックアップ（任意）
+
+日本時間 3:00 に `face_models` を別 private リポジトリへ push するノードがある。
+
+```sh
+# 1. private リポジトリを clone（初回のみ）
+git clone git@github.com:<ORG_OR_USER>/face_models_after_Adaface.git ~/face_models_after_Adaface
+
+# 2. 手動で1回試す
+ros2 run shigure_core push_face_models --repo-dir ~/face_models_after_Adaface
+
+# 3. 定時ノードを単体起動（launch に載せなくても可）
+ros2 run shigure_core face_models_push --ros-args \
+  -p enabled:=true \
+  -p repo_dir:=$HOME/face_models_after_Adaface \
+  -p push_hour_jst:=3
+
+# または launch 引数
+ros2 launch shigure_core shigure_core_launch.py \
+  push_face_models:=true \
+  face_models_backup_repo:=$HOME/face_models_after_Adaface
+```
+
+Docker では `.env` で `PUSH_FACE_MODELS=true` とし、ホスト側に clone と deploy key を用意する（[setup-docker.md](setup-docker.md)）。

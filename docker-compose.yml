@@ -2,7 +2,8 @@ services:
   shigure_core:
     build: .
     network_mode: host
-    # launch引数は .env の DEBUG_MODE / ENABLE_PROFILE / SAVE_IMAGE / SAVE_REGISTRATION で変更できる
+    # launch引数は .env の DEBUG_MODE / ENABLE_PROFILE / SAVE_IMAGE / SAVE_REGISTRATION /
+    # SHOW_FULL_DICTIONARY / PUSH_FACE_MODELS で変更できる
     command: >
       ros2 launch shigure_core shigure_core_launch.py
       terminal:=xterm record:=true save_root_path:=/ros2_ws/events
@@ -10,13 +11,22 @@ services:
       enable_profile:=${ENABLE_PROFILE:-false}
       save_image:=${SAVE_IMAGE:-false}
       save_registration:=${SAVE_REGISTRATION:-false}
+      show_full_dictionary:=${SHOW_FULL_DICTIONARY:-false}
+      push_face_models:=${PUSH_FACE_MODELS:-false}
+      face_models_backup_repo:=${FACE_MODELS_BACKUP_REPO:-/root/face_models_after_Adaface}
     environment:
       - DISPLAY=${DISPLAY}
       - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-0}
+      - TZ=Asia/Tokyo
+      - SHIGURE_FACE_MODELS_BACKUP_REPO=${FACE_MODELS_BACKUP_REPO:-/root/face_models_after_Adaface}
     volumes:
       - /tmp/.X11-unix:/tmp/.X11-unix
       # 顔辞書(登録ユーザーの特徴・画像)をホストと共有し、コンテナ再作成後も保持する
       - ~/.shigure:/root/.shigure
+      # 定時 push 用の private リポジトリ作業コピー（ホスト側で clone しておく）
+      - ${FACE_MODELS_BACKUP_REPO_HOST:-~/face_models_after_Adaface}:/root/face_models_after_Adaface
+      # SSH 鍵はホストに無いと空ディレクトリが作られて壊れるため、ここではマウントしない。
+      # PUSH_FACE_MODELS=true のときは docs/setup-docker.md の手順で鍵を追加する。
     depends_on:
       db:
         condition: service_healthy

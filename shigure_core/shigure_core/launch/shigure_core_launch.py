@@ -12,6 +12,11 @@ launch 引数（フラグ類は「起動時の初期値」。稼働中は ros2 p
   show_full_dictionary:=true/false
                             true で shigure_api の PCA 配信に辞書の全特徴点を含める（既定 false）。
                             稼働中は PUT /pca/show_full_dictionary でも切替可。
+  push_face_models:=true/false
+                            true で日本時間 3:00 に face_models を別リポジトリへ定時 push する
+                            （既定 false。個人データ専用の private リポジトリ前提）。
+  face_models_backup_repo:=<path>
+                            push 先 git 作業コピー（既定 ~/face_models_after_Adaface）。
   terminal:=gnome-terminal/xterm/none
                             各ノードを開く端末エミュレータ（既定 gnome-terminal）。
                             Docker では xterm、ヘッドレス環境では none を指定する。
@@ -65,6 +70,12 @@ def _setup_nodes(context):
     terminal = context.launch_configurations['terminal']
     save_root_path = context.launch_configurations['save_root_path']
     show_full_dictionary = _to_bool(context.launch_configurations['show_full_dictionary'])
+    push_face_models_flag = _to_bool(
+        context.launch_configurations['push_face_models']
+    )
+    face_models_backup_repo = context.launch_configurations[
+        'face_models_backup_repo'
+    ]
 
     is_debug = {'is_debug_mode': debug_mode}
 
@@ -96,6 +107,14 @@ def _setup_nodes(context):
         ]),
         make_node('contact_detection', parameters=[is_debug]),
     ]
+
+    # 顔辞書の定時バックアップ（コード用リポジトリとは別の private リポジトリへ）
+    if push_face_models_flag:
+        nodes.append(make_node('face_models_push', parameters=[{
+            'enabled': True,
+            'repo_dir': face_models_backup_repo,
+            'push_hour_jst': 3,
+        }]))
 
     # Web API（常駐）。people_tracking が /shigure/tracking_debug_image を常時配信するので、
     # WebUI ではいつでも現フレームの追跡画像を確認できる。サーバ自体はストレージを消費しない。
@@ -147,6 +166,16 @@ def generate_launch_description():
             'show_full_dictionary',
             default_value='false',
             description='true のとき shigure_api の PCA 配信に face_models 辞書の全特徴点を含める。',
+        ),
+        DeclareLaunchArgument(
+            'push_face_models',
+            default_value='false',
+            description='true のとき日本時間 3:00 に face_models を別 private リポジトリへ定時 push する。',
+        ),
+        DeclareLaunchArgument(
+            'face_models_backup_repo',
+            default_value='~/face_models_after_Adaface',
+            description='face_models バックアップ用 git 作業コピーのパス。',
         ),
         DeclareLaunchArgument(
             'terminal',

@@ -71,6 +71,19 @@ launch 引数は .env で変更できる（docker compose が起動時に launch
 | `ENABLE_PROFILE` | false | 横顔プロフィール特徴の配信・学習 |
 | `SAVE_IMAGE` | false | 追跡デバッグ画像をローカルディスクに保存（手元解析用。Web 配信は常時なので無関係） |
 | `SAVE_REGISTRATION` | false | 自動登録ユーザーの顔特徴・画像・PCA モデルのディスク保存（`DEBUG_MODE` とは独立） |
+| `PUSH_FACE_MODELS` | false | 日本時間 3:00 に face_models を別 private リポジトリへ定時 push |
+| `FACE_MODELS_BACKUP_REPO_HOST` | `~/face_models_after_Adaface` | ホスト側のバックアップ用 clone 先 |
+
+`PUSH_FACE_MODELS=true` にする前に:
+
+```sh
+# private リポジトリを clone
+git clone git@github.com:<ORG_OR_USER>/face_models_after_Adaface.git ~/face_models_after_Adaface
+
+# docker-compose.yml の shigure_core.volumes に SSH 鍵を追加（例）
+#   - ~/.ssh/id_ed25519:/root/.ssh/id_ed25519:ro
+#   - ~/.ssh/known_hosts:/root/.ssh/known_hosts:ro
+```
 
 変更後は `docker compose up` で再作成すれば反映される（イメージ再ビルドは不要）。
 
@@ -87,6 +100,8 @@ docker compose down -v   # DB データも含めて完全リセット
 docker compose exec shigure_core bash
 # 例: 顔登録ノードの対話実行
 ros2 run shigure_core face_models
+# 既存 jpg から AdaFace 埋め込みを再生成
+ros2 run shigure_core rebuild_adaface_embeddings
 ```
 
 ## 次のステップ
