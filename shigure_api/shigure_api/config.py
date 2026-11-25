@@ -38,6 +38,18 @@ IPHONE_IMAGE_FRAME_ID = os.environ.get(
     'SHIGURE_IPHONE_IMAGE_FRAME_ID',
     os.environ.get('SHIGURE_INGRESS_FRAME_ID', 'iphone_front'),
 )
+# true のとき iPhone 用パイプライン（tracking 向けダミー深度・CameraInfo 付与）
+_IPHONE_MODE_ENV = os.environ.get('IPHONE') or os.environ.get('SHIGURE_IPHONE')
+IPHONE_MODE = (_IPHONE_MODE_ENV or 'false').lower() in ('1', 'true', 'yes')
+IPHONE_DUMMY_DEPTH_MM = int(os.environ.get('SHIGURE_IPHONE_DUMMY_DEPTH_MM', '1500'))
+IPHONE_DEPTH_TOPIC = os.environ.get(
+    'SHIGURE_IPHONE_DEPTH_TOPIC',
+    '/rs/aligned_depth_to_color/compressedDepth',
+)
+IPHONE_CAMERA_INFO_TOPIC = os.environ.get(
+    'SHIGURE_IPHONE_CAMERA_INFO_TOPIC',
+    '/rs/aligned_depth_to_color/cameraInfo',
+)
 
 DICTIONARY_UPDATE_TOPIC = os.environ.get('SHIGURE_DICTIONARY_UPDATE_TOPIC', '/dictionary_update')
 FACE_RECOGNITION_TOPIC = os.environ.get('SHIGURE_FACE_RECOGNITION_TOPIC', '/face_recognition/results')

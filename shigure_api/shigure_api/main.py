@@ -13,6 +13,7 @@ from shigure_api.config import (
     API_PORT,
     FACE_MODELS_DIR,
     IPHONE_IMAGE_TOPIC,
+    IPHONE_MODE,
     PCA_SHOW_FULL_DICTIONARY,
 )
 from shigure_api.iphone_image_ingress import run_iphone_image_ingress
@@ -105,6 +106,7 @@ def main() -> None:
         f'Shigure API: http://{args.host}:{args.port}  '
         f'iPhone ingress POST: http://{args.host}:{args.port}/api/iphone/frame  '
         f'iPhone ingress WS: ws://{args.host}:{args.port}/ws/iphone/frame  '  # noqa: E501
+        f'IPHONE(iphone_mode)={IPHONE_MODE}  '
         f'ROS iPhone image topic: {IPHONE_IMAGE_TOPIC}  '
         f'WebSocket: ws://{args.host}:{args.port}/ws/events  '
         f'Entries: ws://{args.host}:{args.port}/ws/entries  '

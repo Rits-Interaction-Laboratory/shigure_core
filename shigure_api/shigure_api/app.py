@@ -16,6 +16,7 @@ from shigure_api.config import (
     API_KEY,
     FACE_MODELS_DIR,
     IPHONE_IMAGE_TOPIC,
+    IPHONE_MODE,
     PCA_REDRAW_EVERY,
     PCA_SHOW_FULL_DICTIONARY,
     PCA_TRAJECTORY_MAX_POINTS,
@@ -327,6 +328,7 @@ def create_app() -> FastAPI:
             'face_models_dir': str(FACE_MODELS_DIR),
             'face_models_exists': FACE_MODELS_DIR.is_dir(),
             'iphone_image_topic': IPHONE_IMAGE_TOPIC,
+            'iphone_mode': IPHONE_MODE,
             'iphone_image_ingress_ready': iphone_image_ingress_ready(),
             'pca_show_full_dictionary': (
                 pca_builder.show_full_dictionary
