@@ -29,6 +29,16 @@ API_HOST = os.environ.get('SHIGURE_API_HOST', '0.0.0.0')
 API_PORT = int(os.environ.get('SHIGURE_API_PORT', '8765'))
 API_KEY = os.environ.get('SHIGURE_API_KEY', '')
 
+# iPhone カメラ（API 受信）を ROS へ載せる publish 先
+_IPHONE_TOPIC_ENV = os.environ.get('SHIGURE_IPHONE_IMAGE_TOPIC') or os.environ.get(
+    'SHIGURE_INGRESS_IMAGE_TOPIC'
+)
+IPHONE_IMAGE_TOPIC = _IPHONE_TOPIC_ENV or '/iphone/color/compressed'
+IPHONE_IMAGE_FRAME_ID = os.environ.get(
+    'SHIGURE_IPHONE_IMAGE_FRAME_ID',
+    os.environ.get('SHIGURE_INGRESS_FRAME_ID', 'iphone_front'),
+)
+
 DICTIONARY_UPDATE_TOPIC = os.environ.get('SHIGURE_DICTIONARY_UPDATE_TOPIC', '/dictionary_update')
 FACE_RECOGNITION_TOPIC = os.environ.get('SHIGURE_FACE_RECOGNITION_TOPIC', '/face_recognition/results')
 FEATURE_INFO_TOPIC = os.environ.get('SHIGURE_FEATURE_INFO_TOPIC', '/feature_info')

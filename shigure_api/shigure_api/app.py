@@ -9,16 +9,21 @@ from datetime import datetime
 from pathlib import Path
 from typing import AsyncIterator, List, Optional, Set
 
-from fastapi import FastAPI, Header, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Header, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from shigure_api.config import (
     API_KEY,
     FACE_MODELS_DIR,
+    IPHONE_IMAGE_TOPIC,
     PCA_REDRAW_EVERY,
     PCA_SHOW_FULL_DICTIONARY,
     PCA_TRAJECTORY_MAX_POINTS,
     default_pca_model_path,
+)
+from shigure_api.iphone_image_ingress import (
+    iphone_image_ingress_ready,
+    publish_iphone_jpeg_from_api,
 )
 from shigure_api.events import (
     ContactCandidate,
@@ -321,12 +326,75 @@ def create_app() -> FastAPI:
             'status': 'ok',
             'face_models_dir': str(FACE_MODELS_DIR),
             'face_models_exists': FACE_MODELS_DIR.is_dir(),
+            'iphone_image_topic': IPHONE_IMAGE_TOPIC,
+            'iphone_image_ingress_ready': iphone_image_ingress_ready(),
             'pca_show_full_dictionary': (
                 pca_builder.show_full_dictionary
                 if pca_builder is not None
                 else PCA_SHOW_FULL_DICTIONARY
             ),
         }
+
+    @app.post('/api/iphone/frame')
+    async def post_iphone_frame(
+        request: Request,
+        x_api_key: str | None = Header(default=None, alias='X-API-Key'),
+        api_key: str | None = Query(default=None),
+    ) -> dict:
+        """iPhone からの JPEG 1 枚を受け取り ROS CompressedImage として配信する."""
+        _verify_api_key(x_api_key, api_key)
+        if not iphone_image_ingress_ready():
+            raise HTTPException(
+                status_code=503,
+                detail='iPhone image ingress ROS node not ready',
+            )
+        body = await request.body()
+        if not body:
+            raise HTTPException(status_code=400, detail='Empty body')
+        try:
+            publish_iphone_jpeg_from_api(body)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        return {'ok': True, 'bytes': len(body), 'topic': IPHONE_IMAGE_TOPIC}
+
+    @app.websocket('/ws/iphone/frame')
+    async def ws_iphone_frame(websocket: WebSocket) -> None:
+        """バイナリ JPEG フレームを連続受信し ROS へ配信する（image/jpeg バイト列）."""
+        if API_KEY:
+            key = websocket.query_params.get('api_key')
+            if key != API_KEY:
+                await websocket.close(code=4401, reason='Invalid API key')
+                return
+        await websocket.accept()
+        if not iphone_image_ingress_ready():
+            await websocket.close(
+                code=1013,
+                reason='iPhone image ingress ROS node not ready',
+            )
+            return
+        try:
+            while True:
+                message = await websocket.receive()
+                if message.get('type') == 'websocket.disconnect':
+                    break
+                data = message.get('bytes')
+                if data:
+                    try:
+                        publish_iphone_jpeg_from_api(data)
+                    except RuntimeError:
+                        await websocket.close(
+                            code=1013, reason='iPhone ingress publish failed'
+                        )
+                        break
+                    continue
+                text = message.get('text')
+                if text:
+                    await websocket.close(
+                        code=1003, reason='Send binary JPEG frames only'
+                    )
+                    break
+        except WebSocketDisconnect:
+            pass
 
     @app.get('/pca/show_full_dictionary')
     def get_show_full_dictionary(

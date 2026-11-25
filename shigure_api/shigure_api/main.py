@@ -8,7 +8,14 @@ from pathlib import Path
 
 import uvicorn
 
-from shigure_api.config import API_HOST, API_PORT, FACE_MODELS_DIR, PCA_SHOW_FULL_DICTIONARY
+from shigure_api.config import (
+    API_HOST,
+    API_PORT,
+    FACE_MODELS_DIR,
+    IPHONE_IMAGE_TOPIC,
+    PCA_SHOW_FULL_DICTIONARY,
+)
+from shigure_api.iphone_image_ingress import run_iphone_image_ingress
 from shigure_api.ros_bridge import run_ros_bridge
 
 
@@ -71,6 +78,14 @@ def main() -> None:
             list_user_names(config.FACE_MODELS_DIR, extra_user_id=entry.user_id)
         )
 
+    iphone_ingress_thread = threading.Thread(
+        target=run_iphone_image_ingress,
+        args=(stop_event,),
+        name='shigure_iphone_image_ingress',
+        daemon=True,
+    )
+    iphone_ingress_thread.start()
+
     ros_thread = threading.Thread(
         target=run_ros_bridge,
         args=(on_event, stop_event),
@@ -88,6 +103,9 @@ def main() -> None:
 
     print(
         f'Shigure API: http://{args.host}:{args.port}  '
+        f'iPhone ingress POST: http://{args.host}:{args.port}/api/iphone/frame  '
+        f'iPhone ingress WS: ws://{args.host}:{args.port}/ws/iphone/frame  '  # noqa: E501
+        f'ROS iPhone image topic: {IPHONE_IMAGE_TOPIC}  '
         f'WebSocket: ws://{args.host}:{args.port}/ws/events  '
         f'Entries: ws://{args.host}:{args.port}/ws/entries  '
         f'User names: ws://{args.host}:{args.port}/ws/user_names  '
@@ -110,6 +128,7 @@ def main() -> None:
         )
     finally:
         stop_event.set()
+        iphone_ingress_thread.join(timeout=5.0)
         ros_thread.join(timeout=5.0)
 
 
